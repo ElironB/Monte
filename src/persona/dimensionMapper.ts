@@ -72,9 +72,9 @@ export class DimensionMapper {
       );
 
       for (const signal of matchingSignals) {
-        // Weight by signal confidence and recency
+        const strength = this.getSignalStrength(signal);
         const recencyBoost = this.getRecencyBoost(signal.timestamp);
-        weightedSum += signal.confidence * weight * recencyBoost;
+        weightedSum += strength * weight * recencyBoost;
         totalWeight += Math.abs(weight) * recencyBoost;
       }
     }
@@ -84,6 +84,15 @@ export class DimensionMapper {
     
     const rawScore = weightedSum / totalWeight;
     return this.sigmoidNormalize(rawScore);
+  }
+
+  private getSignalStrength(signal: BehavioralSignal): number {
+    const base = signal.confidence;
+    const frequencyBoost = (signal.dimensions.frequency || 0) * 0.3;
+    const recurrenceBoost = (signal.dimensions.recurrence || 0) * 0.2;
+    const trendBoost = signal.dimensions.intensityTrend === 'increasing' ? 0.1 :
+                       signal.dimensions.intensityTrend === 'decreasing' ? -0.1 : 0;
+    return Math.min(1, base + frequencyBoost + recurrenceBoost + trendBoost);
   }
 
   private getRecencyBoost(timestamp: string): number {
