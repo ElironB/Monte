@@ -15,7 +15,9 @@ Monte Engine is an open-source, self-hostable platform that runs probabilistic l
 
 ## 🎯 What Is Monte Engine?
 
-Monte Engine stress-tests your behavioral tendencies against empirically-grounded world models. It creates 1,000 digital "clones" of you with varied traits, runs them through realistic scenarios, and returns probability distributions of outcomes.
+Monte Engine stress-tests your behavioral tendencies against empirically-grounded world models. It creates 1,000 digital "clones" of you with varied traits, runs them through realistic scenarios, and returns probability distributions of outcomes — interpreted into natural language narrative analysis, not just numbers.
+
+**Data → Signals → Persona → Clones → Simulation → Narrative Report**
 
 ### Key Philosophy
 
@@ -30,6 +32,35 @@ Monte Engine stress-tests your behavioral tendencies against empirically-grounde
 2. **LLM agent decision layer** - Agents call Monte instead of internal reasoning
 3. **Autonomous agent safety** - Run simulation before high-stakes actions
 4. **Research** - Behavioral patterns at scale
+
+---
+
+## ⚡ Quick Demo (No Real Data Needed)
+
+```bash
+# Generate a synthetic persona
+monte generate "26 year old software engineer who day trades, impulse spender, anxious about career growth"
+
+# Ingest the generated data
+monte ingest ./generated-persona
+
+# Build behavioral persona from signals
+monte persona build
+
+# Run simulation
+monte simulate run -s day_trading --wait
+
+# Generate full report with narrative analysis
+monte report <simulation-id>
+```
+
+Want to prove personalization works? Generate two different personas and compare:
+
+```bash
+monte generate "conservative 40yo accountant, disciplined saver, risk-averse" -o ./persona-conservative
+monte generate "25yo crypto trader, YOLO mentality, high risk tolerance" -o ./persona-aggressive
+monte compare ./persona-conservative ./persona-aggressive -s day_trading
+```
 
 ---
 
@@ -149,8 +180,9 @@ monte simulate run -s day_trading
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│ 5. RESULTS LAYER                                        │
-│ Probability distributions → API + CLI output           │
+│ 5. RESULTS + NARRATIVE LAYER                             │
+│ Probability distributions → NarrativeGenerator (LLM)    │
+│ → monte report (markdown) → monte compare (A/B)        │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -217,34 +249,52 @@ npm link
 ### Commands
 
 ```bash
-# Persona
-monte persona status          # Check persona status
-monte persona build           # Build from data sources
-monte persona history         # View build history
-monte persona traits          # View behavioral traits
+# Generate synthetic test data (no real data needed)
+monte generate "<description>"              # Create synthetic persona from description
+monte generate "..." -o ./my-persona        # Custom output directory
+monte generate "..." --entries 100          # More data points per file
 
-# Simulations
-monte simulate list           # List all simulations
-monte simulate run -s career_change -n "Job Change" -c 1000
-monte simulate progress <id>  # Check progress
-monte simulate results <id>   # View results
-monte simulate scenarios      # List available scenarios
+# Compare personas (A/B testing)
+monte compare <dir-a> <dir-b> -s <scenario> # Side-by-side comparison
+monte compare ./a ./b -s day_trading -o report.md
 
 # Platform Connections (optional)
-monte connect                # Interactive platform picker + OAuth links
-monte connect confirm        # Verify pending connections
-monte connect status         # Show connected platforms
+monte connect                               # Interactive platform picker + OAuth links
+monte connect confirm                       # Verify pending connections
+monte connect status                        # Show connected platforms
 
-# Data Sources
-monte ingest <path>           # Scan directory and ingest all files
-monte ingest status           # Show status of all ingestion jobs
-monte ingest list             # List data sources
-monte ingest delete <id>      # Delete a data source
+# Ingest data
+monte ingest <path>                         # Scan directory and ingest all files
+monte ingest status                         # Show status of all ingestion jobs
+monte ingest list                           # List data sources
+monte ingest delete <id> --force            # Delete a data source
+
+# Build persona
+monte persona build                         # Build from ingested data
+monte persona status                        # Check build status
+monte persona traits                        # View behavioral dimensions
+monte persona history                       # Version history
+
+# Run simulations
+monte simulate run -s day_trading --wait    # Run and wait for results
+monte simulate list                         # List all simulations
+monte simulate progress <id>                # Check progress
+monte simulate results <id>                 # View results
+monte simulate results <id> -f json         # JSON output
+monte simulate scenarios                    # List available scenarios
+monte simulate delete <id> --force          # Delete simulation
+
+# Reports
+monte report <id>                           # Generate markdown report
+monte report <id> --no-narrative            # Skip LLM narrative
+monte report <id> --stdout                  # Print to terminal
+monte report <id> -o custom-report.md       # Custom output path
 
 # Configuration
-monte config show             # Show configuration
-monte config set-api http://api.example.com
-monte config dir              # Show config directory
+monte config show                           # Show current config
+monte config set-api <url>                  # Change API endpoint
+monte config set-defaults -s day_trading -c 1000
+monte config dir                            # Show config directory
 ```
 
 ---
@@ -483,23 +533,30 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## 🗺️ Roadmap
 
-### Phase 5 ✅ (Current)
+### Phase 5 ✅
 - [x] SSE streaming for progress
 - [x] OpenTelemetry tracing
 - [x] Self-hosted mode (no auth required)
 - [x] CLI interface
 - [x] API pagination & caching
 
-### Phase 6 (In Progress)
+### Phase 6 ✅
 - [x] Interactive `monte connect` with platform picker
 - [x] Composio OAuth integration (Google, Reddit, Spotify, GitHub, Notion, Slack, LinkedIn, Twitter)
 - [x] Connection verification (`monte connect confirm`)
-- [ ] Webhook notifications
+
+### Phase 7 ✅ (Current)
+- [x] Quantitative signal extraction (frequency, temporal patterns, trends)
+- [x] LLM narrative generation (6-section natural language analysis)
+- [x] `monte report` — polished markdown reports with ASCII charts
+- [x] `monte generate` — LLM-powered synthetic persona generation
+- [x] `monte compare` — A/B persona comparison with divergence analysis
 
 ### Future
 - [ ] Web UI
 - [ ] Custom scenario builder
-- [ ] Result visualization exports
+- [ ] End-to-end integration testing
+- [ ] Docker quick-start validation
 
 ---
 
