@@ -11,16 +11,40 @@ const CONSTRAINTS = [
   'CREATE CONSTRAINT simulation_id IF NOT EXISTS FOR (s:Simulation) REQUIRE s.id IS UNIQUE',
   'CREATE CONSTRAINT signal_id IF NOT EXISTS FOR (s:Signal) REQUIRE s.id IS UNIQUE',
   'CREATE CONSTRAINT contradiction_id IF NOT EXISTS FOR (c:Contradiction) REQUIRE c.id IS UNIQUE',
+  'CREATE CONSTRAINT apikey_id IF NOT EXISTS FOR (k:ApiKey) REQUIRE k.id IS UNIQUE',
+  'CREATE CONSTRAINT apikey_prefix IF NOT EXISTS FOR (k:ApiKey) REQUIRE k.keyPrefix IS UNIQUE',
+];
+
+const INDEXES = [
+  'CREATE INDEX simulation_status IF NOT EXISTS FOR (s:Simulation) ON (s.status)',
+  'CREATE INDEX simulation_created IF NOT EXISTS FOR (s:Simulation) ON (s.createdAt)',
+  'CREATE INDEX clone_category IF NOT EXISTS FOR (c:Clone) ON (c.category)',
+  'CREATE INDEX datasource_status IF NOT EXISTS FOR (d:DataSource) ON (d.status)',
+  'CREATE INDEX trait_name IF NOT EXISTS FOR (t:Trait) ON (t.name)',
 ];
 
 export async function initializeSchema(): Promise<void> {
   logger.info('Initializing Neo4j schema...');
+
+  // Create constraints
   for (const constraint of CONSTRAINTS) {
     try {
       await runWrite(constraint);
+      logger.debug({ constraint: constraint.split(' ')[2] }, 'Constraint created');
     } catch (err) {
-      logger.debug({ constraint }, 'Constraint creation skipped');
+      logger.debug({ constraint: constraint.split(' ')[2] }, 'Constraint creation skipped');
     }
   }
+
+  // Create indexes
+  for (const index of INDEXES) {
+    try {
+      await runWrite(index);
+      logger.debug({ index: index.split(' ')[2] }, 'Index created');
+    } catch (err) {
+      logger.debug({ index: index.split(' ')[2] }, 'Index creation skipped');
+    }
+  }
+
   logger.info('Neo4j schema ready');
 }

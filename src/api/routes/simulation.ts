@@ -1,6 +1,7 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { runQuery, runQuerySingle, runWriteSingle } from '../../config/neo4j.js';
+import { cacheGet, cacheSet } from '../../config/redis.js';
 import { scheduleSimulationBatch } from '../../ingestion/queue/ingestionQueue.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -14,25 +15,117 @@ const createSchema = z.object({
   cloneCount: z.number().min(100).max(10000).default(1000),
 });
 
+const listQuerySchema = z.object({
+  page: z.coerce.number().min(1).default(1),
+  limit: z.coerce.number().min(1).max(100).default(20),
+  status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
+  scenarioType: z.enum(SCENARIOS).optional(),
+  sortBy: z.enum(['createdAt', 'name', 'status']).default('createdAt'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+});
+
+const CACHE_TTL = 60; // 1 minute for simulation lists
+
 async function simulationRoutes(fastify: FastifyInstance) {
+  // List simulations with pagination and filtering
   fastify.get('/', {
     preHandler: [fastify.authenticate],
-    schema: { description: 'List simulations', tags: ['simulation'], security: [{ bearerAuth: [] }] },
-    handler: async (request) => {
-      return await runQuery<{
-        id: string;
-        name: string;
-        scenarioType: string;
-        status: string;
-        cloneCount: number;
-        createdAt: string;
-      }>(
-        `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation)
-         RETURN s.id as id, s.name as name, s.scenarioType as scenarioType, s.status as status,
-                s.cloneCount as cloneCount, s.createdAt as createdAt
-         ORDER BY s.createdAt DESC`,
-        { userId: request.user.userId }
-      );
+    schema: {
+      description: 'List simulations with pagination',
+      tags: ['simulation'],
+      security: [{ bearerAuth: [] }],
+      querystring: {
+        type: 'object',
+        properties: {
+          page: { type: 'number', default: 1 },
+          limit: { type: 'number', default: 20 },
+          status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed'] },
+          scenarioType: { type: 'string' },
+          sortBy: { type: 'string', enum: ['createdAt', 'name', 'status'] },
+          sortOrder: { type: 'string', enum: ['asc', 'desc'] },
+        },
+      },
+    },
+    handler: async (request: FastifyRequest) => {
+      const query = listQuerySchema.parse(request.query);
+      const skip = (query.page - 1) * query.limit;
+      const cacheKey = `sims:${request.user.userId}:${query.page}:${query.limit}:${query.status || 'all'}:${query.scenarioType || 'all'}:${query.sortBy}:${query.sortOrder}`;
+
+      // Try cache first
+      const cached = await cacheGet<{
+        data: unknown[];
+        pagination: unknown;
+        cached: boolean;
+      }>(cacheKey);
+
+      if (cached) {
+        return { ...cached, cached: true };
+      }
+
+      // Build where clause
+      let whereClause = '';
+      const params: Record<string, unknown> = { userId: request.user.userId, skip, limit: query.limit };
+
+      const filters: string[] = [];
+      if (query.status) {
+        filters.push('s.status = $status');
+        params.status = query.status;
+      }
+      if (query.scenarioType) {
+        filters.push('s.scenarioType = $scenarioType');
+        params.scenarioType = query.scenarioType;
+      }
+
+      if (filters.length > 0) {
+        whereClause = 'WHERE ' + filters.join(' AND ');
+      }
+
+      // Fetch data with pagination
+      const [simulations, countResult] = await Promise.all([
+        runQuery<{
+          id: string;
+          name: string;
+          scenarioType: string;
+          status: string;
+          progress: number;
+          cloneCount: number;
+          createdAt: string;
+        }>(
+          `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation)
+           ${whereClause}
+           RETURN s.id as id, s.name as name, s.scenarioType as scenarioType, s.status as status,
+                  s.progress as progress, s.cloneCount as cloneCount, s.createdAt as createdAt
+           ORDER BY s.${query.sortBy} ${query.sortOrder.toUpperCase()}
+           SKIP $skip LIMIT $limit`,
+          params
+        ),
+        runQuerySingle<{ total: number }>(
+          `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation)
+           ${whereClause}
+           RETURN count(s) as total`,
+          { userId: request.user.userId, status: query.status, scenarioType: query.scenarioType }
+        ),
+      ]);
+
+      const total = countResult?.total ?? 0;
+      const totalPages = Math.ceil(total / query.limit);
+
+      const result = {
+        data: simulations,
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          totalPages,
+          hasNextPage: query.page < totalPages,
+          hasPrevPage: query.page > 1,
+        },
+      };
+
+      // Cache result
+      await cacheSet(cacheKey, result, CACHE_TTL);
+
+      return result;
     },
   });
 
@@ -60,6 +153,8 @@ async function simulationRoutes(fastify: FastifyInstance) {
            status: 'pending',
            parameters: $parameters,
            cloneCount: $cloneCount,
+           progress: 0,
+           completedBatches: 0,
            createdAt: datetime()
          })
          CREATE (p)-[:HAS_SIMULATION]->(s)
@@ -92,26 +187,57 @@ async function simulationRoutes(fastify: FastifyInstance) {
     },
   });
 
+  // Get simulation with caching
   fastify.get('/:id', {
     preHandler: [fastify.authenticate],
-    handler: async (request) => {
+    handler: async (request: FastifyRequest) => {
       const { id } = request.params as { id: string };
+      const cacheKey = `sim:${id}`;
+
+      // Try cache first
+      const cached = await cacheGet<{
+        id: string;
+        name: string;
+        scenarioType: string;
+        status: string;
+        parameters: unknown;
+        cloneCount: number;
+        results: unknown;
+        progress?: number;
+      }>(cacheKey);
+
+      if (cached && cached.status === 'completed') {
+        return { ...cached, cached: true };
+      }
+
       const sim = await runQuerySingle<{
         id: string;
         name: string;
         scenarioType: string;
         status: string;
+        progress: number;
         parameters: string;
         cloneCount: number;
         results: string | null;
       }>(
         `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
-         RETURN s.id as id, s.name as name, s.scenarioType as scenarioType, s.status as status,
+         RETURN s.id as id, s.name as name, s.scenarioType as scenarioType, s.status as status, s.progress as progress,
                 s.parameters as parameters, s.cloneCount as cloneCount, s.results as results`,
         { userId: request.user.userId, simId: id }
       );
       if (!sim) throw new NotFoundError('Simulation');
-      return { ...sim, parameters: JSON.parse(sim.parameters), results: sim.results ? JSON.parse(sim.results) : null };
+
+      const result = {
+        ...sim,
+        parameters: JSON.parse(sim.parameters),
+        results: sim.results ? JSON.parse(sim.results) : null,
+      };
+
+      // Cache completed simulations for longer
+      const ttl = sim.status === 'completed' ? 3600 : 30;
+      await cacheSet(cacheKey, result, ttl);
+
+      return result;
     },
   });
 
@@ -136,9 +262,15 @@ async function simulationRoutes(fastify: FastifyInstance) {
     preHandler: [fastify.authenticate],
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
+
+      // Invalidate cache
+      const cacheKey = `sim:${id}`;
+      await cacheSet(cacheKey, null, 0);
+
       await runWriteSingle(
         `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
-         DETACH DELETE s`,
+         OPTIONAL MATCH (s)-[:HAS_RESULT]->(cr:CloneResult)
+         DETACH DELETE s, cr`,
         { userId: request.user.userId, simId: id }
       );
       reply.status(204);
@@ -148,14 +280,14 @@ async function simulationRoutes(fastify: FastifyInstance) {
   fastify.get('/scenarios', {
     schema: { description: 'List scenarios', tags: ['simulation'] },
     handler: async () => [
-      { id: 'day_trading', name: 'Day Trading Career', timeframe: '12-24 months' },
-      { id: 'startup_founding', name: 'Startup Founding', timeframe: '36-60 months' },
-      { id: 'career_change', name: 'Career Change', timeframe: '12-24 months' },
-      { id: 'advanced_degree', name: 'Advanced Degree', timeframe: '24-48 months' },
-      { id: 'geographic_relocation', name: 'Geographic Relocation', timeframe: '12-36 months' },
-      { id: 'real_estate_purchase', name: 'Real Estate Purchase', timeframe: '60-120 months' },
-      { id: 'health_fitness_goal', name: 'Health & Fitness Goal', timeframe: '6-18 months' },
-      { id: 'custom', name: 'Custom Scenario', timeframe: 'variable' },
+      { id: 'day_trading', name: 'Day Trading Career', timeframe: '12-24 months', description: 'Simulate day trading as primary income source with realistic market volatility' },
+      { id: 'startup_founding', name: 'Startup Founding', timeframe: '36-60 months', description: 'Found a technology startup with funding rounds, runway, and exit scenarios' },
+      { id: 'career_change', name: 'Career Change', timeframe: '12-24 months', description: 'Transition to a new industry with salary changes, retraining, and job search' },
+      { id: 'advanced_degree', name: 'Advanced Degree', timeframe: '24-48 months', description: 'Pursue MBA, PhD, or professional degree with tuition, opportunity cost, and ROI' },
+      { id: 'geographic_relocation', name: 'Geographic Relocation', timeframe: '12-36 months', description: 'Move to a new city/country with cost of living changes, job market differences' },
+      { id: 'real_estate_purchase', name: 'Real Estate Purchase', timeframe: '60-120 months', description: 'Buy property with mortgage, appreciation, and market crash scenarios' },
+      { id: 'health_fitness_goal', name: 'Health & Fitness Goal', timeframe: '6-18 months', description: 'Major lifestyle transformation with health outcomes and maintenance' },
+      { id: 'custom', name: 'Custom Scenario', timeframe: 'variable', description: 'Define your own scenario with custom parameters' },
     ],
   });
 }

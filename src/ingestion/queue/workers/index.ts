@@ -4,6 +4,7 @@ import { createWorker, IngestionJobData, PersonaJobData, SimulationJobData } fro
 import { logger } from '../../../utils/logger.js';
 import { runQuerySingle, runWriteSingle, runQuery } from '../../../config/neo4j.js';
 import { getFile } from '../../../config/minio.js';
+import { getRedisClient } from '../../../config/redis.js';
 import { SearchHistoryExtractor } from '../../extractors/searchHistory.js';
 import { SocialBehaviorExtractor } from '../../extractors/socialBehavior.js';
 import { FinancialBehaviorExtractor } from '../../extractors/financialBehavior.js';
@@ -369,7 +370,25 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     
     // Update progress
     const progress = Math.round(((cloneBatchIndex + 1) / totalBatches) * 100);
-    
+    const completedBatches = cloneBatchIndex + 1;
+
+    // Publish real-time progress to Redis for SSE streaming
+    const redis = await getRedisClient();
+    await redis.setex(
+      `sim:${simulationId}:progress`,
+      300, // 5 minute TTL
+      JSON.stringify({
+        simulationId,
+        progress,
+        completedBatches,
+        totalBatches,
+        currentBatch: cloneBatchIndex,
+        processedClones: results.length,
+        status: cloneBatchIndex === totalBatches - 1 ? 'completed' : 'running',
+        lastUpdated: new Date().toISOString(),
+      })
+    );
+
     // Check if this is the final batch
     const isFinalBatch = cloneBatchIndex === totalBatches - 1;
     
@@ -446,7 +465,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     
   } catch (err) {
     logger.error({ err, simulationId, jobId: job.id }, 'Simulation batch failed');
-    
+
     // Mark simulation as failed
     await runWriteSingle(
       `MATCH (s:Simulation {id: $simulationId})
@@ -454,7 +473,25 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
        RETURN s.id as id`,
       { simulationId, error: (err as Error).message }
     );
-    
+
+    // Publish failure status to Redis
+    try {
+      const redis = await getRedisClient();
+      await redis.setex(
+        `sim:${simulationId}:progress`,
+        300,
+        JSON.stringify({
+          simulationId,
+          progress: 0,
+          status: 'failed',
+          error: (err as Error).message,
+          lastUpdated: new Date().toISOString(),
+        })
+      );
+    } catch {
+      // Ignore Redis errors during failure handling
+    }
+
     throw err;
   }
 }

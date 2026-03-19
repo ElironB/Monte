@@ -8,12 +8,20 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "vitest"
+    "test": "vitest",
+    "cli": "node dist/cli/index.js",
+    "cli:dev": "tsx src/cli/index.ts"
   },
   "keywords": [
     "simulation",
-    "monte-carlo"
+    "monte-carlo",
+    "probabilistic-modeling",
+    "decision-support",
+    "behavioral-analysis"
   ],
+  "bin": {
+    "monte": "dist/cli/index.js"
+  },
   "license": "MIT",
   "dependencies": {
     "@fastify/cors": "^10.0.0",
@@ -21,8 +29,16 @@
     "@fastify/rate-limit": "^10.0.0",
     "@fastify/swagger": "^9.0.0",
     "@fastify/swagger-ui": "^5.0.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.55.0",
+    "@opentelemetry/exporter-jaeger": "^1.30.0",
+    "@opentelemetry/resources": "^1.30.0",
+    "@opentelemetry/sdk-trace-base": "^1.30.0",
+    "@opentelemetry/sdk-trace-node": "^1.30.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0",
     "bcrypt": "^5.1.0",
     "bullmq": "^5.41.0",
+    "commander": "^12.1.0",
     "dotenv": "^16.4.0",
     "fastify": "^5.0.0",
     "groq-sdk": "^1.1.1",
