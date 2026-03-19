@@ -41,7 +41,7 @@ The CLI is already structured for both — `monte config set-api` switches betwe
 | Feature | Open Source | Cloud |
 |---------|------------|-------|
 | Auth system | No auth (local user) | JWT + API keys + multi-user |
-| Data ingestion | `monte ingest <dir>` (file-based) | OAuth connectors via Composio |
+| Data ingestion | `monte ingest <dir>` + `monte connect` (Composio) | OAuth connectors via Composio (managed) |
 | LLM provider | User provides own key (any OpenAI-compatible) | Managed LLM routing |
 | Infrastructure | Docker Compose (Neo4j, Redis, MinIO) | Managed services |
 | CLI | Points to localhost | Points to hosted API |
@@ -148,6 +148,18 @@ LLM_MODEL=gpt-4o-mini
 - Removed: `monte ingest add` and `monte ingest upload` commands
 - Kept: `monte ingest status`, `monte ingest list`, `monte ingest delete`
 
+### 4. Composio Platform Connections
+
+**Why**: Users can optionally connect live platforms (Google, Reddit, Spotify, etc.) via Composio OAuth for richer data.
+
+**What's new**:
+- `monte connect` — interactive multi-select of platforms, generates OAuth links
+- `monte connect confirm` — verifies all pending connections are active
+- `monte connect status` — shows currently connected platforms
+- Uses Composio CLI (`composio link <app> --no-wait`) under the hood
+- Connections stored in `~/.monte/connections.json`
+- Completely optional — users can skip and only use `monte ingest <dir>` for file-based data
+
 ---
 
 ## Implementation Status
@@ -189,10 +201,13 @@ LLM_MODEL=gpt-4o-mini
 - Directory-based ingestion (`monte ingest <dir>`)
 - Pagination, filtering, caching on list endpoints
 
-### ⏳ PHASE 6 - Extended Sources (NOT STARTED — DEFERRED TO CLOUD)
-- Gmail, GitHub, LinkedIn, Slack integrations via Composio
-- These require OAuth/API keys and are better suited for the cloud version
-- Open source users use `monte ingest <dir>` with exported data files instead
+### 🔄 PHASE 6 - Platform Connections (IN PROGRESS)
+- Interactive `monte connect` command with multi-select platform picker
+- Composio OAuth integration for: Google, Reddit, Spotify, GitHub, Notion, Slack, LinkedIn, Twitter
+- `monte connect confirm` to verify connections
+- Connection status tracking in `~/.monte/connections.json`
+- Optional — file-based ingestion (`monte ingest <dir>`) still works independently
+- Requires `COMPOSIO_API_KEY` (free at composio.dev)
 
 ---
 
@@ -261,6 +276,7 @@ Monte/
 │   │   ├── api.ts                 # API client (no auth headers)
 │   │   ├── config.ts              # ~/.monte config (no auth storage)
 │   │   └── commands/
+│   │       ├── connect.ts         # monte connect (Composio platform linking)
 │   │       ├── ingestion.ts       # monte ingest <dir>, status, list, delete
 │   │       ├── persona.ts         # monte persona status/build/history/traits
 │   │       ├── simulation.ts      # monte simulate run/list/progress/results
@@ -306,6 +322,9 @@ Regex/pattern matching, NOT LLM. Too expensive to use LLM for extraction. LLM on
 ### 6. World Agents Use Empirical Data
 Historical S&P 500 returns, BLS job market data, education completion rates. NOT made-up numbers.
 
+### 7. Composio for Platform Connections (Optional)
+Users can optionally connect live platforms via `monte connect`. Uses Composio CLI under the hood (`composio link --no-wait`). Completely optional — `monte ingest <dir>` works without any platform connections. Requires `COMPOSIO_API_KEY` from composio.dev (free tier available).
+
 ---
 
 ## Environment Variables
@@ -328,7 +347,7 @@ LLM_MODEL=llama-3.1-70b-versatile
 LLM_REASONING_MODEL=            # Optional: separate model for complex forks
 
 # Optional
-COMPOSIO_API_KEY=               # For future Composio integrations
+COMPOSIO_API_KEY=               # Optional: for platform connections (free at composio.dev)
 PORT=3000
 NODE_ENV=development
 LOG_LEVEL=info
@@ -342,6 +361,11 @@ OTEL_ENABLED=false
 ## CLI Reference
 
 ```bash
+# Connect platforms (optional)
+monte connect                     # Interactive platform picker + OAuth links
+monte connect confirm             # Verify pending connections
+monte connect status              # Show connected platforms
+
 # Ingest data
 monte ingest ./my-data            # Scan directory, auto-detect, upload
 monte ingest status               # Show all source statuses
@@ -408,9 +432,10 @@ npm run dev
 6. **No auth in open source** — `request.user.userId` is always `local-user`. Don't add auth back unless building the cloud version.
 7. **LLM is provider-agnostic** — OpenAI SDK with `baseURL`. Never import provider-specific SDKs.
 8. **TypeScript errors** — use `// @ts-nocheck` sparingly if ioredis types cause issues (already used in redis.ts).
+9. **Composio is optional** — `monte connect` enhances data but isn't required. File-based ingestion works standalone.
 
 ---
 
-**Last Updated**: March 2026 — Open source refactoring complete (auth removed, LLM unified, directory ingest added)
-**Status**: Phases 1-5 complete. Phase 6 deferred to cloud version.
+**Last Updated**: March 2026 — Open source refactoring complete, Composio platform connections added
+**Status**: Phases 1-5 complete. Phase 6 (platform connections) in progress.
 **Next**: Ship open source v1 — end-to-end testing, documentation polish, sample data files.

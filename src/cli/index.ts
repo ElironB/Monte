@@ -5,6 +5,7 @@ import { simulationCommands } from './commands/simulation.js';
 import { personaCommands } from './commands/persona.js';
 import { ingestionCommands } from './commands/ingestion.js';
 import { configCommands } from './commands/config.js';
+import { connectCommands } from './commands/connect.js';
 import { loadConfig } from './config.js';
 
 const program = new Command();
@@ -23,6 +24,7 @@ program.addCommand(simulationCommands);
 program.addCommand(personaCommands);
 program.addCommand(ingestionCommands);
 program.addCommand(configCommands);
+program.addCommand(connectCommands);
 
 // Default help
 if (process.argv.length === 2) {
