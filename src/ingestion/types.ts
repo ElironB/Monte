@@ -29,6 +29,10 @@ export interface BehavioralSignal {
     sentiment?: 'positive' | 'negative' | 'neutral';
     urgency?: number; // 0-1
     recurrence?: number; // how often this appears
+    frequency?: number; // raw count of pattern matches
+    temporalCluster?: string; // e.g., 'late_night', 'morning', 'weekend', 'weekday'
+    intensityTrend?: 'increasing' | 'decreasing' | 'stable';
+    coOccurrence?: string[];
   };
 }
 
