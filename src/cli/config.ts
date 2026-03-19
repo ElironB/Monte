@@ -2,6 +2,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
+export { CONFIG_DIR };
+
 const CONFIG_DIR = join(homedir(), '.monte');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
@@ -31,4 +33,28 @@ export function saveConfig(config: Partial<CLIConfig>): void {
   ensureConfigDir();
   const current = loadConfig();
   writeFileSync(CONFIG_FILE, JSON.stringify({ ...current, ...config }, null, 2));
+}
+
+const CONNECTIONS_FILE = join(CONFIG_DIR, 'connections.json');
+
+export interface PendingConnection {
+  slug: string;
+  name: string;
+  connectedAccountId: string;
+  redirectUrl: string;
+}
+
+export function savePendingConnections(connections: PendingConnection[]): void {
+  ensureConfigDir();
+  writeFileSync(CONNECTIONS_FILE, JSON.stringify(connections, null, 2));
+}
+
+export function loadPendingConnections(): PendingConnection[] {
+  ensureConfigDir();
+  try {
+    const data = readFileSync(CONNECTIONS_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
 }

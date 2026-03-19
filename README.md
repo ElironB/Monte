@@ -86,6 +86,20 @@ Put your data files in a folder (Google Takeout exports, Obsidian vault, transac
 monte ingest ./my-data
 ```
 
+### 6. Connect Platforms (Optional)
+
+Optionally connect your data platforms for richer behavioral data:
+
+```bash
+monte connect                # Select platforms interactively
+# Open each link in your browser to authorize
+monte connect confirm        # Verify connections
+```
+
+Or skip this and use file-based ingestion only.
+
+### 7. Build & Simulate
+
 Then build your persona and run simulations:
 
 ```bash
@@ -149,7 +163,8 @@ monte simulate run -s day_trading
 | Job Queue | BullMQ + Redis |
 | Object Storage | MinIO (S3-compatible) |
 | Observability | OpenTelemetry + Jaeger |
-| LLM Routing | Groq (fast) + Anthropic (complex) |
+| LLM Routing | OpenAI SDK (any provider via baseURL) |
+| Integrations | Composio (optional platform connections) |
 
 ---
 
@@ -214,6 +229,11 @@ monte simulate run -s career_change -n "Job Change" -c 1000
 monte simulate progress <id>  # Check progress
 monte simulate results <id>   # View results
 monte simulate scenarios      # List available scenarios
+
+# Platform Connections (optional)
+monte connect                # Interactive platform picker + OAuth links
+monte connect confirm        # Verify pending connections
+monte connect status         # Show connected platforms
 
 # Data Sources
 monte ingest <path>           # Scan directory and ingest all files
@@ -405,11 +425,10 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] CLI interface
 - [x] API pagination & caching
 
-### Phase 6 (Next)
-- [ ] Gmail integration
-- [ ] GitHub integration
-- [ ] LinkedIn integration
-- [ ] Slack integration
+### Phase 6 (In Progress)
+- [x] Interactive `monte connect` with platform picker
+- [x] Composio OAuth integration (Google, Reddit, Spotify, GitHub, Notion, Slack, LinkedIn, Twitter)
+- [x] Connection verification (`monte connect confirm`)
 - [ ] Webhook notifications
 
 ### Future
