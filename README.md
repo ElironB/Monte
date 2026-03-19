@@ -368,7 +368,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## 🙏 Acknowledgments
 
 - Built with [Fastify](https://fastify.io/), [Neo4j](https://neo4j.com/), [BullMQ](https://bullmq.io/)
-- LLM integration via [Groq](https://groq.com/) and [Anthropic](https://anthropic.com/)
+- LLM integration via [OpenAI SDK](https://github.com/openai/openai-node) - works with Groq, OpenRouter, OpenAI, Together, and any OpenAI-compatible API
 - Inspired by "The Black Swan" and behavioral economics research
 
 ---
