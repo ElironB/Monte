@@ -44,7 +44,7 @@
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│ 4. SIMULATION ENGINE (NEXT PHASE)                        │
+│ 4. SIMULATION ENGINE ✅ COMPLETE                         │
 │ Decision Graph + World Agents + LLM Fork Evaluator      │
 │ Chaos Injector + Batch Orchestrator                    │
 └────────────────────┬────────────────────────────────────┘
@@ -60,7 +60,7 @@
 ## Implementation Status
 
 ### ✅ PHASE 1 - Core Infrastructure (COMPLETE)
-**Commit**: Multiple commits, latest includes all Phase 1 files
+**Commit**: `959cbaa`
 
 **What's Done**:
 - Fastify API with JWT auth (access + refresh tokens)
@@ -104,7 +104,7 @@
 ---
 
 ### ✅ PHASE 3 - Persona Construction (COMPLETE)
-**Commit**: `1809c2a` (4 commits ahead of origin/main)
+**Commit**: `1809c2a`
 
 **What's Done**:
 - `DimensionMapper` - 6 behavioral dimensions with recency weighting
@@ -141,50 +141,64 @@
 
 ---
 
-### ⏳ PHASE 4 - Simulation Engine (NEXT)
-**Status**: NOT STARTED
+### ✅ PHASE 4 - Simulation Engine (COMPLETE)
+**Commit**: `0171a32`
 
-**What Needs To Be Built**:
+**What's Done**:
 
-#### 1. Decision Graph System
-- `src/simulation/decisionGraph.ts`
-- Scenario definitions (8 built-in types)
+#### 1. Decision Graph System ✅
+- `src/simulation/decisionGraph.ts` - 8 complete scenarios
 - Decision nodes, event nodes, outcome nodes
-- Graph builder for each scenario
+- day_trading, startup_founding, career_change, advanced_degree, geographic_relocation, real_estate_purchase, health_fitness_goal, custom
 
-#### 2. World Agents (4 total)
-- `src/simulation/worldAgents/base.ts`
-- `src/simulation/worldAgents/financial.ts` - Market returns, inflation, liquidity
+#### 2. World Agents (4 total) ✅
+- `src/simulation/worldAgents/base.ts` - Base agent with historical data (S&P 500, BLS)
+- `src/simulation/worldAgents/financial.ts` - Market returns, inflation, liquidity models
 - `src/simulation/worldAgents/career.ts` - Job market, salary growth, burnout
-- `src/simulation/worldAgents/education.ts` - Completion rates, ROI
+- `src/simulation/worldAgents/education.ts` - Completion rates, ROI models
 - `src/simulation/worldAgents/social.ts` - Network effects, relocation costs
 
-#### 3. LLM Fork Evaluator
-- `src/simulation/forkEvaluator.ts`
-- Complexity scoring (0-1)
+#### 3. LLM Fork Evaluator ✅
+- `src/simulation/forkEvaluator.ts` - Complexity scoring (0-1)
 - Router: Groq (fast/cheap) vs Anthropic (complex)
 - Threshold: complexity > 0.6 = Anthropic
 - Max 20 Anthropic calls per simulation
+- Heuristic fallback when LLM unavailable
 
-#### 4. Chaos Injector
+#### 4. Chaos Injector ✅
 - `src/simulation/chaosInjector.ts`
-- Black swan events: medical, market crash, job loss, relationship
-- Low probability, high impact
+- Black swan events: medical, market crash, job loss, relationship, natural_disaster
+- Behavioral trait modifiers affect probability
+- Max 2 events per simulation
 
-#### 5. Batch Orchestrator
-- Execute 1000 clones in parallel
-- Real-time progress tracking
-- `src/ingestion/queue/workers/index.ts` - Update `processSimulation`
+#### 5. Batch Orchestrator ✅
+- `src/simulation/engine.ts` - SimulationEngine class
+- Executes 1000 clones in parallel batches
+- Real-time progress tracking via BullMQ
+- `src/ingestion/queue/workers/index.ts` - `processSimulation` updated
 
-#### 6. Result Aggregator
-- Histogram generation
-- Outcome distributions
+#### 6. Result Aggregator ✅
+- `src/simulation/resultAggregator.ts`
+- Histogram generation for all metrics
+- Outcome distributions (success/failure/neutral)
 - Timeline distributions
-- Store in Neo4j Simulation node
+- Stratified breakdown by clone category
+- Store results in Neo4j Simulation node
+
+**How It Works**:
+1. Simulation triggered via `POST /simulation` with scenarioType
+2. Queues 10 batches of 100 clones each
+3. Worker fetches clones from Neo4j
+4. `SimulationEngine` executes each clone through decision graph
+5. `ForkEvaluator` uses LLM or heuristic for decision nodes
+6. `ChaosInjector` adds random black swan events
+7. World agents apply market/career/education/social effects
+8. Results aggregated and stored in Neo4j
+9. Final batch marks simulation as `completed`
 
 ---
 
-### ⏳ PHASE 5 - CLI & API Polish (PENDING)
+### ⏳ PHASE 5 - CLI & API Polish (NEXT)
 **Status**: NOT STARTED
 
 - SSE streaming for simulation progress
@@ -243,22 +257,23 @@ Monte/
 │   │   └── queue/
 │   │       ├── ingestionQueue.ts  # BullMQ setup
 │   │       └── workers/
-│   │           └── index.ts       # Real processing (UPDATE FOR SIMULATION)
+│   │           └── index.ts       # Real processing
 │   ├── persona/                   # ✅ COMPLETE
 │   │   ├── dimensionMapper.ts     # 6 dimensions
 │   │   ├── graphBuilder.ts        # Neo4j graph
 │   │   ├── personaCompressor.ts   # Master persona
 │   │   └── cloneGenerator.ts      # 1000 clones
-│   ├── simulation/                # ⏳ PHASE 4 - BUILD THIS
-│   │   ├── decisionGraph.ts       # Decision trees
+│   ├── simulation/                # ✅ COMPLETE
+│   │   ├── decisionGraph.ts       # 8 scenarios
 │   │   ├── worldAgents/
-│   │   │   ├── base.ts            # Base agent
+│   │   │   ├── base.ts            # Base agent + historical data
 │   │   │   ├── financial.ts       # Market models
 │   │   │   ├── career.ts          # Job market
 │   │   │   ├── education.ts       # Degree ROI
 │   │   │   └── social.ts          # Network effects
 │   │   ├── forkEvaluator.ts       # LLM routing
 │   │   ├── chaosInjector.ts       # Black swans
+│   │   ├── engine.ts              # Simulation execution
 │   │   └── resultAggregator.ts    # Distributions
 │   └── utils/
 │       ├── logger.ts              # Pino logging
@@ -310,7 +325,7 @@ Monte/
 ### 3. Queue System
 - **Ingestion Queue**: Process uploaded files → extract signals
 - **Persona Queue**: Build graph + generate 1000 clones
-- **Simulation Queue**: Run clone batches (placeholder - needs implementation)
+- **Simulation Queue**: Run clone batches (100 clones/batch) → aggregate results
 
 ### 4. Stratified Sampling (Clones)
 - Must cover edge cases, not just average
@@ -361,13 +376,14 @@ LOG_LEVEL=info
 
 ```
 On branch main
-4 commits ahead of origin/main
+5 commits ahead of origin/main
 
 Commits:
 1. 959cbaa - Phase 1: Core Infrastructure
 2. 9d0c2d2 - Phase 2: Ingestion Layer  
 3. 9e65564 - Docs: Implementation status
-4. 1809c2a - Phase 3: Persona Construction (HEAD)
+4. 1809c2a - Phase 3: Persona Construction
+5. 0171a32 - Phase 4: Simulation Engine (HEAD)
 ```
 
 **Important**: Main branch is protected, cannot push directly. Must use alternative method (GitHub web upload, token, or unprotect branch).
@@ -376,42 +392,39 @@ Commits:
 
 ## Next Steps for Next Agent
 
-### Immediate: Phase 4 - Simulation Engine
+### Immediate: Phase 5 - CLI & API Polish
 
-1. **Create simulation types**
-   ```typescript
-   // src/simulation/types.ts
-   interface DecisionNode { id, type: 'decision', options[], prompt }
-   interface EventNode { id, type: 'event', probability, outcomes[] }
-   interface OutcomeNode { id, type: 'outcome', results: Record<string, number> }
-   ```
+1. **SSE Streaming**
+   - Real-time simulation progress updates
+   - `EventSource` endpoint for frontend
+   - Clone-by-clone progress notifications
 
-2. **Build decision graphs for 8 scenarios**
-   - Start with `day_trading` as proof of concept
-   - Define decision points, market events, outcomes
+2. **OpenTelemetry Tracing**
+   - Distributed tracing across workers
+   - Performance metrics collection
+   - Export to Jaeger/Zipkin
 
-3. **Implement World Agents**
-   - FinancialAgent with S&P 500 historical returns
-   - CareerAgent with industry base rates
-   - Start simple, add complexity later
+3. **API Key System**
+   - External agent authentication
+   - Rate limiting by API key
+   - Usage analytics
 
-4. **Fork Evaluator**
-   - Complexity scoring function
-   - LLM routing logic
-   - Groq integration (Groq SDK already added)
+4. **CLI Interface**
+   - `monte login` - Authenticate user
+   - `monte simulate <scenario>` - Run simulation
+   - `monte results <simulation-id>` - View results
+   - `monte persona` - Check persona status
+   - `monte ingest <file>` - Upload data source
 
-5. **Update simulation worker**
-   - Current `processSimulation` is placeholder
-   - Needs to fetch 1000 clones, run through decision graph
-   - Store results
+5. **API Polish**
+   - Pagination for list endpoints
+   - Filtering and sorting
+   - Caching layer (Redis)
 
-### After Phase 4: Phase 5
-- SSE streaming
-- OpenTelemetry
-- CLI polish
-
-### After Phase 5: Phase 6
-- More Composio extractors
+### After Phase 5: Phase 6 - Extended Sources
+- More Composio integrations
+- Gmail, GitHub, LinkedIn, Slack extractors
+- No new OAuth code needed (Composio handles it)
 
 ---
 
@@ -483,5 +496,5 @@ If unclear on ANYTHING in this document:
 
 ---
 
-**Last Updated**: Phase 3 complete, ready for Phase 4
-**Agent**: Continue with Phase 4 Simulation Engine
+**Last Updated**: Phase 4 complete, ready for Phase 5
+**Agent**: Continue with Phase 5 CLI & API Polish
