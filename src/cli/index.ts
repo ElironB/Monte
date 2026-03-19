@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { authCommands } from './commands/auth.js';
 import { simulationCommands } from './commands/simulation.js';
 import { personaCommands } from './commands/persona.js';
 import { ingestionCommands } from './commands/ingestion.js';
@@ -20,7 +19,6 @@ program.option('-v, --verbose', 'verbose output', false);
 program.option('--api <url>', 'API endpoint', loadConfig().apiUrl || 'http://localhost:3000');
 
 // Commands
-program.addCommand(authCommands);
 program.addCommand(simulationCommands);
 program.addCommand(personaCommands);
 program.addCommand(ingestionCommands);

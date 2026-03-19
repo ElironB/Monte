@@ -2,17 +2,10 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { runQuery, runQuerySingle, runWriteSingle } from '../../config/neo4j.js';
 import { cacheGet, cacheSet } from '../../config/redis.js';
-import { NotFoundError, ValidationError } from '../../utils/errors.js';
-import bcrypt from 'bcrypt';
+import { NotFoundError } from '../../utils/errors.js';
 
 const updateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  password: z.string().min(8).optional(),
-});
-
-const deleteSchema = z.object({
-  password: z.string(),
-  confirmDelete: z.literal(true),
 });
 
 const listQuerySchema = z.object({
@@ -26,13 +19,12 @@ const listQuerySchema = z.object({
 const CACHE_TTL = 300; // 5 minutes
 
 async function userRoutes(fastify: FastifyInstance) {
-  // List users with pagination (admin only in production)
+  // List users with pagination
   fastify.get('/', {
     preHandler: [fastify.authenticate],
     schema: {
       description: 'List users with pagination',
       tags: ['users'],
-      security: [{ bearerAuth: [] }],
       querystring: {
         type: 'object',
         properties: {
@@ -99,7 +91,6 @@ async function userRoutes(fastify: FastifyInstance) {
     schema: {
       description: 'Get current user (cached)',
       tags: ['users'],
-      security: [{ bearerAuth: [] }],
     },
     handler: async (request: FastifyRequest) => {
       const cacheKey = `user:${request.user.userId}`;
@@ -177,20 +168,7 @@ async function userRoutes(fastify: FastifyInstance) {
       if (id !== request.user.userId) throw new NotFoundError('User');
 
       const body = updateSchema.parse(request.body);
-      if (!body.name && !body.password) throw new ValidationError('Nothing to update');
-
-      const updates: string[] = ['u.updatedAt = datetime()'];
-      const params: Record<string, unknown> = { id };
-
-      if (body.name) {
-        updates.push('u.name = $name');
-        params.name = body.name;
-      }
-      if (body.password) {
-        const hash = await bcrypt.hash(body.password, 12);
-        updates.push('u.passwordHash = $passwordHash');
-        params.passwordHash = hash;
-      }
+      if (!body.name) throw new Error('Nothing to update');
 
       const user = await runWriteSingle<{
         id: string;
@@ -198,9 +176,9 @@ async function userRoutes(fastify: FastifyInstance) {
         name: string;
       }>(
         `MATCH (u:User {id: $id})
-         SET ${updates.join(', ')}
+         SET u.name = $name, u.updatedAt = datetime()
          RETURN u.id as id, u.email as email, u.name as name`,
-        params
+        { id, name: body.name }
       );
 
       // Invalidate cache
@@ -217,24 +195,12 @@ async function userRoutes(fastify: FastifyInstance) {
       const { id } = request.params as { id: string };
       if (id !== request.user.userId) throw new NotFoundError('User');
 
-      const body = deleteSchema.parse(request.body);
-
-      const user = await runQuerySingle<{ passwordHash: string }>(
-        'MATCH (u:User {id: $id}) RETURN u.passwordHash as passwordHash',
-        { id }
-      );
-      if (!user) throw new NotFoundError('User');
-
-      const valid = await bcrypt.compare(body.password, user.passwordHash);
-      if (!valid) throw new ValidationError('Invalid password');
-
       await runWriteSingle(
         `MATCH (u:User {id: $id})
          OPTIONAL MATCH (u)-[:HAS_PERSONA]->(p:Persona)
          OPTIONAL MATCH (p)-[:HAS_CLONE]->(c:Clone)
          OPTIONAL MATCH (p)-[:HAS_SIMULATION]->(s:Simulation)
-         OPTIONAL MATCH (u)-[:HAS_API_KEY]->(k:ApiKey)
-         DETACH DELETE u, p, c, s, k`,
+         DETACH DELETE u, p, c, s`,
         { id }
       );
 

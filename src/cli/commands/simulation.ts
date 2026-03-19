@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { api } from '../api.js';
-import { requireAuth, loadConfig } from '../config.js';
+import { loadConfig } from '../config.js';
 
 export const simulationCommands = new Command('simulate')
   .description('Simulation commands');
@@ -9,7 +9,6 @@ simulationCommands
   .command('list')
   .description('List all simulations')
   .action(async () => {
-    requireAuth();
     try {
       const simulations = await api.listSimulations() as Array<{
         id: string;
@@ -50,7 +49,6 @@ simulationCommands
   .option('-c, --clones <count>', 'number of clones', '1000')
   .option('--wait', 'wait for completion and show results', false)
   .action(async (options) => {
-    requireAuth();
     try {
       const name = options.name || `${options.scenario}-${Date.now()}`;
       const cloneCount = parseInt(options.clones, 10);
@@ -73,10 +71,8 @@ simulationCommands
         console.log('\nWaiting for completion...');
         await waitForSimulation(result.simulationId);
       } else {
-        console.log(`\nRun 
-monnt' to check progress`);
-        console.log(`Run 
-monns`);
+        console.log(`\nRun \`monte simulate progress ${result.simulationId}\` to check progress`);
+        console.log(`Run \`monte simulate results ${result.simulationId}\` for results when done`);
       }
     } catch (err) {
       console.error('Error:', (err as Error).message);
@@ -89,7 +85,6 @@ simulationCommands
   .description('Check simulation progress')
   .argument('<id>', 'simulation ID')
   .action(async (id) => {
-    requireAuth();
     try {
       const progress = await api.getSimulationProgress(id) as {
         simulationId: string;
@@ -126,7 +121,6 @@ simulationCommands
   .argument('<id>', 'simulation ID')
   .option('-f, --format <format>', 'output format (table, json)', 'table')
   .action(async (id, options) => {
-    requireAuth();
     try {
       const data = await api.getSimulationResults(id) as {
         status: string;
@@ -221,7 +215,6 @@ simulationCommands
   .argument('<id>', 'simulation ID')
   .option('--force', 'skip confirmation', false)
   .action(async (id, options) => {
-    requireAuth();
     try {
       if (!options.force) {
         console.log(`This will delete simulation ${id}`);

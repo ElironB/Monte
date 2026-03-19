@@ -4,7 +4,7 @@ import helmet from '@fastify/helmet';
 
 import { config } from './config/index.js';
 import { initializeSchema } from './config/neo4j-schema.js';
-import { closeNeo4j } from './config/neo4j.js';
+import { closeNeo4j, runWriteSingle } from './config/neo4j.js';
 import { closeRedis } from './config/redis.js';
 import { initializeTracing, shutdownTracing } from './config/tracing.js';
 import { logger } from './utils/logger.js';
@@ -14,16 +14,13 @@ import { stopWorkers, startWorkers } from './ingestion/queue/workers/index.js';
 import authPlugin from './api/plugins/auth.js';
 import rateLimitPlugin from './api/plugins/rateLimit.js';
 import schemaPlugin from './api/plugins/schema.js';
-import apiKeyPlugin from './api/plugins/apiKey.js';
 
-import authRoutes from './api/routes/auth.js';
 import userRoutes from './api/routes/users.js';
 import healthRoutes from './api/routes/health.js';
 import ingestionRoutes from './api/routes/ingestion.js';
 import personaRoutes from './api/routes/persona.js';
 import simulationRoutes from './api/routes/simulation.js';
 import cliRoutes from './api/routes/cli.js';
-import apiKeyRoutes from './api/routes/apikeys.js';
 import streamRoutes from './api/routes/stream.js';
 
 import { getErrorResponse } from './utils/errors.js';
@@ -37,18 +34,15 @@ await app.register(helmet);
 await app.register(cors, { origin: config.server.nodeEnv === 'development', credentials: true });
 
 await app.register(authPlugin);
-await app.register(apiKeyPlugin);
 await app.register(rateLimitPlugin);
 await app.register(schemaPlugin);
 
 await app.register(healthRoutes, { prefix: '/health' });
-await app.register(authRoutes, { prefix: '/auth' });
 await app.register(userRoutes, { prefix: '/users' });
 await app.register(ingestionRoutes, { prefix: '/ingestion' });
 await app.register(personaRoutes, { prefix: '/persona' });
 await app.register(simulationRoutes, { prefix: '/simulation' });
 await app.register(cliRoutes, { prefix: '/cli' });
-await app.register(apiKeyRoutes, { prefix: '/api-keys' });
 await app.register(streamRoutes, { prefix: '/stream' });
 
 app.setErrorHandler((error, request, reply) => {
@@ -79,6 +73,18 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 async function start() {
   try {
     await initializeSchema();
+
+    // Ensure local user exists for self-hosted mode
+    const LOCAL_USER_ID = 'local-user';
+    const LOCAL_USER_EMAIL = 'local@monte.localhost';
+
+    await runWriteSingle(
+      `MERGE (u:User {id: $userId})
+       ON CREATE SET u.email = $email, u.name = 'Local User', u.createdAt = datetime(), u.updatedAt = datetime()
+       RETURN u.id as id`,
+      { userId: LOCAL_USER_ID, email: LOCAL_USER_EMAIL }
+    );
+
     startWorkers();
     await app.listen({ port: config.server.port, host: '0.0.0.0' });
     logger.info({ port: config.server.port }, 'Monte Engine started');

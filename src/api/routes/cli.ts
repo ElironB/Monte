@@ -1,39 +1,12 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string(),
-});
-
 const simulateSchema = z.object({
   scenarioType: z.string(),
   parameters: z.record(z.unknown()).optional(),
 });
 
 async function cliRoutes(fastify: FastifyInstance) {
-  fastify.post('/login', {
-    schema: { description: 'CLI login', tags: ['cli'] },
-    handler: async (request) => {
-      const body = loginSchema.parse(request.body);
-      const response = await fastify.inject({
-        method: 'POST',
-        url: '/auth/login',
-        payload: body,
-      });
-      const result = JSON.parse(response.payload);
-      if (response.statusCode !== 200) {
-        return { success: false, ...result };
-      }
-      return {
-        success: true,
-        userId: result.userId,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-      };
-    },
-  });
-
   fastify.post('/simulate', {
     preHandler: [fastify.authenticate],
     schema: { description: 'Trigger simulation', tags: ['cli'], security: [{ bearerAuth: [] }] },

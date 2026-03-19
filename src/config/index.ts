@@ -20,15 +20,6 @@ const configSchema = z.object({
     bucket: z.string().default('monte-data'),
     useSSL: z.boolean().default(false),
   }),
-  auth: z.object({
-    jwtSecret: z.string().min(32),
-    refreshTokenSecret: z.string().min(32),
-    jwtExpiryMinutes: z.number().default(15),
-    refreshTokenExpiryDays: z.number().default(30),
-  }),
-  apiKeys: z.object({
-    salt: z.string().min(32),
-  }),
   server: z.object({
     port: z.number().default(3000),
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
@@ -66,15 +57,6 @@ export const config = configSchema.parse({
     secretKey: process.env.MINIO_SECRET_KEY,
     bucket: process.env.MINIO_BUCKET,
     useSSL: process.env.MINIO_USE_SSL === 'true',
-  },
-  auth: {
-    jwtSecret: process.env.JWT_SECRET,
-    refreshTokenSecret: process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET,
-    jwtExpiryMinutes: process.env.JWT_EXPIRY_MINUTES ? parseInt(process.env.JWT_EXPIRY_MINUTES, 10) : undefined,
-    refreshTokenExpiryDays: process.env.REFRESH_TOKEN_EXPIRY_DAYS ? parseInt(process.env.REFRESH_TOKEN_EXPIRY_DAYS, 10) : undefined,
-  },
-  apiKeys: {
-    salt: process.env.API_KEY_SALT || process.env.JWT_SECRET || 'default_salt_change_in_production_32chars!',
   },
   server: {
     port: process.env.PORT ? parseInt(process.env.PORT, 10) : undefined,

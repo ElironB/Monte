@@ -1,6 +1,5 @@
 import { Command } from 'commander';
 import { api } from '../api.js';
-import { requireAuth } from '../config.js';
 
 export const personaCommands = new Command('persona')
   .description('Persona management commands');
@@ -9,7 +8,6 @@ personaCommands
   .command('status')
   .description('Check persona status')
   .action(async () => {
-    requireAuth();
     try {
       const persona = await api.getPersona() as {
         status?: string;
@@ -44,7 +42,6 @@ personaCommands
   .description('Build a new persona from your data sources')
   .option('-t, --traits <traits>', 'base traits as JSON (e.g., {"riskTolerance":0.7})')
   .action(async (options) => {
-    requireAuth();
     try {
       console.log('Starting persona build...');
 
@@ -76,7 +73,6 @@ personaCommands
   .command('history')
   .description('View persona build history')
   .action(async () => {
-    requireAuth();
     try {
       const history = await api.getPersonaHistory() as Array<{
         id: string;
@@ -111,7 +107,6 @@ personaCommands
   .command('traits')
   .description('View persona traits')
   .action(async () => {
-    requireAuth();
     try {
       const traits = await api.getPersonaTraits() as Array<{
         name: string;

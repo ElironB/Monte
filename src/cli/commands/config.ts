@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { loadConfig, saveConfig, loadAuth } from '../config.js';
+import { loadConfig, saveConfig } from '../config.js';
 
 export const configCommands = new Command('config')
   .description('Configuration commands');
@@ -9,16 +9,11 @@ configCommands
   .description('Show current configuration')
   .action(() => {
     const config = loadConfig();
-    const auth = loadAuth();
 
     console.log('\nConfiguration:');
     console.log(`  API URL: ${config.apiUrl}`);
     console.log(`  Default Scenario: ${config.defaultScenario || 'none'}`);
     console.log(`  Default Clones: ${config.defaultCloneCount || 1000}`);
-    console.log(`\nAuthenticated: ${auth.accessToken ? 'Yes' : 'No'}`);
-    if (auth.email) {
-      console.log(`  Email: ${auth.email}`);
-    }
   });
 
 configCommands
