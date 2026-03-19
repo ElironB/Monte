@@ -10,35 +10,41 @@
     "start": "node dist/index.js",
     "test": "vitest"
   },
-  "keywords": ["simulation", "monte-carlo"],
+  "keywords": [
+    "simulation",
+    "monte-carlo"
+  ],
   "license": "MIT",
   "dependencies": {
-    "fastify": "^5.0.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/helmet": "^12.0.0",
     "@fastify/rate-limit": "^10.0.0",
     "@fastify/swagger": "^9.0.0",
     "@fastify/swagger-ui": "^5.0.0",
-    "neo4j-driver": "^5.27.0",
-    "bullmq": "^5.41.0",
-    "ioredis": "^5.4.0",
-    "minio": "^7.1.4",
-    "jsonwebtoken": "^9.0.0",
     "bcrypt": "^5.1.0",
-    "uuid": "^10.0.0",
-    "zod": "^3.23.0",
+    "bullmq": "^5.41.0",
+    "dotenv": "^16.4.0",
+    "fastify": "^5.0.0",
+    "groq-sdk": "^1.1.1",
+    "ioredis": "^5.4.0",
+    "jsonwebtoken": "^9.0.0",
+    "minio": "^7.1.4",
+    "neo4j-driver": "^5.27.0",
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
-    "dotenv": "^16.4.0"
+    "uuid": "^10.0.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/jsonwebtoken": "^9.0.0",
     "@types/bcrypt": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.0",
+    "@types/node": "^20.0.0",
     "@types/uuid": "^10.0.0",
-    "typescript": "^5.6.0",
     "tsx": "^4.0.0",
+    "typescript": "^5.6.0",
     "vitest": "^2.0.0"
   },
-  "engines": { "node": ">=20.0.0" }
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

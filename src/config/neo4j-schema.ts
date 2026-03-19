@@ -9,6 +9,8 @@ const CONSTRAINTS = [
   'CREATE CONSTRAINT memory_id IF NOT EXISTS FOR (m:Memory) REQUIRE m.id IS UNIQUE',
   'CREATE CONSTRAINT clone_id IF NOT EXISTS FOR (c:Clone) REQUIRE c.id IS UNIQUE',
   'CREATE CONSTRAINT simulation_id IF NOT EXISTS FOR (s:Simulation) REQUIRE s.id IS UNIQUE',
+  'CREATE CONSTRAINT signal_id IF NOT EXISTS FOR (s:Signal) REQUIRE s.id IS UNIQUE',
+  'CREATE CONSTRAINT contradiction_id IF NOT EXISTS FOR (c:Contradiction) REQUIRE c.id IS UNIQUE',
 ];
 
 export async function initializeSchema(): Promise<void> {
