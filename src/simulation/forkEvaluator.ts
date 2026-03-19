@@ -43,7 +43,7 @@ export class ForkEvaluator {
         apiKey: config.llm.apiKey,
         baseURL: config.llm.baseUrl || 'https://api.groq.com/openai/v1',
       });
-      this.model = config.llm.model || 'llama-3.1-70b-versatile';
+      this.model = config.llm.model || 'openai/gpt-oss-20b';
       this.reasoningModel = config.llm.reasoningModel || null;
     } else {
       this.model = '';
@@ -123,7 +123,7 @@ export class ForkEvaluator {
     useReasoning: boolean
   ): Promise<LLMEvaluation> {
     if (!this.client) {
-      throw new Error('LLM client not initialized - set LLM_API_KEY');
+      throw new Error('LLM client not initialized - set OPENROUTER_API_KEY or GROQ_API_KEY');
     }
 
     const prompt = this.buildPrompt(request);

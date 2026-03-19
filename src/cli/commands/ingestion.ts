@@ -1,7 +1,17 @@
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, extname, basename } from 'path';
 import { api } from '../api.js';
+import {
+  dimText,
+  icons,
+  infoLabel,
+  sectionHeader,
+  statusColor,
+  valueText,
+  warningText,
+} from '../styles.js';
 
 const SUPPORTED_EXTENSIONS = new Set([
   '.json', '.csv', '.txt', '.md', '.pdf', '.docx',
@@ -18,6 +28,10 @@ interface DiscoveredFile {
   extension: string;
   sourceType: string;
   mimetype: string;
+}
+
+function divider(width: number): string {
+  return chalk.dim('─'.repeat(width));
 }
 
 function walkDirectory(dirPath: string): DiscoveredFile[] {
@@ -53,13 +67,9 @@ function walkDirectory(dirPath: string): DiscoveredFile[] {
 }
 
 function detectSourceType(filePath: string, ext: string): string {
-  // For markdown/text files → notes
   if (ext === '.md' || ext === '.txt') return 'notes';
-
-  // For images/PDFs → files
   if (['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) return 'files';
 
-  // For JSON: try to peek at content to classify
   if (ext === '.json') {
     try {
       const content = readFileSync(filePath, 'utf-8').slice(0, 2000).toLowerCase();
@@ -67,16 +77,19 @@ function detectSourceType(filePath: string, ext: string): string {
       if (content.includes('watch') || content.includes('video') || content.includes('youtube')) return 'watch_history';
       if (content.includes('transaction') || content.includes('amount') || content.includes('balance')) return 'financial';
       if (content.includes('post') || content.includes('comment') || content.includes('subreddit') || content.includes('tweet')) return 'social_media';
-    } catch { /* fall through */ }
+    } catch {
+      return 'files';
+    }
     return 'files';
   }
 
-  // For CSV: check headers
   if (ext === '.csv') {
     try {
       const firstLine = readFileSync(filePath, 'utf-8').split('\n')[0].toLowerCase();
       if (firstLine.includes('amount') || firstLine.includes('transaction') || firstLine.includes('debit') || firstLine.includes('credit')) return 'financial';
-    } catch { /* fall through */ }
+    } catch {
+      return 'files';
+    }
     return 'files';
   }
 
@@ -101,86 +114,97 @@ function getMimetype(ext: string): string {
 }
 
 export const ingestionCommands = new Command('ingest')
-  .description('Ingest data files for persona building');
+  .description(chalk.dim('Ingest data files for persona building'));
 
 ingestionCommands
   .argument('[path]', 'directory or file path to ingest')
-  .description('Scan a directory and ingest all supported files')
+  .description(chalk.dim('Scan a directory and ingest all supported files'))
   .action(async (path) => {
     if (!path) {
-      console.error('Usage: monte ingest <path>');
-      console.error('  e.g., monte ingest ./my-data');
-      console.error('  e.g., monte ingest .');
+      console.error(`${icons.error} ${warningText('Usage: monte ingest <path>')}`);
+      console.error(dimText('  e.g., monte ingest ./my-data'));
+      console.error(dimText('  e.g., monte ingest .'));
       process.exit(1);
     }
 
-    const stat = statSync(path);
-    let files: DiscoveredFile[];
+    try {
+      const stat = statSync(path);
+      let files: DiscoveredFile[];
 
-    if (stat.isDirectory()) {
-      console.log(`Scanning ${path}...`);
-      files = walkDirectory(path);
-    } else {
-      // Single file
-      const ext = extname(path).toLowerCase();
-      files = [{
-        path,
-        filename: basename(path),
-        extension: ext,
-        sourceType: detectSourceType(path, ext),
-        mimetype: getMimetype(ext),
-      }];
-    }
-
-    if (files.length === 0) {
-      console.log('No supported files found.');
-      return;
-    }
-
-    // Group by source type and show summary
-    const groups = new Map<string, DiscoveredFile[]>();
-    for (const file of files) {
-      const group = groups.get(file.sourceType) || [];
-      group.push(file);
-      groups.set(file.sourceType, group);
-    }
-
-    console.log(`\nFound ${files.length} file(s):`);
-    for (const [type, typeFiles] of groups) {
-      console.log(`  ${type}: ${typeFiles.length} file(s)`);
-    }
-    console.log();
-
-    // Upload each group
-    for (const [sourceType, typeFiles] of groups) {
-      console.log(`Uploading ${typeFiles.length} ${sourceType} file(s)...`);
-
-      const fileData = typeFiles.map(f => ({
-        filename: f.filename,
-        content: readFileSync(f.path).toString('base64'),
-        mimetype: f.mimetype,
-      }));
-
-      try {
-        // Upload in batches of 10 to avoid huge payloads
-        const BATCH_SIZE = 10;
-        for (let i = 0; i < fileData.length; i += BATCH_SIZE) {
-          const batch = fileData.slice(i, i + BATCH_SIZE);
-          const result = await api.uploadFiles(batch, sourceType) as { sourceId: string; status: string };
-          console.log(`  ✓ Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.length} files → ${result.sourceId}`);
-        }
-      } catch (err) {
-        console.error(`  ✗ Failed: ${(err as Error).message}`);
+      if (stat.isDirectory()) {
+        console.log(`${infoLabel('Scanning directory:')} ${dimText(path)}`);
+        files = walkDirectory(path);
+      } else {
+        const ext = extname(path).toLowerCase();
+        files = [{
+          path,
+          filename: basename(path),
+          extension: ext,
+          sourceType: detectSourceType(path, ext),
+          mimetype: getMimetype(ext),
+        }];
+        console.log(`${infoLabel('Inspecting file:')} ${dimText(path)}`);
       }
-    }
 
-    console.log('\n✓ Ingestion complete. Files are being processed.');
-    console.log('Run `monte ingest status` to check progress.');
+      if (files.length === 0) {
+        console.log(dimText('No supported files found.'));
+        return;
+      }
+
+      const groups = new Map<string, DiscoveredFile[]>();
+      for (const file of files) {
+        const group = groups.get(file.sourceType) || [];
+        group.push(file);
+        groups.set(file.sourceType, group);
+      }
+
+      console.log(`\n${sectionHeader('Discovered Files')}`);
+      console.log(`  ${infoLabel('Total files:')} ${chalk.cyan.bold(files.length)}`);
+      for (const [type, typeFiles] of groups) {
+        console.log(`  ${infoLabel(`${type}:`)} ${chalk.cyan.bold(typeFiles.length)} ${dimText('file(s)')}`);
+        for (const file of typeFiles.slice(0, 3)) {
+          console.log(`    ${dimText(file.path)}`);
+        }
+        if (typeFiles.length > 3) {
+          console.log(`    ${dimText(`...and ${typeFiles.length - 3} more`)}`);
+        }
+      }
+
+      for (const [sourceType, typeFiles] of groups) {
+        console.log(`\n${sectionHeader(`Uploading ${sourceType}`)}`);
+
+        const fileData = typeFiles.map(f => ({
+          filename: f.filename,
+          content: readFileSync(f.path).toString('base64'),
+          mimetype: f.mimetype,
+        }));
+
+        try {
+          const BATCH_SIZE = 10;
+          const totalBatches = Math.ceil(fileData.length / BATCH_SIZE);
+          for (let i = 0; i < fileData.length; i += BATCH_SIZE) {
+            const batchIndex = Math.floor(i / BATCH_SIZE) + 1;
+            const batch = fileData.slice(i, i + BATCH_SIZE);
+            process.stdout.write(`  ${infoLabel(`[${batchIndex}/${totalBatches}]`)} ${dimText(`Uploading ${batch.length} file(s)...`)}`);
+            const result = await api.uploadFiles(batch, sourceType) as { sourceId: string; status: string };
+            process.stdout.write(`\r  ${icons.success} ${chalk.green.bold(`Batch ${batchIndex}/${totalBatches}`)} ${dimText('→')} ${chalk.cyan(result.sourceId)} ${statusColor(result.status)}\n`);
+          }
+        } catch (err) {
+          console.error(`  ${icons.error} ${(err as Error).message}`);
+        }
+      }
+
+      console.log(`\n${icons.success} ${chalk.green.bold('Ingestion complete. Files are being processed.')}`);
+      console.log(dimText('Run `monte ingest status` to check progress.'));
+    } catch (err) {
+      console.error(`${icons.error} ${(err as Error).message}`);
+      process.exit(1);
+    }
   });
 
 ingestionCommands
   .command('status')
-  .description('Show ingestion status for all sources')
+  .description(chalk.dim('Show ingestion status for all sources'))
   .action(async () => {
     try {
       const sources = await api.listDataSources() as Array<{
@@ -193,41 +217,41 @@ ingestionCommands
       }>;
 
       if (sources.length === 0) {
-        console.log('No data sources found');
+        console.log(dimText('No data sources found'));
         return;
       }
 
-      console.log('\nData Sources:');
-      console.log('-'.repeat(100));
-      console.log(`${'ID'.padEnd(36)} ${'Type'.padEnd(15)} ${'Status'.padEnd(12)} ${'Signals'.padEnd(8)} ${'Name'.padEnd(20)} Created`);
-      console.log('-'.repeat(100));
+      console.log(`\n${sectionHeader('Data Sources')}`);
+      console.log(divider(118));
+      console.log(`${infoLabel('  ID'.padEnd(40))}${infoLabel('Type'.padEnd(18))}${infoLabel('Status'.padEnd(14))}${infoLabel('Signals'.padEnd(10))}${infoLabel('Name'.padEnd(24))}${infoLabel('Created')}`);
+      console.log(divider(118));
 
       for (const source of sources) {
         const date = new Date(source.createdAt).toLocaleDateString();
         const signalCount = source.signalCount?.toString() || '0';
         console.log(
-          `${source.id.padEnd(36)} ${source.sourceType.padEnd(15)} ${source.status.padEnd(12)} ${signalCount.padEnd(8)} ${source.name.slice(0, 18).padEnd(20)} ${date}`
+          `  ${dimText(source.id)}  ${chalk.white(source.sourceType.padEnd(15))}  ${statusColor(source.status, 12)}  ${chalk.cyan(signalCount.padStart(6))}    ${chalk.white.bold(source.name.slice(0, 20).padEnd(22))}  ${dimText(date)}`,
         );
       }
 
-      const byStatus = sources.reduce((acc, s) => {
-        acc[s.status] = (acc[s.status] || 0) + 1;
+      const byStatus = sources.reduce((acc, source) => {
+        acc[source.status] = (acc[source.status] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
 
-      console.log('\nSummary:');
+      console.log(`\n${sectionHeader('Summary')}`);
       for (const [status, count] of Object.entries(byStatus)) {
-        console.log(`  ${status}: ${count}`);
+        console.log(`  ${statusColor(status)} ${valueText(count)}`);
       }
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });
 
 ingestionCommands
   .command('list')
-  .description('List all data sources')
+  .description(chalk.dim('List all data sources'))
   .action(async () => {
     try {
       const sources = await api.listDataSources() as Array<{
@@ -239,44 +263,45 @@ ingestionCommands
       }>;
 
       if (sources.length === 0) {
-        console.log('No data sources found');
+        console.log(dimText('No data sources found'));
         return;
       }
 
-      console.log('\nData Sources:');
-      console.log('-'.repeat(90));
-      console.log(`${'ID'.padEnd(36)} ${'Type'.padEnd(12)} ${'Status'.padEnd(12)} ${'Name'.padEnd(20)} Created`);
-      console.log('-'.repeat(90));
+      console.log(`\n${sectionHeader('Data Sources')}`);
+      console.log(divider(108));
+      console.log(`${infoLabel('  ID'.padEnd(40))}${infoLabel('Type'.padEnd(15))}${infoLabel('Status'.padEnd(14))}${infoLabel('Name'.padEnd(24))}${infoLabel('Created')}`);
+      console.log(divider(108));
 
       for (const source of sources) {
         const date = new Date(source.createdAt).toLocaleDateString();
         console.log(
-          `${source.id.padEnd(36)} ${source.sourceType.padEnd(12)} ${source.status.padEnd(12)} ${source.name.slice(0, 18).padEnd(20)} ${date}`
+          `  ${dimText(source.id)}  ${chalk.white(source.sourceType.padEnd(12))}  ${statusColor(source.status, 12)}  ${chalk.white.bold(source.name.slice(0, 20).padEnd(22))}  ${dimText(date)}`,
         );
       }
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });
 
 ingestionCommands
   .command('delete')
-  .description('Delete a data source')
+  .description(chalk.dim('Delete a data source'))
   .argument('<id>', 'data source ID')
   .option('--force', 'skip confirmation', false)
   .action(async (id, options) => {
     try {
       if (!options.force) {
-        console.log(`This will delete data source ${id}`);
-        console.log('This action cannot be undone. Use --force to confirm.');
+        console.log(`${icons.warning} ${warningText('Destructive action')}`);
+        console.log(`  ${warningText('This will delete data source')} ${chalk.cyan(id)}`);
+        console.log(`  ${dimText('This action cannot be undone. Use --force to confirm.')}`);
         process.exit(1);
       }
 
       await api.deleteDataSource(id);
-      console.log('✓ Data source deleted');
+      console.log(`${icons.success} ${chalk.green.bold('Data source deleted')}`);
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });

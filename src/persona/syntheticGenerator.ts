@@ -50,7 +50,7 @@ export class SyntheticGenerator {
         apiKey: config.llm.apiKey,
         baseURL: config.llm.baseUrl || 'https://api.groq.com/openai/v1',
       });
-      this.model = config.llm.model || 'llama-3.1-70b-versatile';
+      this.model = config.llm.model || 'openai/gpt-oss-20b';
     } else {
       this.model = '';
     }
@@ -58,7 +58,7 @@ export class SyntheticGenerator {
 
   async generate(options: GenerationOptions): Promise<GeneratedPersona> {
     if (!this.client) {
-      throw new Error('LLM_API_KEY required for persona generation. Set it in your .env file.');
+      throw new Error('OPENROUTER_API_KEY or GROQ_API_KEY required for persona generation. Set one in your .env file.');
     }
 
     const startDate = new Date();

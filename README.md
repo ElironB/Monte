@@ -62,6 +62,20 @@ monte generate "25yo crypto trader, YOLO mentality, high risk tolerance" -o ./pe
 monte compare ./persona-conservative ./persona-aggressive -s day_trading
 ```
 
+### Custom Scenarios
+
+Don't see your decision? Use the `custom` scenario type:
+
+```bash
+monte simulate run -s custom --name "moving-to-berlin" --wait
+```
+
+Or explore all built-in scenarios:
+
+```bash
+monte simulate scenarios     # List all 8 scenario types
+```
+
 ---
 
 ## 🚀 Quick Start
@@ -92,6 +106,7 @@ Minimum required variables:
 NEO4J_PASSWORD=your_secure_password
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
+OPENROUTER_API_KEY=your_key    # or GROQ_API_KEY
 ```
 
 ### 3. Start Infrastructure
@@ -126,6 +141,8 @@ monte connect                # Select platforms interactively
 # Open each link in your browser to authorize
 monte connect confirm        # Verify connections
 ```
+
+Powered by [Composio](https://composio.dev/) — get your free API key at composio.dev
 
 Or skip this and use file-based ingestion only.
 
@@ -195,7 +212,7 @@ monte simulate run -s day_trading
 | Job Queue | BullMQ + Redis |
 | Object Storage | MinIO (S3-compatible) |
 | Observability | OpenTelemetry + Jaeger |
-| LLM Routing | OpenAI SDK (any provider via baseURL) |
+| LLM Provider | OpenAI SDK → Groq or OpenRouter (gpt-oss-20b / gpt-oss-120b) |
 | Integrations | Composio (optional platform connections) |
 
 ---
@@ -259,6 +276,7 @@ monte compare <dir-a> <dir-b> -s <scenario> # Side-by-side comparison
 monte compare ./a ./b -s day_trading -o report.md
 
 # Platform Connections (optional)
+# Requires COMPOSIO_API_KEY (free at composio.dev)
 monte connect                               # Interactive platform picker + OAuth links
 monte connect confirm                       # Verify pending connections
 monte connect status                        # Show connected platforms
@@ -396,10 +414,17 @@ MINIO_PORT=9000
 MINIO_ACCESS_KEY=<min 1 char>
 MINIO_SECRET_KEY=<min 1 char>
 
-# LLM (required for simulation — heuristic fallback if missing)
-LLM_API_KEY=your_key                    # Any OpenAI-compatible provider
-LLM_BASE_URL=https://api.groq.com/openai/v1   # API base URL
-LLM_MODEL=llama-3.1-70b-versatile             # Model name
+# LLM Provider (pick ONE — required for simulation)
+OPENROUTER_API_KEY=your_key        # One key for all models (recommended)
+# OR
+GROQ_API_KEY=your_key              # Groq fast inference
+
+# Optional model overrides
+# LLM_MODEL=openai/gpt-oss-20b
+# LLM_REASONING_MODEL=openai/gpt-oss-120b
+
+# Composio (optional)
+COMPOSIO_API_KEY=your_key   # Free at composio.dev — required for monte connect
 
 # OpenTelemetry (optional)
 OTEL_ENABLED=false
@@ -520,6 +545,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - Built with [Fastify](https://fastify.io/), [Neo4j](https://neo4j.com/), [BullMQ](https://bullmq.io/)
 - LLM integration via [OpenAI SDK](https://github.com/openai/openai-node) - works with Groq, OpenRouter, OpenAI, Together, and any OpenAI-compatible API
+- Platform integrations powered by [Composio](https://composio.dev/) — connect 100+ apps via OAuth
 - Inspired by "The Black Swan" and behavioral economics research
 
 ---
@@ -528,7 +554,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - **Issues:** [GitHub Issues](https://github.com/ElironB/Monte/issues)
 - **Discussions:** [GitHub Discussions](https://github.com/ElironB/Monte/discussions)
-- **Twitter:** [@MonteEngine](https://twitter.com/MonteEngine)
+- **Twitter:** [@ElironK300](https://twitter.com/ElironK300)
 
 ---
 

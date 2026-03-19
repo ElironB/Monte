@@ -1,7 +1,9 @@
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { checkbox } from '@inquirer/prompts';
 import { execSync } from 'child_process';
 import { savePendingConnections, loadPendingConnections, PendingConnection } from '../config.js';
+import { dimText, icons, infoLabel, sectionHeader, statusColor, valueText } from '../styles.js';
 
 const PLATFORMS = [
   { name: 'Google', slug: 'google', description: 'Search history, YouTube watch history, Gmail' },
@@ -28,16 +30,14 @@ function findComposioBinary(): string {
       continue;
     }
   }
-  throw new Error(
-    'Composio CLI not found. Install it:\n  curl -fsSL https://composio.dev/install | bash'
-  );
+  throw new Error('Composio CLI not found. Install it:\n  curl -fsSL https://composio.dev/install | bash');
 }
 
 function requireComposioKey(): void {
   if (!process.env.COMPOSIO_API_KEY) {
-    console.error('Error: COMPOSIO_API_KEY not set.');
-    console.error('Get your key at https://app.composio.dev and set it:');
-    console.error('  export COMPOSIO_API_KEY=your_key_here');
+    console.error(`${icons.error} COMPOSIO_API_KEY not set.`);
+    console.error(dimText('Get your free key at https://composio.dev and set it:'));
+    console.error(dimText('  export COMPOSIO_API_KEY=your_key_here'));
     process.exit(1);
   }
 }
@@ -107,7 +107,7 @@ async function listActiveConnections(
 }
 
 export const connectCommands = new Command('connect')
-  .description('Connect data platforms via Composio');
+  .description(chalk.dim('Connect data platforms via Composio'));
 
 connectCommands
   .action(async () => {
@@ -117,7 +117,7 @@ connectCommands
     try {
       binary = findComposioBinary();
     } catch (err) {
-      console.error((err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
 
@@ -130,12 +130,13 @@ connectCommands
     });
 
     if (selected.length === 0) {
-      console.log('No platforms selected.');
+      console.log(dimText('No platforms selected.'));
       return;
     }
 
-    console.log(`\nSelected: ${selected.map((s: string) => PLATFORMS.find((p) => p.slug === s)!.name).join(', ')}`);
-    console.log('\nGenerating connection links...\n');
+    console.log(`\n${sectionHeader('Selected Platforms')}`);
+    console.log(`  ${selected.map((slug: string) => chalk.cyan(PLATFORMS.find((p) => p.slug === slug)!.name)).join(dimText(', '))}`);
+    console.log(`\n${infoLabel('Generating connection links...')}\n`);
 
     const pendingConnections: PendingConnection[] = [];
 
@@ -143,8 +144,7 @@ connectCommands
       const platform = PLATFORMS.find((p) => p.slug === slug)!;
       try {
         const result = await initiateConnection(binary, slug);
-        const maxNameLen = Math.max(...selected.map((s: string) => PLATFORMS.find((p) => p.slug === s)!.name.length));
-        console.log(`  ${platform.name.padEnd(maxNameLen + 1)} ${result.redirectUrl}`);
+        console.log(`  ${icons.success} ${chalk.cyan(platform.name)} ${dimText('→')} ${chalk.bold(result.redirectUrl)}`);
         pendingConnections.push({
           slug,
           name: platform.name,
@@ -152,20 +152,20 @@ connectCommands
           redirectUrl: result.redirectUrl,
         });
       } catch (err) {
-        console.error(`  ${platform.name}: Failed — ${(err as Error).message}`);
+        console.error(`  ${icons.error} ${chalk.cyan(platform.name)} ${dimText('→')} ${(err as Error).message}`);
       }
     }
 
     if (pendingConnections.length > 0) {
       savePendingConnections(pendingConnections);
-      console.log('\nOpen each link in your browser to authorize.');
-      console.log('When done, run: monte connect confirm');
+      console.log(`\n${chalk.green.bold('Open each URL in your browser to authorize.')}`);
+      console.log(dimText('When done, run: monte connect confirm'));
     }
   });
 
 connectCommands
   .command('confirm')
-  .description('Verify all pending connections are active')
+  .description(chalk.dim('Verify all pending connections are active'))
   .action(async () => {
     requireComposioKey();
 
@@ -173,18 +173,18 @@ connectCommands
     try {
       binary = findComposioBinary();
     } catch (err) {
-      console.error((err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
 
     const pending = loadPendingConnections();
 
     if (pending.length === 0) {
-      console.log('No pending connections. Run `monte connect` first.');
+      console.log(dimText('No pending connections. Run `monte connect` first.'));
       return;
     }
 
-    console.log('Checking connections...\n');
+    console.log(`\n${infoLabel('Checking connections...')}\n`);
 
     let connectedCount = 0;
     const stillPending: PendingConnection[] = [];
@@ -192,28 +192,28 @@ connectCommands
     for (const conn of pending) {
       const status = await checkConnectionStatus(binary, conn.connectedAccountId);
       if (status === 'ACTIVE') {
-        console.log(`  \u2713 ${conn.name} \u2014 connected`);
+        console.log(`  ${icons.success} ${chalk.cyan(conn.name)} ${dimText('—')} ${chalk.green.bold('connected')}`);
         connectedCount++;
       } else {
-        console.log(`  \u2717 ${conn.name} \u2014 pending (open link to connect)`);
+        console.log(`  ${icons.error} ${chalk.cyan(conn.name)} ${dimText('—')} ${statusColor('pending')} ${dimText('(open URL to connect)')}`);
         stillPending.push(conn);
       }
     }
 
-    console.log(`\n${connectedCount}/${pending.length} platforms connected.`);
+    console.log(`\n${valueText(`${connectedCount}/${pending.length}`)} ${dimText('platforms connected.')}`);
 
     if (stillPending.length > 0) {
       savePendingConnections(stillPending);
-      console.log('Run `monte connect confirm` again after connecting remaining platforms.');
+      console.log(dimText('Run `monte connect confirm` again after connecting remaining platforms.'));
     } else {
       savePendingConnections([]);
-      console.log('\n\u2713 All platforms connected! Run `monte ingest` to pull data.');
+      console.log(`\n${icons.success} ${chalk.green.bold('All platforms connected!')} ${dimText('Run `monte ingest` to pull data.')}`);
     }
   });
 
 connectCommands
   .command('status')
-  .description('Show connected platforms')
+  .description(chalk.dim('Show connected platforms'))
   .action(async () => {
     requireComposioKey();
 
@@ -221,20 +221,20 @@ connectCommands
     try {
       binary = findComposioBinary();
     } catch (err) {
-      console.error((err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
 
     const connections = await listActiveConnections(binary);
 
     if (connections.length === 0) {
-      console.log('No connected platforms.');
-      console.log('Run `monte connect` to connect data sources.');
+      console.log(dimText('No connected platforms.'));
+      console.log(dimText('Run `monte connect` to connect data sources.'));
       return;
     }
 
-    console.log('\nConnected platforms:');
+    console.log(`\n${sectionHeader('Connected Platforms')}`);
     for (const conn of connections) {
-      console.log(`  \u2713 ${conn.appName} \u2014 connected`);
+      console.log(`  ${icons.success} ${chalk.cyan(conn.appName)} ${dimText('—')} ${chalk.green.bold('connected')} ${dimText(conn.id)}`);
     }
   });

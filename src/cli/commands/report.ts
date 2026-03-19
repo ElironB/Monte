@@ -1,6 +1,8 @@
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { writeFileSync } from 'fs';
 import { api } from '../api.js';
+import { icons, infoLabel, sectionHeader, valueText } from '../styles.js';
 
 interface Bin {
   min: number;
@@ -410,7 +412,7 @@ function generateReport(
 }
 
 export const reportCommands = new Command('report')
-  .description('Generate simulation report')
+  .description(chalk.dim('Generate simulation report'))
   .argument('<id>', 'simulation ID')
   .option('-o, --output <path>', 'output file path')
   .option('--no-narrative', 'skip LLM narrative generation')
@@ -425,7 +427,7 @@ export const reportCommands = new Command('report')
       ) as ResultsResponse;
 
       if (resultsResponse.status !== 'completed') {
-        console.error(`Simulation is ${resultsResponse.status}. Results not available yet.`);
+        console.error(`${icons.error} Simulation is ${resultsResponse.status}. Results not available yet.`);
         process.exit(1);
       }
 
@@ -440,6 +442,7 @@ export const reportCommands = new Command('report')
       }
 
       const narrative = results.narrative || null;
+      console.log(`${infoLabel('Generating report...')}`);
       const markdown = generateReport(sim, results, traits, narrative);
 
       if (options.stdout) {
@@ -447,10 +450,10 @@ export const reportCommands = new Command('report')
       } else {
         const outputPath = options.output || `./monte-report-${id}.md`;
         writeFileSync(outputPath, markdown, 'utf-8');
-        console.log(`\u2713 Report saved to ${outputPath}`);
+        console.log(`${icons.success} ${chalk.green.bold('Report saved to')} ${valueText(outputPath)}`);
       }
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });

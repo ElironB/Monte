@@ -1,8 +1,10 @@
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'fs';
 import { join, extname, basename, resolve } from 'path';
 import { api, MonteAPIError } from '../api.js';
 import OpenAI from 'openai';
+import { dimText, icons, infoLabel, sectionHeader, valueText } from '../styles.js';
 import type { AggregatedResults, OutcomeDistribution, StratifiedBreakdown, SimulationStatistics, Histogram } from '../../simulation/types.js';
 
 const SUPPORTED_EXTENSIONS = new Set([
@@ -180,6 +182,55 @@ function formatScenarioName(type: string): string {
   return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function metricDeltaColor(delta: number): (value: string) => string {
+  if (delta > 0) return (value: string) => chalk.green.bold(value);
+  if (delta < 0) return (value: string) => chalk.red.bold(value);
+  return (value: string) => chalk.white.bold(value);
+}
+
+function renderComparisonSummary(resultA: PersonaRunResult, resultB: PersonaRunResult): void {
+  const statsA = resultA.results.statistics;
+  const statsB = resultB.results.statistics;
+  const successDelta = statsA.successRate - statsB.successRate;
+  const capitalDelta = statsA.meanCapital - statsB.meanCapital;
+  const healthDelta = statsA.meanHealth - statsB.meanHealth;
+  const happinessDelta = statsA.meanHappiness - statsB.meanHappiness;
+
+  const rows = [
+    { label: 'Success Rate', a: formatPct(statsA.successRate), b: formatPct(statsB.successRate), delta: successDelta, deltaText: `${successDelta >= 0 ? '+' : ''}${formatPct(successDelta)}` },
+    { label: 'Mean Capital', a: formatCurrency(statsA.meanCapital), b: formatCurrency(statsB.meanCapital), delta: capitalDelta, deltaText: `${capitalDelta >= 0 ? '+' : '-'}${formatCurrency(Math.abs(capitalDelta))}` },
+    { label: 'Mean Health', a: formatPct(statsA.meanHealth), b: formatPct(statsB.meanHealth), delta: healthDelta, deltaText: `${healthDelta >= 0 ? '+' : ''}${formatPct(healthDelta)}` },
+    { label: 'Mean Happiness', a: formatPct(statsA.meanHappiness), b: formatPct(statsB.meanHappiness), delta: happinessDelta, deltaText: `${happinessDelta >= 0 ? '+' : ''}${formatPct(happinessDelta)}` },
+  ];
+
+  console.log(`\n${sectionHeader('Comparison Summary')}`);
+  console.log(`${infoLabel('Metric'.padEnd(18))} ${infoLabel('Persona A'.padEnd(15))} ${infoLabel('Persona B'.padEnd(15))} ${infoLabel('Delta')}`);
+  console.log(chalk.dim('─'.repeat(64)));
+
+  for (const row of rows) {
+    const colorA = metricDeltaColor(row.delta);
+    const colorB = metricDeltaColor(-row.delta);
+    console.log(`  ${chalk.white.bold(row.label.padEnd(16))} ${colorA(row.a.padEnd(15))} ${colorB(row.b.padEnd(15))} ${colorA(row.deltaText)}`);
+  }
+
+  const categorySuccessRate = (dist: OutcomeDistribution, cat: 'edge' | 'typical' | 'central'): number => {
+    const catDist = dist.byCategory[cat];
+    const total = catDist.success + catDist.failure + catDist.neutral;
+    return total > 0 ? catDist.success / total : 0;
+  };
+
+  const spreads = [
+    { label: 'Edge (10%)', value: Math.abs(categorySuccessRate(resultA.results.outcomeDistribution, 'edge') - categorySuccessRate(resultB.results.outcomeDistribution, 'edge')) },
+    { label: 'Typical (70%)', value: Math.abs(categorySuccessRate(resultA.results.outcomeDistribution, 'typical') - categorySuccessRate(resultB.results.outcomeDistribution, 'typical')) },
+    { label: 'Central (20%)', value: Math.abs(categorySuccessRate(resultA.results.outcomeDistribution, 'central') - categorySuccessRate(resultB.results.outcomeDistribution, 'central')) },
+  ];
+
+  console.log(`\n${sectionHeader('Divergence by Clone Category')}`);
+  for (const spread of spreads) {
+    console.log(`  ${infoLabel(`${spread.label}:`)} ${chalk.bold(formatPct(spread.value))}`);
+  }
+}
+
 async function ingestDirectory(dirPath: string): Promise<IngestionResult> {
   const absPath = resolve(dirPath);
   if (!existsSync(absPath)) {
@@ -303,18 +354,18 @@ async function runPersonaPipeline(
   scenario: string,
   cloneCount: number,
 ): Promise<PersonaRunResult> {
-  console.log(`\nIngesting Persona ${label} (${dir})...`);
+  console.log(`\n${infoLabel(`Ingesting Persona ${label}`)} ${dimText(`(${dir})`)}`);
   const ingestion = await ingestDirectory(dir);
-  console.log(`  \u2713 ${ingestion.fileCount} files processed, ${ingestion.signalCount} signals extracted`);
+  console.log(`  ${icons.success} ${chalk.green.bold(`${ingestion.fileCount} files processed`)} ${dimText('—')} ${valueText(`${ingestion.signalCount} signals extracted`)}`);
 
-  console.log(`\nBuilding Persona ${label}...`);
+  console.log(`\n${infoLabel(`Building Persona ${label}...`)}`);
   const traits = await buildPersonaAndWait();
-  console.log(`  \u2713 Persona built with ${traits.length} traits`);
+  console.log(`  ${icons.success} ${chalk.green.bold('Persona built')} ${dimText('with')} ${valueText(`${traits.length} traits`)}`);
 
-  console.log(`\nRunning simulation ${label} (${formatNumber(cloneCount)} clones)...`);
+  console.log(`\n${infoLabel(`Running simulation ${label}`)} ${dimText(`(${formatNumber(cloneCount)} clones)`)}`);
   const { simulationId, results } = await runSimulationAndWait(scenario, cloneCount, label);
   const successRate = formatPct(results.statistics.successRate);
-  console.log(`\r  \u2713 Complete \u2014 ${successRate} success rate`);
+  console.log(`\r  ${icons.success} ${chalk.green.bold('Complete')} ${dimText('—')} ${chalk.green.bold(successRate)} ${dimText('success rate')}`);
 
   return {
     label,
@@ -363,14 +414,14 @@ function findDivergentSignals(traitsA: PersonaTrait[], traitsB: PersonaTrait[]):
 }
 
 function loadLLMConfig(): { apiKey?: string; baseUrl?: string; model?: string } {
-  try {
-    const apiKey = process.env.LLM_API_KEY;
-    const baseUrl = process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1';
-    const model = process.env.LLM_MODEL || 'llama-3.1-70b-versatile';
-    return { apiKey: apiKey || undefined, baseUrl, model };
-  } catch {
-    return {};
-  }
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.LLM_API_KEY;
+  const baseUrl = process.env.OPENROUTER_API_KEY
+    ? 'https://openrouter.ai/api/v1'
+    : process.env.GROQ_API_KEY
+      ? 'https://api.groq.com/openai/v1'
+      : process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1';
+  const model = process.env.LLM_MODEL || 'openai/gpt-oss-20b';
+  return { apiKey: apiKey || undefined, baseUrl, model };
 }
 
 async function generateComparisonNarrative(
@@ -389,9 +440,9 @@ async function generateComparisonNarrative(
 
   const client = new OpenAI({
     apiKey: llmConfig.apiKey,
-    baseURL: llmConfig.baseUrl || 'https://api.groq.com/openai/v1',
+    baseURL: llmConfig.baseUrl,
   });
-  const model = llmConfig.model || 'llama-3.1-70b-versatile';
+  const model = llmConfig.model || 'openai/gpt-oss-20b';
 
   const dimListA = DIMENSION_KEYS.map(k =>
     `  - ${DIMENSION_DISPLAY[k]}: ${getDimensionValue(resultA.traits, k).toFixed(2)}`
@@ -587,7 +638,7 @@ function generateComparisonReport(
 }
 
 export const compareCommands = new Command('compare')
-  .description('Compare two personas on the same scenario')
+  .description(chalk.dim('Compare two personas on the same scenario'))
   .argument('<dir-a>', 'data directory for Persona A')
   .argument('<dir-b>', 'data directory for Persona B')
   .requiredOption('-s, --scenario <type>', 'scenario to simulate')
@@ -605,12 +656,12 @@ export const compareCommands = new Command('compare')
     const cloneCount = parseInt(options.clones, 10);
 
     if (isNaN(cloneCount) || cloneCount < 100) {
-      console.error('Error: clone count must be at least 100');
+      console.error(`${icons.error} clone count must be at least 100`);
       process.exit(1);
     }
 
     const scenarioName = formatScenarioName(options.scenario);
-    console.log(`Comparing personas on scenario: ${scenarioName}`);
+    console.log(`${infoLabel('Comparing personas on scenario:')} ${valueText(scenarioName)}`);
 
     let resultA: PersonaRunResult | undefined;
     let resultB: PersonaRunResult | undefined;
@@ -618,7 +669,7 @@ export const compareCommands = new Command('compare')
     try {
       resultA = await runPersonaPipeline(dirA, 'A', options.scenario, cloneCount);
     } catch (err) {
-      console.error(`\n\u2717 Persona A failed: ${(err as Error).message}`);
+      console.error(`\n${icons.error} ${chalk.red.bold('Persona A failed:')} ${(err as Error).message}`);
       process.exit(1);
       return;
     }
@@ -626,16 +677,17 @@ export const compareCommands = new Command('compare')
     try {
       resultB = await runPersonaPipeline(dirB, 'B', options.scenario, cloneCount);
     } catch (err) {
-      console.error(`\n\u2717 Persona B failed: ${(err as Error).message}`);
+      console.error(`\n${icons.error} ${chalk.red.bold('Persona B failed:')} ${(err as Error).message}`);
 
-      console.log('\nPartial results (Persona A only):');
-      console.log(`  Success Rate: ${formatPct(resultA!.results.statistics.successRate)}`);
-      console.log(`  Mean Capital: ${formatCurrency(resultA!.results.statistics.meanCapital)}`);
+      console.log(`\n${sectionHeader('Partial Results (Persona A)')}`);
+      console.log(`  ${infoLabel('Success Rate:')} ${chalk.green.bold(formatPct(resultA!.results.statistics.successRate))}`);
+      console.log(`  ${infoLabel('Mean Capital:')} ${valueText(formatCurrency(resultA!.results.statistics.meanCapital))}`);
       process.exit(1);
       return;
     }
 
-    console.log('\nGenerating comparison report...');
+    renderComparisonSummary(resultA, resultB);
+    console.log(`\n${infoLabel('Generating comparison report...')}`);
 
     let narrative: string | null = null;
     if (options.narrative) {
@@ -666,6 +718,6 @@ export const compareCommands = new Command('compare')
     } else {
       const outputPath = resolve(options.output);
       writeFileSync(outputPath, report, 'utf-8');
-      console.log(`  \u2713 Report saved to ${outputPath}`);
+      console.log(`  ${icons.success} ${chalk.green.bold('Report saved to')} ${valueText(outputPath)}`);
     }
   });

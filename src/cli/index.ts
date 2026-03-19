@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { simulationCommands } from './commands/simulation.js';
 import { personaCommands } from './commands/persona.js';
@@ -15,7 +16,7 @@ const program = new Command();
 
 program
   .name('monte')
-  .description('Monte Engine CLI - Probabilistic life simulation')
+  .description(chalk.dim('Probabilistic life simulation engine'))
   .version('0.1.0');
 
 // Global options
