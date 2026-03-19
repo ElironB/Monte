@@ -56,7 +56,8 @@ export const api = {
       }),
     }),
   getSimulation: (id: string) => makeRequest(`/simulation/${id}`),
-  getSimulationResults: (id: string) => makeRequest(`/simulation/${id}/results`),
+  getSimulationResults: (id: string, options?: { narrative?: boolean }) =>
+    makeRequest(`/simulation/${id}/results${options?.narrative ? '?narrative=true' : ''}`),
   getSimulationProgress: (id: string) => makeRequest(`/simulation/${id}/progress-rest`),
   deleteSimulation: (id: string) =>
     makeRequest(`/simulation/${id}`, { method: 'DELETE' }),
