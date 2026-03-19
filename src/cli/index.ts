@@ -8,6 +8,7 @@ import { configCommands } from './commands/config.js';
 import { connectCommands } from './commands/connect.js';
 import { reportCommands } from './commands/report.js';
 import { generateCommands } from './commands/generate.js';
+import { compareCommands } from './commands/compare.js';
 import { loadConfig } from './config.js';
 
 const program = new Command();
@@ -29,6 +30,7 @@ program.addCommand(configCommands);
 program.addCommand(connectCommands);
 program.addCommand(reportCommands);
 program.addCommand(generateCommands);
+program.addCommand(compareCommands);
 
 // Default help
 if (process.argv.length === 2) {
