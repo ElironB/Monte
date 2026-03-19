@@ -66,7 +66,7 @@ export class NarrativeGenerator {
         apiKey: config.llm.apiKey,
         baseURL: config.llm.baseUrl || 'https://api.groq.com/openai/v1',
       });
-      this.model = config.llm.model || 'llama-3.1-70b-versatile';
+      this.model = config.llm.model || 'openai/gpt-oss-20b';
     } else {
       this.model = '';
     }

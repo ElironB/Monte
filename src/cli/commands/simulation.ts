@@ -1,13 +1,31 @@
+import chalk from 'chalk';
 import { Command } from 'commander';
 import { api } from '../api.js';
-import { loadConfig } from '../config.js';
+import {
+  dimText,
+  icons,
+  infoLabel,
+  progressBar,
+  sectionHeader,
+  statusColor,
+  valueText,
+  warningText,
+} from '../styles.js';
+
+function divider(width: number): string {
+  return chalk.dim('─'.repeat(width));
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
 
 export const simulationCommands = new Command('simulate')
-  .description('Simulation commands');
+  .description(chalk.dim('Simulation commands'));
 
 simulationCommands
   .command('list')
-  .description('List all simulations')
+  .description(chalk.dim('List all simulations'))
   .action(async () => {
     try {
       const simulations = await api.listSimulations() as Array<{
@@ -20,30 +38,32 @@ simulationCommands
       }>;
 
       if (simulations.length === 0) {
-        console.log('No simulations found');
+        console.log(dimText('No simulations found'));
         return;
       }
 
-      console.log('\nSimulations:');
-      console.log('-'.repeat(100));
-      console.log(`${'ID'.padEnd(36)} ${'Name'.padEnd(20)} ${'Scenario'.padEnd(15)} ${'Status'.padEnd(12)} ${'Clones'.padEnd(8)} Created`);
-      console.log('-'.repeat(100));
+      console.log(`\n${sectionHeader('Simulations')}`);
+      console.log(divider(118));
+      console.log(
+        `  ${infoLabel('ID'.padEnd(36))}  ${infoLabel('Name'.padEnd(22))}  ${infoLabel('Scenario'.padEnd(22))}  ${infoLabel('Status'.padEnd(12))}  ${infoLabel('Clones'.padStart(6))}  ${infoLabel('Created')}`,
+      );
+      console.log(divider(118));
 
       for (const sim of simulations) {
         const date = new Date(sim.createdAt).toLocaleDateString();
         console.log(
-          `${sim.id.padEnd(36)} ${sim.name.slice(0, 18).padEnd(20)} ${sim.scenarioType.padEnd(15)} ${sim.status.padEnd(12)} ${String(sim.cloneCount).padEnd(8)} ${date}`
+          `  ${dimText(sim.id)}  ${chalk.white.bold(sim.name.slice(0, 20).padEnd(22))}  ${chalk.white(sim.scenarioType.padEnd(22))}  ${statusColor(sim.status, 12)}  ${chalk.cyan(String(sim.cloneCount).padStart(6))}  ${dimText(date)}`,
         );
       }
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });
 
 simulationCommands
   .command('run')
-  .description('Run a new simulation')
+  .description(chalk.dim('Run a new simulation'))
   .requiredOption('-s, --scenario <type>', 'scenario type (day_trading, startup_founding, career_change, etc.)')
   .option('-n, --name <name>', 'simulation name')
   .option('-c, --clones <count>', 'number of clones', '1000')
@@ -54,7 +74,9 @@ simulationCommands
       const name = options.name || `${options.scenario}-${Date.now()}`;
       const cloneCount = parseInt(options.clones, 10);
 
-      console.log(`Creating simulation "${name}" with ${cloneCount} clones...`);
+      console.log(
+        `${infoLabel('Creating simulation')} ${valueText(`"${name}"`)} ${dimText('with')} ${valueText(cloneCount)} ${dimText('clones...')}`,
+      );
 
       const result = await api.createSimulation(options.scenario, name, {
         cloneCount,
@@ -65,26 +87,27 @@ simulationCommands
         cloneCount: number;
       };
 
-      console.log(`✓ Simulation created: ${result.simulationId}`);
-      console.log(`  Status: ${result.status}`);
-      console.log(`  Clones: ${result.cloneCount}`);
+      console.log(`${icons.success} ${chalk.green.bold('Simulation created')}`);
+      console.log(`  ${infoLabel('Simulation ID:')} ${chalk.cyan(result.simulationId)}`);
+      console.log(`  ${infoLabel('Status:')} ${statusColor(result.status)}`);
+      console.log(`  ${infoLabel('Clones:')} ${valueText(result.cloneCount)}`);
 
       if (options.wait) {
-        console.log('\nWaiting for completion...');
+        console.log(`\n${infoLabel('Waiting for completion...')}`);
         await waitForSimulation(result.simulationId);
       } else {
-        console.log(`\nRun \`monte simulate progress ${result.simulationId}\` to check progress`);
-        console.log(`Run \`monte simulate results ${result.simulationId}\` for results when done`);
+        console.log(`\n${dimText(`Run \`monte simulate progress ${result.simulationId}\` to check progress`)}`);
+        console.log(dimText(`Run \`monte simulate results ${result.simulationId}\` for results when done`));
       }
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });
 
 simulationCommands
   .command('progress')
-  .description('Check simulation progress')
+  .description(chalk.dim('Check simulation progress'))
   .argument('<id>', 'simulation ID')
   .action(async (id) => {
     try {
@@ -98,28 +121,27 @@ simulationCommands
         estimatedTimeRemaining?: number;
       };
 
-      console.log(`\nSimulation: ${progress.simulationId}`);
-      console.log(`Status: ${progress.status}`);
-      console.log(`Progress: ${progress.progress}% (${progress.completedBatches}/${progress.totalBatches} batches)`);
-      console.log(`Clones: ${progress.cloneCount}`);
+      console.log(`\n${sectionHeader('Simulation Progress')}`);
+      console.log(`  ${infoLabel('Simulation:')} ${chalk.cyan(progress.simulationId)}`);
+      console.log(`  ${infoLabel('Status:')} ${statusColor(progress.status)}`);
+      console.log(
+        `  ${infoLabel('Progress:')} ${chalk.cyan.bold(`${progress.progress}%`)} ${dimText(`(${progress.completedBatches}/${progress.totalBatches} batches)`)}`,
+      );
+      console.log(`  ${infoLabel('Clones:')} ${valueText(progress.cloneCount)}`);
       if (progress.estimatedTimeRemaining) {
-        console.log(`ETA: ${formatDuration(progress.estimatedTimeRemaining)}`);
+        console.log(`  ${infoLabel('ETA:')} ${dimText(formatDuration(progress.estimatedTimeRemaining))}`);
       }
 
-      // Progress bar
-      const barWidth = 40;
-      const filled = Math.round((progress.progress / 100) * barWidth);
-      const bar = '█'.repeat(filled) + '░'.repeat(barWidth - filled);
-      console.log(`\n[${bar}] ${progress.progress}%`);
+      console.log(`\n  [${progressBar(progress.progress)}] ${chalk.cyan.bold(`${progress.progress}%`)}`);
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });
 
 simulationCommands
   .command('results')
-  .description('Get simulation results')
+  .description(chalk.dim('Get simulation results'))
   .argument('<id>', 'simulation ID')
   .option('-f, --format <format>', 'output format (table, json)', 'table')
   .action(async (id, options) => {
@@ -148,7 +170,7 @@ simulationCommands
       };
 
       if (data.status !== 'completed') {
-        console.log(`Simulation is ${data.status}. Results not available yet.`);
+        console.log(`${warningText(`Simulation is ${data.status}.`)} ${dimText('Results not available yet.')}`);
         return;
       }
 
@@ -159,38 +181,41 @@ simulationCommands
 
       const { outcomeDistribution, statistics, stratifiedBreakdown } = data.distributions;
 
-      console.log('\n=== Simulation Results ===\n');
+      console.log(`\n${sectionHeader('Simulation Results')}\n`);
 
-      // Outcome Distribution
-      console.log('Outcome Distribution:');
-      console.log(`  Success: ${(outcomeDistribution.success * 100).toFixed(1)}%`);
-      console.log(`  Failure: ${(outcomeDistribution.failure * 100).toFixed(1)}%`);
-      console.log(`  Neutral: ${(outcomeDistribution.neutral * 100).toFixed(1)}%`);
+      console.log(sectionHeader('Outcome Distribution'));
+      console.log(`  ${infoLabel('Success:')} ${chalk.green.bold(formatPercent(outcomeDistribution.success))}`);
+      console.log(`  ${infoLabel('Failure:')} ${chalk.red.bold(formatPercent(outcomeDistribution.failure))}`);
+      console.log(`  ${infoLabel('Neutral:')} ${chalk.yellow(formatPercent(outcomeDistribution.neutral))}`);
       console.log();
 
-      // Statistics
-      console.log('Statistics:');
-      console.log(`  Success Rate: ${(statistics.successRate * 100).toFixed(1)}%`);
-      console.log(`  Mean Capital: $${statistics.meanCapital.toFixed(0)}`);
-      console.log(`  Mean Health: ${(statistics.meanHealth * 100).toFixed(1)}%`);
-      console.log(`  Mean Happiness: ${(statistics.meanHappiness * 100).toFixed(1)}%`);
-      console.log(`  Avg Duration: ${statistics.averageDuration.toFixed(1)} months`);
+      console.log(sectionHeader('Statistics'));
+      console.log(`  ${infoLabel('Success Rate:')} ${chalk.green.bold(formatPercent(statistics.successRate))}`);
+      console.log(`  ${infoLabel('Mean Capital:')} ${chalk.cyan(`$${statistics.meanCapital.toFixed(0)}`)}`);
+      console.log(`  ${infoLabel('Mean Health:')} ${chalk.cyan(formatPercent(statistics.meanHealth))}`);
+      console.log(`  ${infoLabel('Mean Happiness:')} ${chalk.cyan(formatPercent(statistics.meanHappiness))}`);
+      console.log(`  ${infoLabel('Avg Duration:')} ${chalk.cyan(`${statistics.averageDuration.toFixed(1)} months`)}`);
       console.log();
 
-      // Stratified Breakdown
-      console.log('Stratified Breakdown:');
-      console.log(`  Edge Cases: ${stratifiedBreakdown.edge.count} clones (avg outcome: ${stratifiedBreakdown.edge.avgOutcome.toFixed(2)})`);
-      console.log(`  Typical: ${stratifiedBreakdown.typical.count} clones (avg outcome: ${stratifiedBreakdown.typical.avgOutcome.toFixed(2)})`);
-      console.log(`  Central: ${stratifiedBreakdown.central.count} clones (avg outcome: ${stratifiedBreakdown.central.avgOutcome.toFixed(2)})`);
+      console.log(sectionHeader('Stratified Breakdown'));
+      console.log(
+        `  ${infoLabel('Edge Cases:')} ${valueText(stratifiedBreakdown.edge.count)} ${dimText('clones')} ${infoLabel('avg outcome:')} ${chalk.cyan(stratifiedBreakdown.edge.avgOutcome.toFixed(2))}`,
+      );
+      console.log(
+        `  ${infoLabel('Typical:')} ${valueText(stratifiedBreakdown.typical.count)} ${dimText('clones')} ${infoLabel('avg outcome:')} ${chalk.cyan(stratifiedBreakdown.typical.avgOutcome.toFixed(2))}`,
+      );
+      console.log(
+        `  ${infoLabel('Central:')} ${valueText(stratifiedBreakdown.central.count)} ${dimText('clones')} ${infoLabel('avg outcome:')} ${chalk.cyan(stratifiedBreakdown.central.avgOutcome.toFixed(2))}`,
+      );
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });
 
 simulationCommands
   .command('scenarios')
-  .description('List available scenarios')
+  .description(chalk.dim('List available scenarios'))
   .action(async () => {
     try {
       const scenarios = await api.listScenarios() as Array<{
@@ -199,35 +224,42 @@ simulationCommands
         timeframe: string;
       }>;
 
-      console.log('\nAvailable Scenarios:');
-      console.log('-'.repeat(60));
+      console.log(`\n${sectionHeader('Available Scenarios')}`);
+      console.log(divider(78));
+      console.log(
+        `  ${infoLabel('Scenario ID'.padEnd(26))}  ${infoLabel('Name'.padEnd(28))}  ${infoLabel('Timeframe')}`,
+      );
+      console.log(divider(78));
 
       for (const scenario of scenarios) {
-        console.log(`${scenario.id.padEnd(25)} ${scenario.name.padEnd(25)} ${scenario.timeframe}`);
+        console.log(
+          `  ${chalk.cyan(scenario.id.padEnd(26))}  ${chalk.white.bold(scenario.name.padEnd(28))}  ${dimText(scenario.timeframe)}`,
+        );
       }
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });
 
 simulationCommands
   .command('delete')
-  .description('Delete a simulation')
+  .description(chalk.dim('Delete a simulation'))
   .argument('<id>', 'simulation ID')
   .option('--force', 'skip confirmation', false)
   .action(async (id, options) => {
     try {
       if (!options.force) {
-        console.log(`This will delete simulation ${id}`);
-        console.log('Use --force to confirm');
+        console.log(`${icons.warning} ${warningText('Destructive action')}`);
+        console.log(`  ${warningText('This will delete simulation')} ${chalk.cyan(id)}`);
+        console.log(`  ${dimText('Use --force to confirm.')}`);
         process.exit(1);
       }
 
       await api.deleteSimulation(id);
-      console.log('✓ Simulation deleted');
+      console.log(`${icons.success} ${chalk.green.bold('Simulation deleted')}`);
     } catch (err) {
-      console.error('Error:', (err as Error).message);
+      console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
   });
@@ -239,26 +271,26 @@ async function waitForSimulation(id: string): Promise<void> {
         const progress = await api.getSimulationProgress(id) as { status: string; progress: number };
 
         if (progress.status === 'completed') {
-          console.log('\n✓ Simulation complete!');
-          // Show results
+          process.stdout.write('\n');
+          console.log(`${icons.success} ${chalk.green.bold('Simulation complete!')}`);
           const results = await api.getSimulationResults(id) as {
             distributions: {
               statistics: { successRate: number };
             };
           };
-          console.log(`\nSuccess Rate: ${(results.distributions.statistics.successRate * 100).toFixed(1)}%`);
+          console.log(`  ${infoLabel('Success Rate:')} ${chalk.green.bold(formatPercent(results.distributions.statistics.successRate))}`);
           resolve();
           return;
         }
 
         if (progress.status === 'failed') {
-          console.log('\n✗ Simulation failed');
+          process.stdout.write('\n');
+          console.log(`${icons.error} ${chalk.red.bold('Simulation failed')}`);
           reject(new Error('Simulation failed'));
           return;
         }
 
-        process.stdout.write(`\rProgress: ${progress.progress}%`);
-
+        process.stdout.write(`\r${infoLabel('Progress:')} [${progressBar(progress.progress)}] ${chalk.cyan.bold(`${progress.progress}%`)}`);
         setTimeout(check, 2000);
       } catch (err) {
         reject(err);

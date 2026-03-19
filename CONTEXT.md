@@ -105,31 +105,26 @@ The first four changes were merged into main in March 2026. They reshape Monte f
 
 ### 2. LLM Unified on OpenAI SDK (PR #3)
 
-**Why**: One SDK, any provider. User provides API key + base URL for whatever they use.
+**Why**: One SDK, provider-specific env vars, simpler setup. User provides `OPENROUTER_API_KEY` or `GROQ_API_KEY`, and the system auto-resolves `baseURL` plus default models.
 
 **What changed**:
 - Replaced `groq-sdk` with `openai` package
-- `src/simulation/forkEvaluator.ts` rewritten — single `OpenAI` client with configurable `baseURL`
+- `src/simulation/forkEvaluator.ts` rewritten — single `OpenAI` client with provider-aware config
 - `callGroq()` and `callAnthropic()` replaced with single `callLLM()` method
-- `src/config/index.ts` — `groq`/`anthropic` config replaced with unified `llm` block
-- New env vars: `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_REASONING_MODEL`
-- Old env vars removed: `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
-- Complexity routing preserved: standard model for simple forks, optional reasoning model for complex ones (>0.6 complexity)
-- Heuristic fallback still works when no LLM key provided
+- `src/config/index.ts` now resolves `llm` config from `OPENROUTER_API_KEY`, `GROQ_API_KEY`, or legacy `LLM_*` env vars
+- Default models: `openai/gpt-oss-20b` for standard evaluation and `openai/gpt-oss-120b` for reasoning
+- Complexity routing preserved: standard model for simple forks, reasoning model for complex ones (>0.6 complexity)
+- Heuristic fallback still works when no LLM key is provided
 
-**Provider examples**:
+**Provider setup**:
 ```
+# OpenRouter (recommended)
+OPENROUTER_API_KEY=sk-or-...
+# → auto-sets: baseURL=openrouter, model=openai/gpt-oss-20b, reasoning=openai/gpt-oss-120b
+
 # Groq
-LLM_BASE_URL=https://api.groq.com/openai/v1
-LLM_MODEL=llama-3.1-70b-versatile
-
-# OpenRouter (single key for everything)
-LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=meta-llama/llama-3.1-70b-instruct
-
-# OpenAI
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4o-mini
+GROQ_API_KEY=gsk_...
+# → auto-sets: baseURL=groq, model=openai/gpt-oss-20b, reasoning=openai/gpt-oss-120b
 ```
 
 ### 3. Directory-Based Ingestion (PR #4)
@@ -446,8 +441,8 @@ Monte/
 ### 1. No Authentication (Self-Hosted)
 Single local user (`local-user`) auto-created on startup. Auth plugin is a passthrough. `request.user.userId` pattern preserved for Neo4j query isolation — makes it easy to add multi-user auth back for the cloud version.
 
-### 2. LLM via OpenAI SDK + configurable baseURL
-One `openai` package, swap providers by changing `LLM_BASE_URL`. No provider-specific SDKs. Complexity routing: standard model for simple forks, optional reasoning model for complex ones (>0.6 score). Heuristic fallback when no LLM key.
+### 2. LLM via OpenAI SDK + provider-specific env vars
+One `openai` package under the hood. Users set `OPENROUTER_API_KEY` or `GROQ_API_KEY` — the system auto-resolves the baseURL. Default models: `openai/gpt-oss-20b` (standard) and `openai/gpt-oss-120b` (reasoning/complex forks). Legacy `LLM_API_KEY` + `LLM_BASE_URL` still works but isn't documented.
 
 ### 3. File-Based Data Ingestion
 `monte ingest <dir>` — recursive scan, auto-detect source types. No OAuth connectors for open source. Users export their data (Google Takeout, Obsidian vault, bank CSVs) and feed it in. Composio connector exists as placeholder for cloud version.
@@ -488,14 +483,16 @@ MINIO_PORT=9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 
-# LLM (required for simulation — heuristic fallback if missing)
-LLM_API_KEY=                    # Any OpenAI-compatible provider
-LLM_BASE_URL=https://api.groq.com/openai/v1
-LLM_MODEL=llama-3.1-70b-versatile
-LLM_REASONING_MODEL=            # Optional: separate model for complex forks
+# LLM (required — pick one provider)
+OPENROUTER_API_KEY=             # OpenRouter (recommended, one key)
+# OR
+GROQ_API_KEY=                   # Groq fast inference
+# Optional overrides:
+LLM_MODEL=openai/gpt-oss-20b   # Default standard model
+LLM_REASONING_MODEL=openai/gpt-oss-120b  # Default reasoning model
 
 # Optional
-COMPOSIO_API_KEY=               # Optional: for platform connections (free at composio.dev)
+COMPOSIO_API_KEY=               # Enables `monte connect` OAuth platform integrations via Composio
 PORT=3000
 NODE_ENV=development
 LOG_LEVEL=info
@@ -562,7 +559,7 @@ monte config dir                  # Show config directory
 ```bash
 cd /home/Monte
 cp .env.example .env
-# Edit .env — set NEO4J_PASSWORD, LLM_API_KEY, LLM_BASE_URL
+# Edit .env — set NEO4J_PASSWORD and either OPENROUTER_API_KEY or GROQ_API_KEY
 docker-compose up -d neo4j redis minio
 npm install
 npm run dev
@@ -594,7 +591,7 @@ npm run dev
 4. **Contradictions are IMPORTANT** — revealed vs stated behavior discrepancies drive simulation accuracy.
 5. **Simulation returns distributions** — always histograms/probabilities, never single numbers.
 6. **No auth in open source** — `request.user.userId` is always `local-user`. Don't add auth back unless building the cloud version.
-7. **LLM is provider-agnostic** — OpenAI SDK with `baseURL`. Never import provider-specific SDKs.
+7. **LLM is provider-aware but SDK-agnostic** — OpenAI SDK with provider-specific env vars (`OPENROUTER_API_KEY` / `GROQ_API_KEY`). Never import provider-specific SDKs.
 8. **TypeScript errors** — use `// @ts-nocheck` sparingly if ioredis types cause issues (already used in redis.ts).
 9. **Composio is optional** — `monte connect` enhances data but isn't required. File-based ingestion works standalone.
 

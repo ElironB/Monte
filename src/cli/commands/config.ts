@@ -1,33 +1,37 @@
+import chalk from 'chalk';
+import { homedir } from 'os';
+import { join } from 'path';
 import { Command } from 'commander';
 import { loadConfig, saveConfig } from '../config.js';
+import { icons, infoLabel, sectionHeader, valueText } from '../styles.js';
 
 export const configCommands = new Command('config')
-  .description('Configuration commands');
+  .description(chalk.dim('Configuration commands'));
 
 configCommands
   .command('show')
-  .description('Show current configuration')
+  .description(chalk.dim('Show current configuration'))
   .action(() => {
     const config = loadConfig();
 
-    console.log('\nConfiguration:');
-    console.log(`  API URL: ${config.apiUrl}`);
-    console.log(`  Default Scenario: ${config.defaultScenario || 'none'}`);
-    console.log(`  Default Clones: ${config.defaultCloneCount || 1000}`);
+    console.log(`\n${sectionHeader('Configuration')}`);
+    console.log(`  ${infoLabel('API URL:')} ${valueText(config.apiUrl)}`);
+    console.log(`  ${infoLabel('Default Scenario:')} ${valueText(config.defaultScenario || 'none')}`);
+    console.log(`  ${infoLabel('Default Clones:')} ${valueText(config.defaultCloneCount || 1000)}`);
   });
 
 configCommands
   .command('set-api')
-  .description('Set API endpoint')
+  .description(chalk.dim('Set API endpoint'))
   .argument('<url>', 'API URL (e.g., http://localhost:3000)')
   .action((url) => {
     saveConfig({ apiUrl: url });
-    console.log(`✓ API URL set to ${url}`);
+    console.log(`${icons.success} ${chalk.green.bold('API URL set to')} ${valueText(url)}`);
   });
 
 configCommands
   .command('set-defaults')
-  .description('Set default simulation options')
+  .description(chalk.dim('Set default simulation options'))
   .option('-s, --scenario <scenario>', 'default scenario type')
   .option('-c, --clones <count>', 'default clone count', parseInt)
   .action((options) => {
@@ -41,20 +45,24 @@ configCommands
     }
 
     if (Object.keys(updates).length === 0) {
-      console.log('No changes made. Use --scenario or --clones to set values.');
+      console.log(chalk.yellow('⚠ No changes made. Use --scenario or --clones to set values.'));
       return;
     }
 
     saveConfig(updates);
-    console.log('✓ Defaults updated');
+    console.log(`${icons.success} ${chalk.green.bold('Defaults updated')}`);
+    if (updates.defaultScenario) {
+      console.log(`  ${infoLabel('Scenario:')} ${valueText(updates.defaultScenario)}`);
+    }
+    if (updates.defaultCloneCount) {
+      console.log(`  ${infoLabel('Clones:')} ${valueText(updates.defaultCloneCount)}`);
+    }
   });
 
 configCommands
   .command('dir')
-  .description('Show config directory path')
+  .description(chalk.dim('Show config directory path'))
   .action(() => {
-    const { homedir } = require('os');
-    const { join } = require('path');
     const dir = join(homedir(), '.monte');
-    console.log(dir);
+    console.log(valueText(dir));
   });

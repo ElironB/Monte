@@ -3,6 +3,42 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+function resolveLLMConfig() {
+  if (process.env.OPENROUTER_API_KEY) {
+    return {
+      apiKey: process.env.OPENROUTER_API_KEY,
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
+      reasoningModel: process.env.LLM_REASONING_MODEL || 'openai/gpt-oss-120b',
+    };
+  }
+
+  if (process.env.GROQ_API_KEY) {
+    return {
+      apiKey: process.env.GROQ_API_KEY,
+      baseUrl: 'https://api.groq.com/openai/v1',
+      model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
+      reasoningModel: process.env.LLM_REASONING_MODEL || 'openai/gpt-oss-120b',
+    };
+  }
+
+  if (process.env.LLM_API_KEY) {
+    return {
+      apiKey: process.env.LLM_API_KEY,
+      baseUrl: process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1',
+      model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
+      reasoningModel: process.env.LLM_REASONING_MODEL || 'openai/gpt-oss-120b',
+    };
+  }
+
+  return {
+    apiKey: undefined,
+    baseUrl: 'https://api.groq.com/openai/v1',
+    model: 'openai/gpt-oss-20b',
+    reasoningModel: 'openai/gpt-oss-120b',
+  };
+}
+
 const configSchema = z.object({
   neo4j: z.object({
     uri: z.string().default('bolt://localhost:7687'),
@@ -28,9 +64,9 @@ const configSchema = z.object({
   llm: z.object({
     apiKey: z.string().optional(),
     baseUrl: z.string().url().default('https://api.groq.com/openai/v1'),
-    model: z.string().default('llama-3.1-70b-versatile'),
-    reasoningModel: z.string().optional(),
-  }).optional(),
+    model: z.string().default('openai/gpt-oss-20b'),
+    reasoningModel: z.string().default('openai/gpt-oss-120b'),
+  }),
   composio: z.object({
     apiKey: z.string().optional(),
   }).optional(),
@@ -63,12 +99,7 @@ export const config = configSchema.parse({
     nodeEnv: process.env.NODE_ENV,
     logLevel: process.env.LOG_LEVEL,
   },
-  llm: {
-    apiKey: process.env.LLM_API_KEY,
-    baseUrl: process.env.LLM_BASE_URL,
-    model: process.env.LLM_MODEL,
-    reasoningModel: process.env.LLM_REASONING_MODEL,
-  },
+  llm: resolveLLMConfig(),
   composio: {
     apiKey: process.env.COMPOSIO_API_KEY,
   },
