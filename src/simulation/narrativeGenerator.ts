@@ -154,6 +154,17 @@ STRATIFIED BREAKDOWN:
 - Typical clones: ${stratifiedBreakdown.typical.count} clones, avg outcome ${stratifiedBreakdown.typical.avgOutcome.toFixed(2)}
 - Central clones (moderate behavior): ${stratifiedBreakdown.central.count} clones, avg outcome ${stratifiedBreakdown.central.avgOutcome.toFixed(2)}
 
+KELLY POSITION SIZING:
+${results.kelly
+  ? `- Success Probability: ${(results.kelly.successProbability * 100).toFixed(1)}%
+- Net Odds Ratio: ${results.kelly.netOddsRatio.toFixed(2)}:1
+- Full Kelly: ${(results.kelly.fullKellyPercentage * 100).toFixed(1)}%
+- Adjusted Kelly: ${(results.kelly.adjustedKellyPercentage * 100).toFixed(1)}%
+- Recommended Commitment: $${results.kelly.optimalCommitmentAmount.toFixed(0)}
+- Rationale: ${results.kelly.rationale}
+${results.kelly.warning ? `- Warning: ${results.kelly.warning}` : ''}`
+  : '- Not available (capital at risk not provided).' }
+
 BEHAVIORAL DIMENSIONS:
 - Risk Tolerance: ${dimensions.riskTolerance.toFixed(2)} (${this.labelDimension(dimensions.riskTolerance, 'conservative', 'risk-seeking')})
 - Time Preference: ${dimensions.timePreference.toFixed(2)} (${this.labelDimension(dimensions.timePreference, 'delayed gratification', 'immediate gratification')})
@@ -318,6 +329,9 @@ Analyze these results and provide the 6 narrative sections.`;
       : `No significant contradictions were detected between your behavioral signals. Your stated preferences and revealed behaviors appear consistent, which generally leads to more predictable simulation outcomes.`;
 
     const recommendation = `Based on the ${scenario} simulation with a ${successPct}% success rate: ${parseFloat(successPct) > 60 ? 'the odds are in your favor, but monitor the risk factors identified above' : parseFloat(successPct) > 40 ? 'outcomes are mixed — your success depends heavily on which behavioral patterns dominate your decision-making' : 'proceed with caution — the simulation suggests significant headwinds given your current behavioral profile'}. Your ${riskLabel} risk stance and ${decisionLabel} decision style are the biggest levers you can adjust. ${contradictions.length > 0 ? 'Resolving the behavioral contradictions identified above could meaningfully improve outcomes.' : 'Maintaining behavioral consistency will be key to achieving the more favorable outcomes in the distribution.'}`;
+    const kellyLine = results.kelly
+      ? ` Kelly Criterion analysis suggests committing no more than $${results.kelly.optimalCommitmentAmount.toFixed(0)} (${(results.kelly.adjustedKellyPercentage * 100).toFixed(1)}% of your stated capital at risk). ${results.kelly.warning ? results.kelly.warning + ' ' : ''}`
+      : '';
 
     return {
       executiveSummary,
@@ -325,7 +339,7 @@ Analyze these results and provide the 6 narrative sections.`;
       behavioralDrivers,
       riskFactors,
       contradictionInsights,
-      recommendation,
+      recommendation: `${recommendation}${kellyLine}This is behavioral scenario analysis, not financial advice.`,
     };
   }
 }

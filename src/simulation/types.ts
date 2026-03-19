@@ -3,6 +3,7 @@
 
 import type { CloneParameters } from '../persona/cloneGenerator.js';
 import type { NarrativeResult } from './narrativeGenerator.js';
+import type { KellyOutput } from './kellyCalculator.js';
 
 // Re-export CloneParameters for convenience
 export type { CloneParameters } from '../persona/cloneGenerator.js';
@@ -190,6 +191,7 @@ export interface AggregatedResults {
   statistics: SimulationStatistics;
   stratifiedBreakdown: StratifiedBreakdown;
   narrative?: NarrativeResult;
+  kelly?: KellyOutput;
 }
 
 export interface Histogram {

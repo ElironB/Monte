@@ -22,6 +22,7 @@ import { getScenario } from '../../../simulation/decisionGraph.js';
 import { SimulationEngine } from '../../../simulation/engine.js';
 import { createAggregator } from '../../../simulation/resultAggregator.js';
 import { CloneResult } from '../../../simulation/types.js';
+import { calculateKelly } from '../../../simulation/kellyCalculator.js';
 
 const extractors = [
   new SearchHistoryExtractor(),
@@ -267,9 +268,10 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       name: string;
       parameters: string;
       cloneCount: number;
+      capitalAtRisk: number | null;
     }>(
       `MATCH (s:Simulation {id: $simulationId})
-       RETURN s.name as name, s.parameters as parameters, s.cloneCount as cloneCount`,
+       RETURN s.name as name, s.parameters as parameters, s.cloneCount as cloneCount, s.capitalAtRisk as capitalAtRisk`,
       { simulationId }
     );
     
@@ -348,6 +350,8 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
          CREATE (cr:CloneResult {
            id: $resultId,
            cloneId: $cloneId,
+           percentile: $percentile,
+           category: $category,
            path: $path,
            finalState: $finalState,
            metrics: $metrics,
@@ -360,6 +364,8 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
           simulationId,
           resultId: result.cloneId,
           cloneId: result.cloneId,
+          percentile: result.stratification.percentile,
+          category: result.stratification.category,
           path: JSON.stringify(result.path),
           finalState: JSON.stringify(result.finalState),
           metrics: JSON.stringify(result.metrics),
@@ -425,6 +431,28 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       
       aggregator.addResults(aggregatedResults);
       const finalResults = aggregator.aggregate();
+
+      if (typeof simulation.capitalAtRisk === 'number' && simulation.capitalAtRisk > 0) {
+        const persona = await runQuerySingle<{ behavioralFingerprint: string | null }>(
+          `MATCH (p:Persona {id: $personaId})
+           RETURN p.behavioralFingerprint as behavioralFingerprint`,
+          { personaId }
+        );
+
+        const fingerprint = persona?.behavioralFingerprint
+          ? JSON.parse(persona.behavioralFingerprint)
+          : {};
+        const riskTolerance = typeof fingerprint.riskTolerance === 'number'
+          ? fingerprint.riskTolerance
+          : 0.5;
+
+        finalResults.kelly = calculateKelly({
+          results: finalResults,
+          cloneResults: aggregatedResults,
+          riskTolerance,
+          capitalAtRisk: simulation.capitalAtRisk,
+        });
+      }
       
       // Store aggregated results
       await runWriteSingle(
@@ -438,12 +466,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         {
           simulationId,
           totalBatches,
-          results: JSON.stringify({
-            histograms: finalResults.histograms,
-            outcomeDistribution: finalResults.outcomeDistribution,
-            statistics: finalResults.statistics,
-            stratifiedBreakdown: finalResults.stratifiedBreakdown,
-          }),
+          results: JSON.stringify(finalResults),
         }
       );
       
