@@ -15,6 +15,7 @@ import { DimensionMapper } from '../../../persona/dimensionMapper.js';
 import { GraphBuilder } from '../../../persona/graphBuilder.js';
 import { PersonaCompressor } from '../../../persona/personaCompressor.js';
 import { CloneGenerator, CloneParameters } from '../../../persona/cloneGenerator.js';
+import { BayesianUpdater } from '../../../persona/bayesianUpdater.js';
 import { BehavioralSignal } from '../../types.js';
 
 // Phase 4: Simulation Engine imports
@@ -150,38 +151,232 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
 
 async function processPersona(job: Job<PersonaJobData>): Promise<void> {
   logger.info({ jobId: job.id, data: job.data }, 'Processing persona build');
-  
+
   const { userId, personaId } = job.data;
-  
-  // Get all signals for this user
-  const signals = await runQuery<BehavioralSignal>(
-    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)-[:HAS_SIGNAL]->(s:Signal)
-     WHERE d.status = 'completed'
-     RETURN s.id as id, s.type as type, s.value as value, s.confidence as confidence,
-            s.evidence as evidence, s.timestamp as timestamp, s.dimensions as dimensions`,
-    { userId }
+
+  const previousPersona = await runQuerySingle<{ id: string; version: number | { toNumber: () => number } }>(
+    `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)
+     WHERE p.buildStatus = 'ready' AND p.id <> $personaId
+     RETURN p.id as id, p.version as version
+     ORDER BY p.version DESC
+     LIMIT 1`,
+    { userId, personaId }
   );
-  
-  const signalIds = signals.map(s => s.id);
-  
-  logger.info({ personaId, signalCount: signals.length }, 'Building persona from signals');
-  
-  // Map to dimensions
+
+  if (previousPersona) {
+    await processIncrementalUpdate(userId, personaId, previousPersona.id);
+    return;
+  }
+
+  await processFullBuild(userId, personaId);
+}
+
+interface StoredSignalRecord {
+  id: string;
+  type: BehavioralSignal['type'];
+  value: string;
+  confidence: number;
+  evidence: string;
+  timestamp: string;
+  dimensions: string | BehavioralSignal['dimensions'] | null;
+}
+
+async function processFullBuild(userId: string, personaId: string): Promise<void> {
+  const signals = await fetchSignals(userId);
+  const signalIds = signals.map(signal => signal.id);
+
+  logger.info({ personaId, signalCount: signals.length }, 'Building persona from all signals');
+
   const mapper = new DimensionMapper(signals);
   const dimensions = mapper.mapToDimensions();
-  
-  // Build Neo4j graph
+
   const graphBuilder = new GraphBuilder(userId, personaId);
   await graphBuilder.buildPersonaGraph(dimensions, signalIds);
-  
-  // Get stored traits for compression
+
   const { traits, memories } = await graphBuilder.getPersonaGraph();
-  
-  // Compress to Master Persona
   const compressor = new PersonaCompressor(traits, memories);
   const masterPersona = compressor.compress();
-  
-  // Store master persona summary
+
+  await storeMasterPersona(personaId, masterPersona, signals.length);
+  await regenerateClones(personaId, masterPersona);
+
+  logger.info({ personaId, signalCount: signals.length }, 'Persona full build complete');
+}
+
+async function processIncrementalUpdate(
+  userId: string,
+  personaId: string,
+  previousPersonaId: string
+): Promise<void> {
+  logger.info({ personaId, previousPersonaId }, 'Processing incremental persona update');
+
+  await clonePersonaState(previousPersonaId, personaId);
+
+  const newSignals = await fetchSignals(userId, true);
+
+  if (newSignals.length > 0) {
+    const mapper = new DimensionMapper(newSignals);
+    const newDimensions = mapper.mapToDimensions();
+    const updater = new BayesianUpdater(userId, personaId);
+    const updateResult = await updater.update(newSignals, newDimensions);
+
+    await linkSignalsToPersona(personaId, newSignals.map(signal => signal.id));
+
+    logger.info(
+      {
+        personaId,
+        previousPersonaId,
+        newSignalCount: updateResult.newSignalCount,
+        contradictionsRaised: updateResult.contradictionsRaised,
+        overallConfidenceDelta: updateResult.overallConfidenceDelta,
+      },
+      'Bayesian persona update applied'
+    );
+  } else {
+    logger.info({ personaId, previousPersonaId }, 'No new signals found for incremental persona update');
+  }
+
+  const graphBuilder = new GraphBuilder(userId, personaId);
+  await graphBuilder.rebuildTraitRelationships();
+
+  const { traits, memories } = await graphBuilder.getPersonaGraph();
+  const compressor = new PersonaCompressor(traits, memories);
+  const masterPersona = compressor.compress();
+  const totalSignalCount = await countPersonaSignals(personaId);
+
+  await storeMasterPersona(personaId, masterPersona, totalSignalCount);
+  await regenerateClones(personaId, masterPersona);
+
+  logger.info({ personaId, previousPersonaId, signalCount: totalSignalCount }, 'Persona incremental update complete');
+}
+
+async function fetchSignals(userId: string, onlyNewSignals: boolean = false): Promise<BehavioralSignal[]> {
+  const filters = ["d.status = 'completed'"];
+  if (onlyNewSignals) {
+    filters.push('NOT EXISTS { MATCH (:Persona)-[:DERIVED_FROM]->(s) }');
+  }
+
+  const records = await runQuery<StoredSignalRecord>(
+    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)-[:HAS_SIGNAL]->(s:Signal)
+     WHERE ${filters.join(' AND ')}
+     RETURN s.id as id,
+            s.type as type,
+            s.value as value,
+            s.confidence as confidence,
+            s.evidence as evidence,
+            toString(s.timestamp) as timestamp,
+            s.dimensions as dimensions`,
+    { userId }
+  );
+
+  return records.map(record => ({
+    id: record.id,
+    type: record.type,
+    value: record.value,
+    confidence: record.confidence,
+    evidence: record.evidence,
+    sourceDataId: '',
+    timestamp: record.timestamp,
+    dimensions: parseSignalDimensions(record.dimensions),
+  }));
+}
+
+function parseSignalDimensions(
+  rawDimensions: string | BehavioralSignal['dimensions'] | null
+): BehavioralSignal['dimensions'] {
+  if (!rawDimensions) {
+    return {};
+  }
+
+  if (typeof rawDimensions === 'string') {
+    try {
+      return JSON.parse(rawDimensions) as BehavioralSignal['dimensions'];
+    } catch (err) {
+      logger.warn({ err, rawDimensions }, 'Failed to parse signal dimensions');
+      return {};
+    }
+  }
+
+  return rawDimensions;
+}
+
+async function clonePersonaState(sourcePersonaId: string, targetPersonaId: string): Promise<void> {
+  await runWriteSingle(
+    `MATCH (source:Persona {id: $sourcePersonaId})-[:HAS_TRAIT]->(t:Trait)
+     MATCH (target:Persona {id: $targetPersonaId})
+     CREATE (target)-[:HAS_TRAIT]->(:Trait {
+       id: randomUUID(),
+       type: t.type,
+       name: t.name,
+       value: t.value,
+       confidence: t.confidence,
+       evidence: t.evidence,
+       dimension: t.dimension,
+       evidenceCount: coalesce(t.evidenceCount, 1),
+       lowConfidence: coalesce(t.lowConfidence, false),
+       updateHistory: coalesce(t.updateHistory, ''),
+       createdAt: datetime(),
+       lastUpdated: coalesce(t.lastUpdated, datetime())
+     })
+     RETURN count(t) as copied`,
+    { sourcePersonaId, targetPersonaId }
+  );
+
+  await runWriteSingle(
+    `MATCH (source:Persona {id: $sourcePersonaId})-[:HAS_MEMORY]->(m:Memory)
+     MATCH (target:Persona {id: $targetPersonaId})
+     CREATE (target)-[:HAS_MEMORY]->(:Memory {
+       id: randomUUID(),
+       type: m.type,
+       content: m.content,
+       timestamp: m.timestamp,
+       sourceId: m.sourceId,
+       emotionalValence: m.emotionalValence,
+       createdAt: datetime()
+     })
+     RETURN count(m) as copied`,
+    { sourcePersonaId, targetPersonaId }
+  );
+
+  await runWriteSingle(
+    `MATCH (source:Persona {id: $sourcePersonaId})-[:DERIVED_FROM]->(s:Signal)
+     MATCH (target:Persona {id: $targetPersonaId})
+     MERGE (target)-[:DERIVED_FROM]->(s)
+     RETURN count(s) as copied`,
+    { sourcePersonaId, targetPersonaId }
+  );
+}
+
+async function linkSignalsToPersona(personaId: string, signalIds: string[]): Promise<void> {
+  if (signalIds.length === 0) {
+    return;
+  }
+
+  for (const signalId of signalIds) {
+    await runWriteSingle(
+      `MATCH (p:Persona {id: $personaId}), (s:Signal {id: $signalId})
+       MERGE (p)-[:DERIVED_FROM]->(s)
+       RETURN p.id as id`,
+      { personaId, signalId }
+    );
+  }
+}
+
+async function countPersonaSignals(personaId: string): Promise<number> {
+  const result = await runQuerySingle<{ count: number | { toNumber: () => number } }>(
+    `MATCH (p:Persona {id: $personaId})-[:DERIVED_FROM]->(s:Signal)
+     RETURN count(DISTINCT s) as count`,
+    { personaId }
+  );
+
+  return toNumber(result?.count ?? 0);
+}
+
+async function storeMasterPersona(
+  personaId: string,
+  masterPersona: ReturnType<PersonaCompressor['compress']>,
+  signalCount: number
+): Promise<void> {
   await runWriteSingle(
     `MATCH (p:Persona {id: $personaId})
      SET p.buildStatus = 'ready',
@@ -204,19 +399,30 @@ async function processPersona(job: Job<PersonaJobData>): Promise<void> {
       fingerprint: JSON.stringify(masterPersona.behavioralFingerprint),
       dominantTraits: JSON.stringify(masterPersona.dominantTraits),
       contradictions: JSON.stringify(masterPersona.keyContradictions),
-      signalCount: signals.length,
+      signalCount,
     }
   );
-  
-  // Generate 1,000 clones
+}
+
+async function regenerateClones(
+  personaId: string,
+  masterPersona: ReturnType<PersonaCompressor['compress']>
+): Promise<void> {
+  await runWriteSingle(
+    `MATCH (p:Persona {id: $personaId})-[:HAS_CLONE]->(c:Clone)
+     WITH collect(c) as clones
+     FOREACH (clone IN clones | DETACH DELETE clone)
+     RETURN size(clones) as deleted`,
+    { personaId }
+  );
+
   const cloneGen = new CloneGenerator(masterPersona, personaId);
   const clones = cloneGen.generateClones(1000);
-  
-  // Store clones in batches
   const batchSize = 100;
+
   for (let i = 0; i < clones.length; i += batchSize) {
     const batch = clones.slice(i, i + batchSize);
-    
+
     for (const clone of batch) {
       await runWriteSingle(
         `MATCH (p:Persona {id: $personaId})
@@ -239,15 +445,22 @@ async function processPersona(job: Job<PersonaJobData>): Promise<void> {
       );
     }
   }
-  
+
   await runWriteSingle(
     `MATCH (p:Persona {id: $personaId})
-     SET p.cloneCount = $cloneCount, p.updatedAt = datetime()
+     SET p.cloneCount = $cloneCount,
+         p.updatedAt = datetime()
      RETURN p.id as id`,
     { personaId, cloneCount: clones.length }
   );
-  
-  logger.info({ personaId, signalCount: signals.length, cloneCount: clones.length }, 'Persona build complete');
+}
+
+function toNumber(value: number | { toNumber: () => number }): number {
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  return value.toNumber();
 }
 
 interface CloneData {

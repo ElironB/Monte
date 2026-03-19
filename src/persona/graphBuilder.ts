@@ -54,6 +54,7 @@ export class GraphBuilder {
            confidence: $confidence,
            evidence: $evidence,
            dimension: $dimension,
+           evidenceCount: 1,
            createdAt: datetime()
          })
          CREATE (p)-[:HAS_TRAIT]->(t)
@@ -115,6 +116,17 @@ export class GraphBuilder {
     const traits = await this.queryTraits();
     const memories = await this.queryMemories();
     return { traits, memories };
+  }
+
+  async rebuildTraitRelationships(): Promise<void> {
+    await runWriteSingle(
+      `MATCH (p:Persona {id: $personaId})-[:HAS_TRAIT]->(:Trait)-[r:CORRELATES_WITH|CONTRADICTS]->(:Trait)<-[:HAS_TRAIT]-(p)
+       DELETE r
+       RETURN count(r) as cleared`,
+      { personaId: this.personaId }
+    );
+
+    await this.createTraitRelationships();
   }
 
   private async createTraitRelationships(): Promise<void> {
