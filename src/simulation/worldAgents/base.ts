@@ -8,6 +8,7 @@ import {
   MarketConditions,
   OutcomeEffect 
 } from '../types.js';
+import { getBaseRate } from '../baseRateRegistry.js';
 
 export interface WorldState {
   date: Date;
@@ -107,11 +108,21 @@ export abstract class BaseWorldAgent implements WorldAgent {
   }
 }
 
+const getRegistryRate = (
+  scenario: string,
+  metric: string,
+  fallback: number,
+  conditions?: string[],
+): number => {
+  return getBaseRate(scenario, metric, conditions)?.rate ?? fallback;
+};
+
 // Historical data sources
+/** @deprecated Prefer querying @src/simulation/baseRateRegistry.ts directly. */
 export const HISTORICAL_DATA = {
   // S&P 500 annual returns (1928-2023, inflation-adjusted)
   sp500: {
-    meanReturn: 0.095, // 9.5% nominal
+    meanReturn: getRegistryRate('day_trading', 'sp500_mean_return', 0.095), // 9.5% nominal
     meanRealReturn: 0.067, // 6.7% real
     volatility: 0.198,
     maxDrawdown: -0.507, // 2008
@@ -121,11 +132,11 @@ export const HISTORICAL_DATA = {
   
   // Job market data (US Bureau of Labor Statistics)
   jobMarket: {
-    averageTenure: 4.1, // years
-    voluntaryQuitRate: 0.024, // monthly
-    layoffRate: 0.011, // monthly
-    salaryGrowth: 0.035, // annual
-    jobSearchDuration: 5.8, // months average
+    averageTenure: getRegistryRate('career_change', 'average_tenure_years', 4.1, ['us_workers', 'all_industries']), // years
+    voluntaryQuitRate: getRegistryRate('career_change', 'voluntary_quit_rate_monthly', 0.024, ['us_workers', 'all_industries', 'monthly']), // monthly
+    layoffRate: getRegistryRate('career_change', 'layoff_rate_monthly', 0.011, ['us_workers', 'all_industries', 'monthly']), // monthly
+    salaryGrowth: getRegistryRate('career_change', 'salary_growth_annual', 0.035, ['us_workers', 'private_industry']), // annual
+    jobSearchDuration: getRegistryRate('career_change', 'job_search_duration_months', 5.8, ['us_workers']), // months average
   },
   
   // Education ROI data
@@ -134,16 +145,16 @@ export const HISTORICAL_DATA = {
     mastersROI: 0.12,
     mbaROI: 0.15,
     completionRates: {
-      bachelors: 0.62,
-      masters: 0.78,
-      mba: 0.95,
-      bootcamp: 0.71,
+      bachelors: getRegistryRate('advanced_degree', 'completion_rate_bachelors', 0.62, ['4yr_institution', 'first_time_students']),
+      masters: getRegistryRate('advanced_degree', 'completion_rate_masters', 0.78, ['graduate_program']),
+      mba: getRegistryRate('advanced_degree', 'completion_rate_mba', 0.95, ['accredited_program']),
+      bootcamp: getRegistryRate('career_change', 'completion_rate_bootcamp', 0.71, ['coding_bootcamp']),
     },
   },
   
   // Real estate historical
   realEstate: {
-    annualAppreciation: 0.035,
+    annualAppreciation: getRegistryRate('real_estate_purchase', 'annual_appreciation', 0.035, ['us_national_average']),
     volatility: 0.08,
     maintenanceCostPct: 0.015, // of value annually
   },

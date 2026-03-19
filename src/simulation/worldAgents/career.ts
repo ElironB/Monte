@@ -1,8 +1,18 @@
 // Career World Agent - Job market, salary growth, burnout models
 // Based on US Bureau of Labor Statistics and industry research
 
-import { BaseWorldAgent, HISTORICAL_DATA } from './base.js';
+import { BaseWorldAgent } from './base.js';
 import { CloneExecutionContext, WorldEvent, OutcomeEffect } from '../types.js';
+import { getBaseRate } from '../baseRateRegistry.js';
+
+const ANNUAL_SALARY_GROWTH =
+  getBaseRate('career_change', 'salary_growth_annual', ['us_workers', 'private_industry'])?.rate ?? 0.035;
+const MONTHLY_LAYOFF_RATE =
+  getBaseRate('career_change', 'layoff_rate_monthly', ['us_workers', 'all_industries', 'monthly'])?.rate ?? 0.011;
+const MONTHLY_VOLUNTARY_QUIT_RATE =
+  getBaseRate('career_change', 'voluntary_quit_rate_monthly', ['us_workers', 'all_industries', 'monthly'])?.rate ?? 0.024;
+const JOB_SEARCH_DURATION_MONTHS =
+  getBaseRate('career_change', 'job_search_duration_months', ['us_workers'])?.rate ?? 5.8;
 
 interface CareerState {
   currentSalary: number;
@@ -70,8 +80,7 @@ export class CareerWorldAgent extends BaseWorldAgent {
     }
     
     // Salary growth (annual raise, prorated monthly)
-    const annualGrowth = HISTORICAL_DATA.jobMarket.salaryGrowth;
-    const monthlyGrowth = Math.pow(1 + annualGrowth, 1/12) - 1;
+    const monthlyGrowth = Math.pow(1 + ANNUAL_SALARY_GROWTH, 1 / 12) - 1;
     this.state.currentSalary *= (1 + monthlyGrowth);
     
     // Promotion readiness increases with tenure
@@ -104,7 +113,7 @@ export class CareerWorldAgent extends BaseWorldAgent {
     
     // Job loss event (layoff)
     const layoffProbability = this.applyBehavioralModifiers(
-      HISTORICAL_DATA.jobMarket.layoffRate,
+      MONTHLY_LAYOFF_RATE,
       context,
       [
         { trait: 'emotionalVolatility', threshold: 0.8, factor: 1.3 }, // Emotional issues may affect performance
@@ -131,7 +140,7 @@ export class CareerWorldAgent extends BaseWorldAgent {
     
     // Voluntary quit (if conditions met)
     const quitProbability = this.applyBehavioralModifiers(
-      HISTORICAL_DATA.jobMarket.voluntaryQuitRate,
+      MONTHLY_VOLUNTARY_QUIT_RATE,
       context,
       [
         { trait: 'riskTolerance', threshold: 0.7, factor: 1.5 },
@@ -228,7 +237,7 @@ export class CareerWorldAgent extends BaseWorldAgent {
     }
     
     // Extended unemployment hardship
-    if (this.state.jobSearchStatus === 'unemployed' && this.state.monthsUnemployed > 6) {
+    if (this.state.jobSearchStatus === 'unemployed' && this.state.monthsUnemployed > Math.ceil(JOB_SEARCH_DURATION_MONTHS)) {
       const hardshipProbability = Math.min(0.5, this.state.monthsUnemployed / 12);
       if (this.roll(hardshipProbability)) {
         events.push(this.createEvent(

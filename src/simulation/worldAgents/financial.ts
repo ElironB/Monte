@@ -3,6 +3,7 @@
 
 import { BaseWorldAgent, HISTORICAL_DATA, simulateMarketReturn } from './base.js';
 import { CloneExecutionContext, WorldEvent, OutcomeEffect } from '../types.js';
+import { getBaseRate, applyPersonaModulation } from '../baseRateRegistry.js';
 
 interface FinancialState {
   portfolioValue: number;
@@ -80,10 +81,12 @@ export class FinancialWorldAgent extends BaseWorldAgent {
   // Simulate one month of market activity
   private simulateMonth(): void {
     const { allocation } = this.state;
+    const sp500Return = getBaseRate('day_trading', 'sp500_mean_return')?.rate ?? 0.095;
+    const adjustedSp500Return = applyPersonaModulation(sp500Return, 0.5);
     
     // Stock returns (monthly)
     const monthlyStockReturn = this.randomNormal(
-      HISTORICAL_DATA.sp500.meanReturn / 12,
+      adjustedSp500Return / 12,
       HISTORICAL_DATA.sp500.volatility / Math.sqrt(12)
     );
     
