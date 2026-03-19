@@ -2,6 +2,7 @@
 // Phase 4: Simulation Engine
 
 import type { CloneParameters } from '../persona/cloneGenerator.js';
+import type { NarrativeResult } from './narrativeGenerator.js';
 
 // Re-export CloneParameters for convenience
 export type { CloneParameters } from '../persona/cloneGenerator.js';
@@ -188,6 +189,7 @@ export interface AggregatedResults {
   timeline: TimelineData;
   statistics: SimulationStatistics;
   stratifiedBreakdown: StratifiedBreakdown;
+  narrative?: NarrativeResult;
 }
 
 export interface Histogram {

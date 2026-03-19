@@ -7,6 +7,7 @@ export * from './forkEvaluator.js';
 export * from './chaosInjector.js';
 export * from './engine.js';
 export * from './resultAggregator.js';
+export * from './narrativeGenerator.js';
 
 // World Agents
 export * from './worldAgents/base.js';
