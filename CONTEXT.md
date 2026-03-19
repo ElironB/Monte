@@ -67,13 +67,13 @@
 
 **What's Done**:
 
-- Fastify API with JWT auth (access + refresh tokens)
+- Fastify API with passthrough auth (no login required, auto-creates local user)
 - Neo4j 5.x with connection pooling
 - Redis for queues and caching
 - MinIO for object storage
 - BullMQ for job queues (ingestion, persona, simulation)
 - Docker Compose setup
-- All API routes: auth, users, health, ingestion, persona, simulation, CLI
+- All API routes: users, health, ingestion, persona, simulation, CLI
 - Rate limiting, Swagger docs
 
 **Key Files**:
@@ -81,7 +81,7 @@
 - `src/index.ts` - Fastify server bootstrap
 - `src/config/*` - Database connections
 - `src/api/routes/*` - All API endpoints
-- `src/api/plugins/*` - Auth, rate limiting, swagger
+- `src/api/plugins/*` - Auth passthrough, rate limiting, swagger
 
 ---
 
@@ -226,14 +226,13 @@
 
 - SSE streaming: Real-time simulation progress via Redis pub/sub + `/stream/simulation/:id/progress` endpoint
 - OpenTelemetry Tracing: Distributed tracing with Jaeger support via `@opentelemetry/sdk-*` packages
-- API Key System: External agent authentication with `Authorization: ApiKey <key>` header, rate limiting per key
-- CLI Interface: Full `monte` CLI with `auth`, `persona`, `simulate`, `ingest`, `config` commands
+- Self-hosted mode: No authentication required - single local user auto-created on startup
+- CLI Interface: Full `monte` CLI with `persona`, `simulate`, `ingest`, `config` commands (no auth commands needed)
 - API Polish: Pagination, filtering, caching for list endpoints (simulation, ingestion, users)
 
 **Key Files**:
 
-- `src/api/plugins/apiKey.ts` - API key authentication plugin
-- `src/api/routes/apikeys.ts` - API key management endpoints
+- `src/api/plugins/auth.ts` - Passthrough auth plugin (injects local user)
 - `src/api/routes/stream.ts` - SSE streaming endpoint
 - `src/config/tracing.ts` - OpenTelemetry/Jaeger configuration
 - `src/cli/*` - Complete CLI implementation (index.ts, api.ts, config.ts, commands/)
@@ -261,11 +260,10 @@ Monte/
 │   ├── index.ts                    # Fastify bootstrap
 │   ├── api/
 │   │   ├── plugins/
-│   │   │   ├── auth.ts            # JWT + refresh tokens
+│   │   │   ├── auth.ts            # Passthrough auth (local user injection)
 │   │   │   ├── rateLimit.ts       # Rate limiting
 │   │   │   └── schema.ts          # Swagger/OpenAPI
 │   │   └── routes/
-│   │       ├── auth.ts            # Register/login/refresh
 │   │       ├── users.ts           # CRUD
 │   │       ├── health.ts          # Health checks
 │   │       ├── ingestion.ts       # Data sources, upload
@@ -331,15 +329,15 @@ Monte/
 
 ### 1. Authentication
 
-- JWT for access tokens (15 min expiry)
-- Separate refresh tokens via JWT (different secret, 30 day expiry)
-- NOT using Paseto (removed due to package issues)
+**Self-hosted mode: no authentication required.** Single local user (`local-user`) is auto-created on startup and injected into every request. No login, no JWT, no API keys.
+
+The `request.user.userId` pattern is preserved throughout the codebase - the auth plugin now just injects a fixed local user instead of validating tokens.
 
 ### 2. Database Schema
 
 **Neo4j Nodes**:
 
-- `User` - id, email, passwordHash, name
+- `User` - id, email, name (no passwordHash needed)
 - `Persona` - id, version, buildStatus, summary, etc.
 - `DataSource` - id, sourceType, status, metadata
 - `Signal` - id, type, value, confidence, evidence
@@ -398,8 +396,6 @@ MINIO_ENDPOINT=localhost
 MINIO_PORT=9000
 MINIO_ACCESS_KEY=<min 1 char>
 MINIO_SECRET_KEY=<min 1 char>
-JWT_SECRET=<min 32 chars>
-REFRESH_TOKEN_SECRET=<min 32 chars>
 
 # Phase 2+ (optional for now)
 GROQ_API_KEY=
@@ -411,6 +407,11 @@ COMPOSIO_API_KEY=
 PORT=3000
 NODE_ENV=development
 LOG_LEVEL=info
+
+# OpenTelemetry (optional)
+OTEL_ENABLED=false
+OTEL_SERVICE_NAME=monte-engine
+OTEL_EXPORTER_JAEGER_ENDPOINT=http://localhost:14268/api/traces
 ```
 
 ---
@@ -532,5 +533,5 @@ If unclear on ANYTHING in this document:
 
 ---
 
-**Last Updated**: Phase 5 complete, ready for Phase 6
-**Agent**: Continue with Phase 5 CLI & API Polish
+**Last Updated**: Phase 5 complete (auth removed), ready for Phase 6
+**Agent**: Continue with Phase 6 - Extended Sources

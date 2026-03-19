@@ -59,8 +59,6 @@ cp .env.example .env
 Minimum required variables:
 ```bash
 NEO4J_PASSWORD=your_secure_password
-JWT_SECRET=your_32_char_secret_here
-REFRESH_TOKEN_SECRET=your_32_char_refresh_secret
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 ```
@@ -135,7 +133,6 @@ Documentation at `http://localhost:3000/docs`
 | Graph Database | Neo4j 5.x |
 | Job Queue | BullMQ + Redis |
 | Object Storage | MinIO (S3-compatible) |
-| Auth | JWT + Refresh Tokens + API Keys |
 | Observability | OpenTelemetry + Jaeger |
 | LLM Routing | Groq (fast) + Anthropic (complex) |
 
@@ -143,29 +140,7 @@ Documentation at `http://localhost:3000/docs`
 
 ## 🔌 API Reference
 
-### Authentication
-
-All endpoints except `/health` and `/auth/*` require authentication via:
-
-**Bearer Token (JWT):**
-```bash
-curl -H "Authorization: Bearer <token>" http://localhost:3000/persona
-```
-
-**API Key:**
-```bash
-curl -H "Authorization: ApiKey <api-key>" http://localhost:3000/persona
-```
-
 ### Endpoints
-
-#### Auth
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/auth/register` | Create new account |
-| POST | `/auth/login` | Authenticate |
-| POST | `/auth/refresh` | Refresh access token |
-| GET | `/auth/me` | Get current user |
 
 #### Persona
 | Method | Endpoint | Description |
@@ -197,13 +172,6 @@ curl -H "Authorization: ApiKey <api-key>" http://localhost:3000/persona
 | GET | `/ingestion/sources/:id/status` | Check status |
 | DELETE | `/ingestion/sources/:id` | Delete source |
 
-#### API Keys
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api-keys` | List API keys |
-| POST | `/api-keys` | Create API key |
-| DELETE | `/api-keys/:id` | Revoke API key |
-
 ---
 
 ## 💻 CLI Usage
@@ -219,12 +187,6 @@ npm link
 ### Commands
 
 ```bash
-# Authentication
-monte auth login -e user@example.com -p password
-monte auth register -e user@example.com -n "User Name" -p password
-monte auth status
-monte auth logout
-
 # Persona
 monte persona status          # Check persona status
 monte persona build           # Build from data sources
@@ -284,11 +246,6 @@ MINIO_PORT=9000
 MINIO_ACCESS_KEY=<min 1 char>
 MINIO_SECRET_KEY=<min 1 char>
 
-# Auth
-JWT_SECRET=<min 32 chars>
-REFRESH_TOKEN_SECRET=<min 32 chars>
-API_KEY_SALT=<min 32 chars>
-
 # LLM (optional)
 GROQ_API_KEY=your_key
 ANTHROPIC_API_KEY=your_key
@@ -328,7 +285,6 @@ See `k8s/` directory for example manifests (production deployment guide coming s
 
 **Production:**
 - Persistent volumes required
-- JWT secrets must be set
 - HTTPS recommended
 - Rate limiting enabled
 
@@ -394,11 +350,10 @@ Monte/
 
 ## 🔒 Security
 
-- **JWT Authentication:** Short-lived access tokens (15 min) + refresh tokens
-- **API Keys:** Separate authentication for external agents
-- **Rate Limiting:** Per-user and per-API-key limits
-- **Data Encryption:** All sensitive data encrypted at rest
-- **Input Validation:** Zod schemas for all inputs
+- **Self-hosted**: No external authentication required - runs locally
+- **Rate Limiting**: Per-endpoint rate limits
+- **Data Encryption**: All sensitive data encrypted at rest
+- **Input Validation**: Zod schemas for all inputs
 
 Please report security vulnerabilities to security@monte-engine.io
 
@@ -431,7 +386,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 ### Phase 5 ✅ (Current)
 - [x] SSE streaming for progress
 - [x] OpenTelemetry tracing
-- [x] API key system
+- [x] Self-hosted mode (no auth required)
 - [x] CLI interface
 - [x] API pagination & caching
 
@@ -444,7 +399,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ### Future
 - [ ] Web UI
-- [ ] Multi-user organizations
 - [ ] Custom scenario builder
 - [ ] Result visualization exports
 

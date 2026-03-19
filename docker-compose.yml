@@ -59,8 +59,6 @@ services:
       - REDIS_URL=redis://redis:6379
       - MINIO_ENDPOINT=minio
       - MINIO_PORT=9000
-      - JWT_SECRET=${JWT_SECRET}
-      - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET}
     depends_on:
       neo4j:
         condition: service_healthy

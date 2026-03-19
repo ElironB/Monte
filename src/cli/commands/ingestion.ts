@@ -1,7 +1,6 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { api } from '../api.js';
-import { requireAuth } from '../config.js';
 
 export const ingestionCommands = new Command('ingest')
   .description('Data ingestion commands');
@@ -10,7 +9,6 @@ ingestionCommands
   .command('list')
   .description('List data sources')
   .action(async () => {
-    requireAuth();
     try {
       const sources = await api.listDataSources() as Array<{
         id: string;
@@ -49,7 +47,6 @@ ingestionCommands
   .requiredOption('-n, --name <name>', 'source name')
   .option('-m, --metadata <json>', 'metadata as JSON string')
   .action(async (options) => {
-    requireAuth();
     try {
       let metadata: Record<string, unknown> = {};
       if (options.metadata) {
@@ -79,7 +76,6 @@ ingestionCommands
   .description('Upload files for ingestion')
   .argument('<files...>', 'file paths to upload')
   .action(async (files) => {
-    requireAuth();
     try {
       const fileData = [];
 
@@ -132,7 +128,6 @@ ingestionCommands
   .description('Check data source status')
   .argument('<id>', 'data source ID')
   .action(async (id) => {
-    requireAuth();
     try {
       const status = await api.getDataSourceStatus(id) as {
         id: string;
@@ -163,7 +158,6 @@ ingestionCommands
   .argument('<id>', 'data source ID')
   .option('--force', 'skip confirmation', false)
   .action(async (id, options) => {
-    requireAuth();
     try {
       if (!options.force) {
         console.log(`This will delete data source ${id}`);
