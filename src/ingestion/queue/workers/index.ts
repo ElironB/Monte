@@ -13,8 +13,14 @@ import { ContradictionDetector } from '../../contradictionDetector.js';
 import { DimensionMapper } from '../../../persona/dimensionMapper.js';
 import { GraphBuilder } from '../../../persona/graphBuilder.js';
 import { PersonaCompressor } from '../../../persona/personaCompressor.js';
-import { CloneGenerator } from '../../../persona/cloneGenerator.js';
+import { CloneGenerator, CloneParameters } from '../../../persona/cloneGenerator.js';
 import { BehavioralSignal } from '../../types.js';
+
+// Phase 4: Simulation Engine imports
+import { getScenario } from '../../../simulation/decisionGraph.js';
+import { SimulationEngine } from '../../../simulation/engine.js';
+import { createAggregator } from '../../../simulation/resultAggregator.js';
+import { CloneResult } from '../../../simulation/types.js';
 
 const extractors = [
   new SearchHistoryExtractor(),
@@ -242,19 +248,215 @@ async function processPersona(job: Job<PersonaJobData>): Promise<void> {
   logger.info({ personaId, signalCount: signals.length, cloneCount: clones.length }, 'Persona build complete');
 }
 
+interface CloneData {
+  id: string;
+  parameters: CloneParameters;
+  percentile: number;
+  category: 'edge' | 'central' | 'typical';
+}
+
 async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
   logger.info({ jobId: job.id, data: job.data }, 'Processing simulation batch');
   
-  const { simulationId, cloneBatchIndex, totalBatches } = job.data;
+  const { simulationId, userId, personaId, scenarioType, cloneBatchIndex, totalBatches } = job.data;
   
-  const progress = Math.round(((cloneBatchIndex + 1) / totalBatches) * 100);
-  
-  await runWriteSingle(
-    `MATCH (s:Simulation {id: $simulationId})
-     SET s.progress = $progress, s.completedBatches = $completedBatches
-     RETURN s.id as id`,
-    { simulationId, progress, completedBatches: cloneBatchIndex + 1 }
-  );
+  try {
+    // Get simulation details
+    const simulation = await runQuerySingle<{
+      name: string;
+      parameters: string;
+      cloneCount: number;
+    }>(
+      `MATCH (s:Simulation {id: $simulationId})
+       RETURN s.name as name, s.parameters as parameters, s.cloneCount as cloneCount`,
+      { simulationId }
+    );
+    
+    if (!simulation) {
+      throw new Error(`Simulation ${simulationId} not found`);
+    }
+    
+    // Get scenario
+    const scenario = getScenario(scenarioType);
+    
+    // Calculate batch size (100 clones per batch by default)
+    const batchSize = 100;
+    const startIndex = cloneBatchIndex * batchSize;
+    const endIndex = Math.min(startIndex + batchSize, simulation.cloneCount);
+    
+    // Fetch clones for this batch
+    const cloneData = await runQuery<CloneData>(
+      `MATCH (p:Persona {id: $personaId})-[:HAS_CLONE]->(c:Clone)
+       WITH c
+       ORDER BY c.id
+       SKIP $skip
+       LIMIT $limit
+       RETURN c.id as id, c.parameters as parameters, c.percentile as percentile, c.category as category`,
+      { personaId, skip: startIndex, limit: endIndex - startIndex }
+    );
+    
+    // Parse clone parameters
+    const clones: Array<{
+      cloneId: string;
+      parameters: CloneParameters;
+      stratification: { percentile: number; category: 'edge' | 'central' | 'typical' };
+    }> = cloneData.map(c => ({
+      cloneId: c.id,
+      parameters: JSON.parse(c.parameters as unknown as string),
+      stratification: {
+        percentile: c.percentile,
+        category: c.category,
+      },
+    }));
+    
+    logger.info({ 
+      simulationId, 
+      batchIndex: cloneBatchIndex, 
+      cloneCount: clones.length,
+      scenario: scenarioType 
+    }, 'Running simulation batch');
+    
+    // Create simulation engine
+    const engine = new SimulationEngine(scenario, {
+      useLLM: true,
+      useChaos: true,
+      maxAnthropicCalls: 20,
+      logDecisions: false,
+    });
+    
+    // Execute clones
+    const results: CloneResult[] = [];
+    for (const clone of clones) {
+      try {
+        const result = await engine.executeClone(
+          clone.cloneId,
+          clone.parameters,
+          clone.stratification
+        );
+        results.push(result);
+      } catch (err) {
+        logger.error({ err, cloneId: clone.cloneId }, 'Clone simulation failed');
+        // Continue with other clones
+      }
+    }
+    
+    // Store clone results in Neo4j
+    for (const result of results) {
+      await runWriteSingle(
+        `MATCH (s:Simulation {id: $simulationId})
+         CREATE (cr:CloneResult {
+           id: $resultId,
+           cloneId: $cloneId,
+           path: $path,
+           finalState: $finalState,
+           metrics: $metrics,
+           duration: $duration,
+           createdAt: datetime()
+         })
+         CREATE (s)-[:HAS_RESULT]->(cr)
+         RETURN cr.id as id`,
+        {
+          simulationId,
+          resultId: result.cloneId,
+          cloneId: result.cloneId,
+          path: JSON.stringify(result.path),
+          finalState: JSON.stringify(result.finalState),
+          metrics: JSON.stringify(result.metrics),
+          duration: result.duration,
+        }
+      );
+    }
+    
+    // Update progress
+    const progress = Math.round(((cloneBatchIndex + 1) / totalBatches) * 100);
+    
+    // Check if this is the final batch
+    const isFinalBatch = cloneBatchIndex === totalBatches - 1;
+    
+    if (isFinalBatch) {
+      // Aggregate all results
+      const aggregator = createAggregator(scenarioType);
+      
+      // Fetch all results for aggregation
+      const allResults = await runQuery<{
+        metrics: string;
+        finalState: string;
+        category: string;
+        percentile: number;
+      }>(
+        `MATCH (s:Simulation {id: $simulationId})-[:HAS_RESULT]->(cr:CloneResult)
+         RETURN cr.metrics as metrics, cr.finalState as finalState,
+                cr.category as category, cr.percentile as percentile`,
+        { simulationId }
+      );
+      
+      // Convert to CloneResult format
+      const aggregatedResults: CloneResult[] = allResults.map(r => ({
+        cloneId: 'aggregate',
+        parameters: {} as CloneParameters,
+        stratification: {
+          percentile: r.percentile || 50,
+          category: (r.category as 'edge' | 'central' | 'typical') || 'typical',
+        },
+        path: [],
+        finalState: JSON.parse(r.finalState as unknown as string),
+        metrics: JSON.parse(r.metrics as unknown as string),
+        duration: 0,
+      }));
+      
+      aggregator.addResults(aggregatedResults);
+      const finalResults = aggregator.aggregate();
+      
+      // Store aggregated results
+      await runWriteSingle(
+        `MATCH (s:Simulation {id: $simulationId})
+         SET s.status = 'completed',
+             s.progress = 100,
+             s.completedBatches = $totalBatches,
+             s.results = $results,
+             s.completedAt = datetime()
+         RETURN s.id as id`,
+        {
+          simulationId,
+          totalBatches,
+          results: JSON.stringify({
+            histograms: finalResults.histograms,
+            outcomeDistribution: finalResults.outcomeDistribution,
+            statistics: finalResults.statistics,
+            stratifiedBreakdown: finalResults.stratifiedBreakdown,
+          }),
+        }
+      );
+      
+      logger.info({ 
+        simulationId, 
+        cloneCount: finalResults.cloneCount,
+        successRate: finalResults.statistics.successRate,
+        llmUsage: engine.getLLMUsage(),
+      }, 'Simulation completed');
+    } else {
+      // Update progress only
+      await runWriteSingle(
+        `MATCH (s:Simulation {id: $simulationId})
+         SET s.progress = $progress, s.completedBatches = $completedBatches
+         RETURN s.id as id`,
+        { simulationId, progress, completedBatches: cloneBatchIndex + 1 }
+      );
+    }
+    
+  } catch (err) {
+    logger.error({ err, simulationId, jobId: job.id }, 'Simulation batch failed');
+    
+    // Mark simulation as failed
+    await runWriteSingle(
+      `MATCH (s:Simulation {id: $simulationId})
+       SET s.status = 'failed', s.error = $error
+       RETURN s.id as id`,
+      { simulationId, error: (err as Error).message }
+    );
+    
+    throw err;
+  }
 }
 
 let workers: Worker[] = [];

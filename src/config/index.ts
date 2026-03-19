@@ -31,6 +31,12 @@ const configSchema = z.object({
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
     logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   }),
+  groq: z.object({
+    apiKey: z.string().optional(),
+  }).optional(),
+  anthropic: z.object({
+    apiKey: z.string().optional(),
+  }).optional(),
 });
 
 export const config = configSchema.parse({
@@ -60,6 +66,12 @@ export const config = configSchema.parse({
     port: process.env.PORT ? parseInt(process.env.PORT, 10) : undefined,
     nodeEnv: process.env.NODE_ENV,
     logLevel: process.env.LOG_LEVEL,
+  },
+  groq: {
+    apiKey: process.env.GROQ_API_KEY,
+  },
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY,
   },
 });
 
