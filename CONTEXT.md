@@ -9,12 +9,14 @@
 **Monte Engine** is an open-source, self-hostable probabilistic life simulation platform.
 
 ### Core Philosophy
+
 - **NOT an oracle** - does not predict the future
 - **Flight simulator for life decisions** - stress-tests behavioral tendencies against empirically-grounded world models
 - **Returns probability distributions** - not single-point predictions
 - **Based on revealed behavioral data** - not self-reported preferences
 
 ### Use Cases
+
 1. Individual decision support (quit job? start business? move cities?)
 2. LLM agent decision layer - agents call Monte instead of internal reasoning
 3. Autonomous agent safety - run simulation before high-stakes actions
@@ -60,9 +62,11 @@
 ## Implementation Status
 
 ### ✅ PHASE 1 - Core Infrastructure (COMPLETE)
+
 **Commit**: `959cbaa`
 
 **What's Done**:
+
 - Fastify API with JWT auth (access + refresh tokens)
 - Neo4j 5.x with connection pooling
 - Redis for queues and caching
@@ -73,6 +77,7 @@
 - Rate limiting, Swagger docs
 
 **Key Files**:
+
 - `src/index.ts` - Fastify server bootstrap
 - `src/config/*` - Database connections
 - `src/api/routes/*` - All API endpoints
@@ -81,9 +86,11 @@
 ---
 
 ### ✅ PHASE 2 - Ingestion Layer (COMPLETE)
+
 **Commit**: `9d0c2d2`
 
 **What's Done**:
+
 - `RawSourceData` and `BehavioralSignal` types
 - 5 signal extractors:
   1. `SearchHistoryExtractor` - financial, career, education intent
@@ -96,6 +103,7 @@
 - Real ingestion worker processing
 
 **Key Files**:
+
 - `src/ingestion/types.ts` - Core data types
 - `src/ingestion/extractors/*.ts` - 5 extractors
 - `src/ingestion/contradictionDetector.ts` - Contradiction detection
@@ -104,9 +112,11 @@
 ---
 
 ### ✅ PHASE 3 - Persona Construction (COMPLETE)
+
 **Commit**: `1809c2a`
 
 **What's Done**:
+
 - `DimensionMapper` - 6 behavioral dimensions with recency weighting
   - riskTolerance, timePreference, socialDependency
   - learningStyle, decisionSpeed, emotionalVolatility
@@ -125,12 +135,14 @@
   - Internal consistency enforcement
 
 **Key Files**:
+
 - `src/persona/dimensionMapper.ts` - Dimension scoring
 - `src/persona/graphBuilder.ts` - Neo4j graph writes
 - `src/persona/personaCompressor.ts` - Master persona
 - `src/persona/cloneGenerator.ts` - 1000 clone generation
 
 **How It Works**:
+
 1. Persona build triggered via `POST /persona`
 2. Queues `persona` job
 3. Worker fetches all signals for user
@@ -142,16 +154,19 @@
 ---
 
 ### ✅ PHASE 4 - Simulation Engine (COMPLETE)
+
 **Commit**: `0171a32`
 
 **What's Done**:
 
 #### 1. Decision Graph System ✅
+
 - `src/simulation/decisionGraph.ts` - 8 complete scenarios
 - Decision nodes, event nodes, outcome nodes
 - day_trading, startup_founding, career_change, advanced_degree, geographic_relocation, real_estate_purchase, health_fitness_goal, custom
 
 #### 2. World Agents (4 total) ✅
+
 - `src/simulation/worldAgents/base.ts` - Base agent with historical data (S&P 500, BLS)
 - `src/simulation/worldAgents/financial.ts` - Market returns, inflation, liquidity models
 - `src/simulation/worldAgents/career.ts` - Job market, salary growth, burnout
@@ -159,6 +174,7 @@
 - `src/simulation/worldAgents/social.ts` - Network effects, relocation costs
 
 #### 3. LLM Fork Evaluator ✅
+
 - `src/simulation/forkEvaluator.ts` - Complexity scoring (0-1)
 - Router: Groq (fast/cheap) vs Anthropic (complex)
 - Threshold: complexity > 0.6 = Anthropic
@@ -166,18 +182,21 @@
 - Heuristic fallback when LLM unavailable
 
 #### 4. Chaos Injector ✅
+
 - `src/simulation/chaosInjector.ts`
 - Black swan events: medical, market crash, job loss, relationship, natural_disaster
 - Behavioral trait modifiers affect probability
 - Max 2 events per simulation
 
 #### 5. Batch Orchestrator ✅
+
 - `src/simulation/engine.ts` - SimulationEngine class
 - Executes 1000 clones in parallel batches
 - Real-time progress tracking via BullMQ
 - `src/ingestion/queue/workers/index.ts` - `processSimulation` updated
 
 #### 6. Result Aggregator ✅
+
 - `src/simulation/resultAggregator.ts`
 - Histogram generation for all metrics
 - Outcome distributions (success/failure/neutral)
@@ -186,6 +205,7 @@
 - Store results in Neo4j Simulation node
 
 **How It Works**:
+
 1. Simulation triggered via `POST /simulation` with scenarioType
 2. Queues 10 batches of 100 clones each
 3. Worker fetches clones from Neo4j
@@ -199,9 +219,11 @@
 ---
 
 ### ✅ PHASE 5 - CLI & API Polish (COMPLETE)
+
 **Commit**: `5022c77`
 
 **What's Done**:
+
 - SSE streaming: Real-time simulation progress via Redis pub/sub + `/stream/simulation/:id/progress` endpoint
 - OpenTelemetry Tracing: Distributed tracing with Jaeger support via `@opentelemetry/sdk-*` packages
 - API Key System: External agent authentication with `Authorization: ApiKey <key>` header, rate limiting per key
@@ -209,6 +231,7 @@
 - API Polish: Pagination, filtering, caching for list endpoints (simulation, ingestion, users)
 
 **Key Files**:
+
 - `src/api/plugins/apiKey.ts` - API key authentication plugin
 - `src/api/routes/apikeys.ts` - API key management endpoints
 - `src/api/routes/stream.ts` - SSE streaming endpoint
@@ -219,6 +242,7 @@
 ---
 
 ### ⏳ PHASE 6 - Extended Sources (NEXT)
+
 **Status**: NOT STARTED
 
 - Gmail integration via Composio
@@ -306,12 +330,15 @@ Monte/
 ## Key Design Decisions
 
 ### 1. Authentication
+
 - JWT for access tokens (15 min expiry)
 - Separate refresh tokens via JWT (different secret, 30 day expiry)
 - NOT using Paseto (removed due to package issues)
 
 ### 2. Database Schema
+
 **Neo4j Nodes**:
+
 - `User` - id, email, passwordHash, name
 - `Persona` - id, version, buildStatus, summary, etc.
 - `DataSource` - id, sourceType, status, metadata
@@ -323,6 +350,7 @@ Monte/
 - `Contradiction` - id, type, description, severity
 
 **Relationships**:
+
 - `(User)-[:HAS_PERSONA]->(Persona)`
 - `(User)-[:HAS_DATA_SOURCE]->(DataSource)`
 - `(DataSource)-[:HAS_SIGNAL]->(Signal)`
@@ -335,11 +363,13 @@ Monte/
 - `(Signal)-[:CONTRADICTS]->(Contradiction)`
 
 ### 3. Queue System
+
 - **Ingestion Queue**: Process uploaded files → extract signals
 - **Persona Queue**: Build graph + generate 1000 clones
 - **Simulation Queue**: Run clone batches (100 clones/batch) → aggregate results
 
 ### 4. Stratified Sampling (Clones)
+
 - Must cover edge cases, not just average
 - 10% at extremes (5th, 95th percentile)
 - 20% at outliers (10th, 90th percentile)
@@ -347,6 +377,7 @@ Monte/
 - Internal consistency enforcement
 
 ### 5. LLM Routing (Phase 4)
+
 - Groq (Llama 3) for bulk/simple forks
 - Anthropic (Claude) for complex/high-stakes forks
 - Complexity score 0-1
@@ -392,7 +423,7 @@ On branch phase5-complete
 
 Commits:
 1. 959cbaa - Phase 1: Core Infrastructure
-2. 9d0c2d2 - Phase 2: Ingestion Layer  
+2. 9d0c2d2 - Phase 2: Ingestion Layer
 3. 9e65564 - Docs: Implementation status
 4. 1809c2a - Phase 3: Persona Construction
 5. 0171a32 - Phase 4: Simulation Engine
@@ -436,16 +467,16 @@ Commits:
 
 ## Performance Targets (from PRD)
 
-| Metric | Target |
-|--------|--------|
+| Metric                | Target             |
+| --------------------- | ------------------ |
 | 1000-clone simulation | < 90 seconds (p95) |
-| Persona build | < 5 minutes |
-| API response | < 200ms (p95) |
-| LLM calls per sim | < 100 |
-| Same-input variance | < 5% outcome shift |
-| Neo4j queries | < 50ms |
-| Concurrent sims | >= 10 |
-| Cold start | < 2 minutes |
+| Persona build         | < 5 minutes        |
+| API response          | < 200ms (p95)      |
+| LLM calls per sim     | < 100              |
+| Same-input variance   | < 5% outcome shift |
+| Neo4j queries         | < 50ms             |
+| Concurrent sims       | >= 10              |
+| Cold start            | < 2 minutes        |
 
 ---
 
@@ -462,8 +493,6 @@ Commits:
 5. **Simulation returns distributions** - always histograms/probabilities, never single numbers.
 
 6. **TypeScript errors** - use `// @ts-nocheck` sparingly if ioredis types cause issues (already used in redis.ts).
-
-7. **No testing required** - user explicitly said "too lazy to test". Focus on implementation.
 
 ---
 
@@ -495,6 +524,7 @@ git status
 ## Questions?
 
 If unclear on ANYTHING in this document:
+
 1. Read `docs/monte.md` for implementation details
 2. Check `src/ingestion/types.ts` for data types
 3. Look at completed phases for patterns
