@@ -2,7 +2,7 @@ import { Job } from 'bullmq';
 import type { Worker } from 'bullmq';
 import { createWorker, IngestionJobData, PersonaJobData, SimulationJobData } from '../ingestionQueue.js';
 import { logger } from '../../../utils/logger.js';
-import { runQuerySingle, runWriteSingle } from '../../../config/neo4j.js';
+import { runQuerySingle, runWriteSingle, runQuery } from '../../../config/neo4j.js';
 import { getFile } from '../../../config/minio.js';
 import { SearchHistoryExtractor } from '../../extractors/searchHistory.js';
 import { SocialBehaviorExtractor } from '../../extractors/socialBehavior.js';
@@ -10,6 +10,10 @@ import { FinancialBehaviorExtractor } from '../../extractors/financialBehavior.j
 import { CognitiveStructureExtractor } from '../../extractors/cognitiveStructure.js';
 import { MediaConsumptionExtractor } from '../../extractors/mediaConsumption.js';
 import { ContradictionDetector } from '../../contradictionDetector.js';
+import { DimensionMapper } from '../../../persona/dimensionMapper.js';
+import { GraphBuilder } from '../../../persona/graphBuilder.js';
+import { PersonaCompressor } from '../../../persona/personaCompressor.js';
+import { CloneGenerator } from '../../../persona/cloneGenerator.js';
 import { BehavioralSignal } from '../../types.js';
 
 const extractors = [
@@ -21,11 +25,10 @@ const extractors = [
 ];
 
 async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
-  logger.info({ jobId: job.id, data: job.data }, 'Processing ingestion job');
+  logger.info({ jobId: job.id }, 'Processing ingestion');
   
   const { userId, sourceId, sourceType, filePath, metadata } = job.data;
   
-  // Update status to processing
   await runWriteSingle(
     `MATCH (d:DataSource {id: $sourceId})
      SET d.status = 'processing', d.processedAt = datetime()
@@ -34,7 +37,6 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
   );
   
   try {
-    // Get raw content
     let rawContent = '';
     if (filePath) {
       const buffer = await getFile(filePath);
@@ -43,7 +45,6 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
       rawContent = metadata.content as string;
     }
     
-    // Extract signals
     const rawData = {
       sourceId,
       userId,
@@ -61,7 +62,6 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
       }
     }
     
-    // Store signals
     for (const signal of allSignals) {
       await runWriteSingle(
         `MATCH (d:DataSource {id: $sourceId})
@@ -88,7 +88,6 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
       );
     }
     
-    // Detect contradictions if we have signals
     if (allSignals.length > 0) {
       const detector = new ContradictionDetector(allSignals);
       const contradictions = detector.detect();
@@ -118,7 +117,6 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
       }
     }
     
-    // Mark complete
     await runWriteSingle(
       `MATCH (d:DataSource {id: $sourceId})
        SET d.status = 'completed', d.completedAt = datetime(), d.signalCount = $signalCount
@@ -143,37 +141,112 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
 }
 
 async function processPersona(job: Job<PersonaJobData>): Promise<void> {
-  logger.info({ jobId: job.id, data: job.data }, 'Processing persona job');
+  logger.info({ jobId: job.id, data: job.data }, 'Processing persona build');
   
   const { userId, personaId } = job.data;
   
-  // Aggregate all signals for this user
-  const signals = await runQuerySingle<{ count: number }>(
+  // Get all signals for this user
+  const signals = await runQuery<BehavioralSignal>(
     `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)-[:HAS_SIGNAL]->(s:Signal)
      WHERE d.status = 'completed'
-     RETURN count(s) as count`,
+     RETURN s.id as id, s.type as type, s.value as value, s.confidence as confidence,
+            s.evidence as evidence, s.timestamp as timestamp, s.dimensions as dimensions`,
     { userId }
   );
   
-  // Build persona from signals (placeholder for Phase 3)
-  logger.info({ personaId, signalCount: signals?.count || 0 }, 'Building persona');
+  const signalIds = signals.map(s => s.id);
   
-  // Update persona status
+  logger.info({ personaId, signalCount: signals.length }, 'Building persona from signals');
+  
+  // Map to dimensions
+  const mapper = new DimensionMapper(signals);
+  const dimensions = mapper.mapToDimensions();
+  
+  // Build Neo4j graph
+  const graphBuilder = new GraphBuilder(userId, personaId);
+  await graphBuilder.buildPersonaGraph(dimensions, signalIds);
+  
+  // Get stored traits for compression
+  const { traits, memories } = await graphBuilder.getPersonaGraph();
+  
+  // Compress to Master Persona
+  const compressor = new PersonaCompressor(traits, memories);
+  const masterPersona = compressor.compress();
+  
+  // Store master persona summary
   await runWriteSingle(
     `MATCH (p:Persona {id: $personaId})
-     SET p.buildStatus = 'ready', p.signalCount = $signalCount, p.updatedAt = datetime()
+     SET p.buildStatus = 'ready',
+         p.summary = $summary,
+         p.narrativeSummary = $narrativeSummary,
+         p.riskProfile = $riskProfile,
+         p.timeHorizon = $timeHorizon,
+         p.behavioralFingerprint = $fingerprint,
+         p.dominantTraits = $dominantTraits,
+         p.keyContradictions = $contradictions,
+         p.signalCount = $signalCount,
+         p.updatedAt = datetime()
      RETURN p.id as id`,
-    { personaId, signalCount: signals?.count || 0 }
+    {
+      personaId,
+      summary: masterPersona.summary,
+      narrativeSummary: masterPersona.narrativeSummary,
+      riskProfile: masterPersona.riskProfile,
+      timeHorizon: masterPersona.timeHorizon,
+      fingerprint: JSON.stringify(masterPersona.behavioralFingerprint),
+      dominantTraits: JSON.stringify(masterPersona.dominantTraits),
+      contradictions: JSON.stringify(masterPersona.keyContradictions),
+      signalCount: signals.length,
+    }
   );
+  
+  // Generate 1,000 clones
+  const cloneGen = new CloneGenerator(masterPersona, personaId);
+  const clones = cloneGen.generateClones(1000);
+  
+  // Store clones in batches
+  const batchSize = 100;
+  for (let i = 0; i < clones.length; i += batchSize) {
+    const batch = clones.slice(i, i + batchSize);
+    
+    for (const clone of batch) {
+      await runWriteSingle(
+        `MATCH (p:Persona {id: $personaId})
+         CREATE (c:Clone {
+           id: $cloneId,
+           parameters: $parameters,
+           percentile: $percentile,
+           category: $category,
+           createdAt: datetime()
+         })
+         CREATE (p)-[:HAS_CLONE]->(c)
+         RETURN c.id as id`,
+        {
+          personaId,
+          cloneId: clone.id,
+          parameters: JSON.stringify(clone.parameters),
+          percentile: clone.stratification.percentile,
+          category: clone.stratification.category,
+        }
+      );
+    }
+  }
+  
+  await runWriteSingle(
+    `MATCH (p:Persona {id: $personaId})
+     SET p.cloneCount = $cloneCount, p.updatedAt = datetime()
+     RETURN p.id as id`,
+    { personaId, cloneCount: clones.length }
+  );
+  
+  logger.info({ personaId, signalCount: signals.length, cloneCount: clones.length }, 'Persona build complete');
 }
 
 async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
   logger.info({ jobId: job.id, data: job.data }, 'Processing simulation batch');
   
-  // Placeholder for Phase 4 simulation engine
   const { simulationId, cloneBatchIndex, totalBatches } = job.data;
   
-  // Update simulation progress
   const progress = Math.round(((cloneBatchIndex + 1) / totalBatches) * 100);
   
   await runWriteSingle(
