@@ -364,7 +364,7 @@ function findDivergentSignals(traitsA: PersonaTrait[], traitsB: PersonaTrait[]):
 
 function loadLLMConfig(): { apiKey?: string; baseUrl?: string; model?: string } {
   try {
-    const apiKey = process.env.LLM_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY;
+    const apiKey = process.env.LLM_API_KEY;
     const baseUrl = process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1';
     const model = process.env.LLM_MODEL || 'llama-3.1-70b-versatile';
     return { apiKey: apiKey || undefined, baseUrl, model };

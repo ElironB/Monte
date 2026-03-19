@@ -396,9 +396,10 @@ MINIO_PORT=9000
 MINIO_ACCESS_KEY=<min 1 char>
 MINIO_SECRET_KEY=<min 1 char>
 
-# LLM (optional)
-GROQ_API_KEY=your_key
-ANTHROPIC_API_KEY=your_key
+# LLM (required for simulation — heuristic fallback if missing)
+LLM_API_KEY=your_key                    # Any OpenAI-compatible provider
+LLM_BASE_URL=https://api.groq.com/openai/v1   # API base URL
+LLM_MODEL=llama-3.1-70b-versatile             # Model name
 
 # OpenTelemetry (optional)
 OTEL_ENABLED=false
@@ -545,12 +546,17 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Composio OAuth integration (Google, Reddit, Spotify, GitHub, Notion, Slack, LinkedIn, Twitter)
 - [x] Connection verification (`monte connect confirm`)
 
-### Phase 7 ✅ (Current)
+### Phase 7 ✅
 - [x] Quantitative signal extraction (frequency, temporal patterns, trends)
 - [x] LLM narrative generation (6-section natural language analysis)
 - [x] `monte report` — polished markdown reports with ASCII charts
 - [x] `monte generate` — LLM-powered synthetic persona generation
 - [x] `monte compare` — A/B persona comparison with divergence analysis
+
+### Phase 8 ✅
+- [x] Base Rate Registry with cited empirical data (ESMA, BLS, NCES)
+- [x] Kelly Criterion position sizing from simulation data
+- [x] Bayesian incremental persona updates (evidence accumulation)
 
 ### Future
 - [ ] Web UI
