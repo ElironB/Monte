@@ -7,6 +7,7 @@ import { ingestionCommands } from './commands/ingestion.js';
 import { configCommands } from './commands/config.js';
 import { connectCommands } from './commands/connect.js';
 import { reportCommands } from './commands/report.js';
+import { generateCommands } from './commands/generate.js';
 import { loadConfig } from './config.js';
 
 const program = new Command();
@@ -27,6 +28,7 @@ program.addCommand(ingestionCommands);
 program.addCommand(configCommands);
 program.addCommand(connectCommands);
 program.addCommand(reportCommands);
+program.addCommand(generateCommands);
 
 // Default help
 if (process.argv.length === 2) {
