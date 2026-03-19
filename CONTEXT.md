@@ -77,8 +77,9 @@ The CLI is already structured for both — `monte config set-api` switches betwe
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│ 5. RESULTS LAYER                                         │
-│ Probability distributions → API + CLI output            │
+│ 5. RESULTS + NARRATIVE LAYER                             │
+│ Probability distributions → NarrativeGenerator (LLM)    │
+│ → monte report (markdown) → monte compare (A/B)        │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -86,7 +87,7 @@ The CLI is already structured for both — `monte config set-api` switches betwe
 
 ## Recent Changes (Open Source Refactoring)
 
-These three changes were merged into main in March 2026. They reshape Monte from a cloud-first multi-user app to a self-hosted open source tool.
+The first four changes were merged into main in March 2026. They reshape Monte from a cloud-first multi-user app to a self-hosted open source tool.
 
 ### 1. Auth System Removed (PR #2)
 
@@ -160,6 +161,61 @@ LLM_MODEL=gpt-4o-mini
 - Connections stored in `~/.monte/connections.json`
 - Completely optional — users can skip and only use `monte ingest <dir>` for file-based data
 
+### 5. Signal Extraction Upgrade (PR #7)
+
+**Why**: Boolean regex ("does keyword X exist?") wasn't enough. Need quantitative signals for accurate persona construction.
+
+**What changed**:
+- All 5 extractors (`searchHistory`, `socialBehavior`, `financialBehavior`, `cognitiveStructure`, `mediaConsumption`) upgraded to quantitative analysis
+- New shared `src/ingestion/extractors/temporalUtils.ts` module: `analyzeTemporalPatterns()`, `calculateRecurrence()`, `detectTrend()`
+- Each extractor now produces: frequency counts, temporal patterns (time-of-day/day-of-week clustering), recurrence scores, co-occurrence tracking, intensity trends
+- `DimensionMapper` upgraded with `getSignalStrength()` that factors frequency/recurrence/trend into dimension scoring
+- 35+ unit tests covering quantitative behavior
+
+### 6. LLM Narrative Generation (PR #8)
+
+**Why**: Users need to understand simulation results in plain English, not just probability numbers.
+
+**What changed**:
+- New `src/simulation/narrativeGenerator.ts` — `NarrativeGenerator` class
+- Produces 6-section analysis: executive summary, outcome analysis, behavioral drivers, risk factors, contradiction insights, recommendation
+- Uses same OpenAI SDK client (configurable `baseURL`), temperature 0.7, single LLM call
+- Rich template-based fallback when no `LLM_API_KEY` is set
+- Wired into simulation results API via `?narrative=true` query param on `/simulation/:id/results`
+
+### 7. `monte report` Command (PR #9)
+
+**Why**: Polished markdown output for sharing/archiving simulation results.
+
+**What changed**:
+- New `src/cli/commands/report.ts`
+- ASCII bar charts, metrics tables, behavioral profile visualization
+- Outcome distribution with stratified breakdown by clone category
+- Integrates narrative sections from `NarrativeGenerator` when available
+- Options: `-o <path>` (output file), `--no-narrative` (skip LLM), `--stdout` (print to terminal)
+
+### 8. `monte generate` Command (PR #10)
+
+**Why**: No real data needed to demo or test. Generate realistic personas from text descriptions.
+
+**What changed**:
+- New `src/cli/commands/generate.ts` + `src/persona/syntheticGenerator.ts`
+- Natural language description → 5 data files: `search-history.json`, `reddit-posts.json`, `transactions.csv`, `watch-history.json`, `notes/reflections.md`
+- 5 parallel LLM calls with retry logic and JSON response parsing
+- Generated files match exact ingestion detection formats (auto-detected by `monte ingest`)
+- Options: `-o <dir>` (output directory), `--entries <n>` (data points per file), `--timespan <months>`
+
+### 9. `monte compare` Command (PR #11)
+
+**Why**: A/B testing proves personalization works. Show two different personas produce different outcomes.
+
+**What changed**:
+- New `src/cli/commands/compare.ts`
+- Runs full pipeline (ingest → persona → simulate) for both personas sequentially (handles single-user limitation)
+- Side-by-side behavioral profiles, outcome deltas, divergent signal detection
+- LLM-generated divergence explanation
+- Options: `-s <scenario>`, `-c <clones>`, `-o <path>`, `--no-narrative`, `--stdout`
+
 ---
 
 ## Implementation Status
@@ -201,13 +257,41 @@ LLM_MODEL=gpt-4o-mini
 - Directory-based ingestion (`monte ingest <dir>`)
 - Pagination, filtering, caching on list endpoints
 
-### 🔄 PHASE 6 - Platform Connections (IN PROGRESS)
+### ✅ PHASE 6 - Platform Connections (COMPLETE)
 - Interactive `monte connect` command with multi-select platform picker
 - Composio OAuth integration for: Google, Reddit, Spotify, GitHub, Notion, Slack, LinkedIn, Twitter
 - `monte connect confirm` to verify connections
 - Connection status tracking in `~/.monte/connections.json`
 - Optional — file-based ingestion (`monte ingest <dir>`) still works independently
 - Requires `COMPOSIO_API_KEY` (free at composio.dev)
+
+### ✅ PHASE 7 - YC Readiness Features (COMPLETE)
+- **Signal extraction upgrade** (PR #7): All 5 extractors upgraded from boolean regex to quantitative analysis
+  - Frequency counting, temporal pattern detection (time-of-day, day-of-week clustering)
+  - Recurrence scoring, co-occurrence tracking, intensity trend analysis
+  - New shared `temporalUtils.ts` module with `analyzeTemporalPatterns()`, `calculateRecurrence()`, `detectTrend()`
+  - DimensionMapper upgraded with `getSignalStrength()` factoring frequency/recurrence/trend
+  - 35+ unit tests covering quantitative behavior
+- **LLM narrative generation** (PR #8): `NarrativeGenerator` class producing 6-section natural language analysis
+  - Executive summary, outcome analysis, behavioral drivers, risk factors, contradiction insights, recommendation
+  - Uses same OpenAI SDK client (configurable baseURL), temperature 0.7, single call
+  - Rich template-based fallback when no LLM key is set
+  - Wired into simulation results API via `?narrative=true` query param
+- **`monte report` command** (PR #9): Polished markdown report generation
+  - ASCII bar charts, metrics tables, behavioral profile visualization
+  - Outcome distribution with stratified breakdown by clone category
+  - Integrates narrative sections when available
+  - Options: `-o <path>`, `--no-narrative`, `--stdout`
+- **`monte generate` command** (PR #10): LLM-powered synthetic persona generation
+  - Natural language input → 5 data files (search-history.json, reddit-posts.json, transactions.csv, watch-history.json, notes/reflections.md)
+  - 5 parallel LLM calls with retry logic and response parsing
+  - Generated files match exact ingestion detection formats
+  - Options: `-o <dir>`, `--entries <n>`, `--timespan <months>`
+- **`monte compare` command** (PR #11): A/B persona comparison
+  - Runs full pipeline for both personas sequentially (handles single-user limitation)
+  - Side-by-side behavioral profiles, outcome deltas, divergent signal detection
+  - LLM-generated divergence explanation
+  - Options: `-s <scenario>`, `-c <clones>`, `-o <path>`, `--no-narrative`, `--stdout`
 
 ---
 
@@ -248,7 +332,8 @@ Monte/
 │   │   │   ├── socialBehavior.ts
 │   │   │   ├── financialBehavior.ts
 │   │   │   ├── cognitiveStructure.ts
-│   │   │   └── mediaConsumption.ts
+│   │   │   ├── mediaConsumption.ts
+│   │   │   └── temporalUtils.ts   # Shared temporal analysis utilities
 │   │   └── queue/
 │   │       ├── ingestionQueue.ts  # BullMQ queues
 │   │       └── workers/
@@ -257,7 +342,8 @@ Monte/
 │   │   ├── dimensionMapper.ts     # 6 behavioral dimensions
 │   │   ├── graphBuilder.ts        # Neo4j graph writes
 │   │   ├── personaCompressor.ts   # Master persona generation
-│   │   └── cloneGenerator.ts      # 1000 stratified clones
+│   │   ├── cloneGenerator.ts      # 1000 stratified clones
+│   │   └── syntheticGenerator.ts  # LLM synthetic persona data generation
 │   ├── simulation/
 │   │   ├── types.ts               # All simulation types
 │   │   ├── decisionGraph.ts       # 8 scenario definitions
@@ -265,6 +351,7 @@ Monte/
 │   │   ├── forkEvaluator.ts       # OpenAI SDK, configurable baseURL
 │   │   ├── chaosInjector.ts       # Black swan events
 │   │   ├── resultAggregator.ts    # Distribution calculation
+│   │   ├── narrativeGenerator.ts  # LLM narrative analysis for results
 │   │   └── worldAgents/
 │   │       ├── base.ts            # Base agent + S&P 500/BLS data
 │   │       ├── financial.ts       # Market returns, inflation
@@ -276,6 +363,9 @@ Monte/
 │   │   ├── api.ts                 # API client (no auth headers)
 │   │   ├── config.ts              # ~/.monte config (no auth storage)
 │   │   └── commands/
+│   │       ├── compare.ts         # monte compare (A/B persona comparison)
+│   │       ├── generate.ts        # monte generate (synthetic persona generation)
+│   │       ├── report.ts          # monte report (markdown report generation)
 │   │       ├── connect.ts         # monte connect (Composio platform linking)
 │   │       ├── ingestion.ts       # monte ingest <dir>, status, list, delete
 │   │       ├── persona.ts         # monte persona status/build/history/traits
@@ -325,6 +415,15 @@ Historical S&P 500 returns, BLS job market data, education completion rates. NOT
 ### 7. Composio for Platform Connections (Optional)
 Users can optionally connect live platforms via `monte connect`. Uses Composio CLI under the hood (`composio link --no-wait`). Completely optional — `monte ingest <dir>` works without any platform connections. Requires `COMPOSIO_API_KEY` from composio.dev (free tier available).
 
+### 8. Signal Extraction is Quantitative
+Extractors parse structured data (JSON entries, CSV rows) to count frequencies, detect temporal patterns, and track trends. Not just "does keyword X exist" — measures "how often, when, and is it increasing." Shared `temporalUtils.ts` module provides `analyzeTemporalPatterns()`, `calculateRecurrence()`, `detectTrend()` across all 5 extractors.
+
+### 9. Output is Natural Language
+Simulation results are interpreted by `NarrativeGenerator` into 6-section narrative analysis. Users get "your impulsive spending patterns suggest..." not just "success: 34.2%". Works with any OpenAI-compatible LLM, falls back to rich templates when no key is set.
+
+### 10. Synthetic Personas for Testing
+`monte generate` creates realistic behavioral data from a text description. No real data needed to demo or test. Generated files match exact ingestion formats.
+
 ---
 
 ## Environment Variables
@@ -361,6 +460,20 @@ OTEL_ENABLED=false
 ## CLI Reference
 
 ```bash
+# Generate synthetic personas (no real data needed)
+monte generate "<description>"    # Create test persona from natural language
+monte generate "..." -o ./out     # Custom output directory
+monte generate "..." --entries 100 --timespan 12
+
+# Compare personas (A/B testing)
+monte compare <dir-a> <dir-b> -s <scenario>
+monte compare ./a ./b -s day_trading -o comparison.md
+
+# Reports
+monte report <id>                 # Generate markdown report with narrative
+monte report <id> --no-narrative  # Data-only report
+monte report <id> --stdout        # Print to terminal
+
 # Connect platforms (optional)
 monte connect                     # Interactive platform picker + OAuth links
 monte connect confirm             # Verify pending connections
@@ -384,11 +497,13 @@ monte simulate list                         # List all simulations
 monte simulate progress <id>                # Check progress
 monte simulate results <id> -f json         # Get results (table or json)
 monte simulate scenarios                    # List available scenarios
+monte simulate delete <id> --force          # Delete simulation
 
 # Config
 monte config show                 # Show current config
 monte config set-api <url>        # Change API endpoint
 monte config set-defaults -s day_trading -c 1000
+monte config dir                  # Show config directory
 ```
 
 ---
@@ -424,7 +539,7 @@ npm run dev
 
 ## Critical Notes
 
-1. **Signal extraction is rule-based** (regex/pattern matching) — NOT using LLM for extraction. LLM only used for fork evaluation in simulation.
+1. **Signal extraction is quantitative** — regex/pattern matching upgraded to frequency counting, temporal detection, trend analysis. LLM used for fork evaluation, narrative generation, and synthetic persona generation.
 2. **Clones are parameter variants** — same structure, different values on 6 dimensions. NOT different personalities.
 3. **World agents must use empirical data** — historical returns, base rates from research. NOT made-up numbers.
 4. **Contradictions are IMPORTANT** — revealed vs stated behavior discrepancies drive simulation accuracy.
@@ -436,6 +551,6 @@ npm run dev
 
 ---
 
-**Last Updated**: March 2026 — Open source refactoring complete, Composio platform connections added
-**Status**: Phases 1-5 complete. Phase 6 (platform connections) in progress.
-**Next**: Ship open source v1 — end-to-end testing, documentation polish, sample data files.
+**Last Updated**: March 2026 — YC readiness features complete (PRs #7-#11)
+**Status**: Phases 1-7 complete.
+**Next**: End-to-end integration testing, Docker quick-start validation, v0.1.0 release.
