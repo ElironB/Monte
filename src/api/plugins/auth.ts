@@ -9,7 +9,7 @@ declare module 'fastify' {
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {
-    user: { userId: string; email: string; iat: number; exp: number };
+    user: { userId: string; email: string; iat: number; exp: number; scopes?: string[] };
   }
 }
 

@@ -26,6 +26,9 @@ const configSchema = z.object({
     jwtExpiryMinutes: z.number().default(15),
     refreshTokenExpiryDays: z.number().default(30),
   }),
+  apiKeys: z.object({
+    salt: z.string().min(32),
+  }),
   server: z.object({
     port: z.number().default(3000),
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
@@ -36,6 +39,14 @@ const configSchema = z.object({
   }).optional(),
   anthropic: z.object({
     apiKey: z.string().optional(),
+  }).optional(),
+  composio: z.object({
+    apiKey: z.string().optional(),
+  }).optional(),
+  tracing: z.object({
+    enabled: z.boolean().default(false),
+    serviceName: z.string().default('monte-engine'),
+    jaegerEndpoint: z.string().default('http://localhost:14268/api/traces'),
   }).optional(),
 });
 
@@ -62,6 +73,9 @@ export const config = configSchema.parse({
     jwtExpiryMinutes: process.env.JWT_EXPIRY_MINUTES ? parseInt(process.env.JWT_EXPIRY_MINUTES, 10) : undefined,
     refreshTokenExpiryDays: process.env.REFRESH_TOKEN_EXPIRY_DAYS ? parseInt(process.env.REFRESH_TOKEN_EXPIRY_DAYS, 10) : undefined,
   },
+  apiKeys: {
+    salt: process.env.API_KEY_SALT || process.env.JWT_SECRET || 'default_salt_change_in_production_32chars!',
+  },
   server: {
     port: process.env.PORT ? parseInt(process.env.PORT, 10) : undefined,
     nodeEnv: process.env.NODE_ENV,
@@ -72,6 +86,14 @@ export const config = configSchema.parse({
   },
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY,
+  },
+  composio: {
+    apiKey: process.env.COMPOSIO_API_KEY,
+  },
+  tracing: {
+    enabled: process.env.OTEL_ENABLED === 'true',
+    serviceName: process.env.OTEL_SERVICE_NAME,
+    jaegerEndpoint: process.env.OTEL_EXPORTER_JAEGER_ENDPOINT,
   },
 });
 
