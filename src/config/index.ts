@@ -25,11 +25,11 @@ const configSchema = z.object({
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
     logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   }),
-  groq: z.object({
+  llm: z.object({
     apiKey: z.string().optional(),
-  }).optional(),
-  anthropic: z.object({
-    apiKey: z.string().optional(),
+    baseUrl: z.string().url().default('https://api.groq.com/openai/v1'),
+    model: z.string().default('llama-3.1-70b-versatile'),
+    reasoningModel: z.string().optional(),
   }).optional(),
   composio: z.object({
     apiKey: z.string().optional(),
@@ -63,11 +63,11 @@ export const config = configSchema.parse({
     nodeEnv: process.env.NODE_ENV,
     logLevel: process.env.LOG_LEVEL,
   },
-  groq: {
-    apiKey: process.env.GROQ_API_KEY,
-  },
-  anthropic: {
-    apiKey: process.env.ANTHROPIC_API_KEY,
+  llm: {
+    apiKey: process.env.LLM_API_KEY,
+    baseUrl: process.env.LLM_BASE_URL,
+    model: process.env.LLM_MODEL,
+    reasoningModel: process.env.LLM_REASONING_MODEL,
   },
   composio: {
     apiKey: process.env.COMPOSIO_API_KEY,

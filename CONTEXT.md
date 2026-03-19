@@ -176,9 +176,11 @@
 #### 3. LLM Fork Evaluator ✅
 
 - `src/simulation/forkEvaluator.ts` - Complexity scoring (0-1)
-- Router: Groq (fast/cheap) vs Anthropic (complex)
-- Threshold: complexity > 0.6 = Anthropic
-- Max 20 Anthropic calls per simulation
+- Single OpenAI SDK client with configurable `baseURL`
+- Works with any OpenAI-compatible API: Groq, OpenRouter, OpenAI, Together, etc.
+- Standard model for bulk/simple forks, optional reasoning model for complex/high-stakes forks
+- Threshold: complexity > 0.6 = reasoning model
+- Hard cap: 20 reasoning model calls per simulation
 - Heuristic fallback when LLM unavailable
 
 #### 4. Chaos Injector ✅
@@ -376,11 +378,13 @@ The `request.user.userId` pattern is preserved throughout the codebase - the aut
 
 ### 5. LLM Routing (Phase 4)
 
-- Groq (Llama 3) for bulk/simple forks
-- Anthropic (Claude) for complex/high-stakes forks
+- Uses OpenAI SDK with configurable `baseURL` for provider flexibility
+- Standard model for bulk/simple forks
+- Optional reasoning model (configurable) for complex/high-stakes forks
 - Complexity score 0-1
-- Threshold: >0.6 = Anthropic
-- Hard cap: 20 Anthropic calls per simulation
+- Threshold: >0.6 = reasoning model
+- Hard cap: 20 reasoning calls per simulation
+- Just change `LLM_BASE_URL` to swap providers (Groq → OpenRouter → OpenAI, etc.)
 
 ---
 
@@ -397,10 +401,11 @@ MINIO_PORT=9000
 MINIO_ACCESS_KEY=<min 1 char>
 MINIO_SECRET_KEY=<min 1 char>
 
-# Phase 2+ (optional for now)
-GROQ_API_KEY=
-ANTHROPIC_API_KEY=
-OPENAI_API_KEY=
+# LLM (optional - works with any OpenAI-compatible API)
+LLM_API_KEY=                    # Required for LLM evaluation
+LLM_BASE_URL=https://api.groq.com/openai/v1
+LLM_MODEL=llama-3.1-70b-versatile
+LLM_REASONING_MODEL=            # Optional: separate model for complex decisions
 COMPOSIO_API_KEY=
 
 # Server
