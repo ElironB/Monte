@@ -1,6 +1,11 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { runQuery, runQuerySingle, runWriteSingle } from '../../config/neo4j.js';
+import { NarrativeGenerator } from '../../simulation/narrativeGenerator.js';
+import { AggregatedResults } from '../../simulation/types.js';
+import { BehavioralSignal } from '../../ingestion/types.js';
+import { DimensionMapper } from '../../persona/dimensionMapper.js';
+import { logger } from '../../utils/logger.js';
 import { cacheGet, cacheSet } from '../../config/redis.js';
 import { scheduleSimulationBatch } from '../../ingestion/queue/ingestionQueue.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
@@ -245,15 +250,60 @@ async function simulationRoutes(fastify: FastifyInstance) {
     preHandler: [fastify.authenticate],
     handler: async (request) => {
       const { id } = request.params as { id: string };
-      const sim = await runQuerySingle<{ results: string | null; status: string }>(
+      const { narrative: wantNarrative } = (request.query as { narrative?: string });
+      const sim = await runQuerySingle<{ results: string | null; status: string; scenarioType: string }>(
         `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
-         RETURN s.results as results, s.status as status`,
+         RETURN s.results as results, s.status as status, s.scenarioType as scenarioType`,
         { userId: request.user.userId, simId: id }
       );
       if (!sim) throw new NotFoundError('Simulation');
+
+      const distributions: AggregatedResults | null = sim.results ? JSON.parse(sim.results) : null;
+
+      if (wantNarrative === 'true' && distributions) {
+        try {
+          const signalRecords = await runQuery<{
+            id: string;
+            type: string;
+            value: string;
+            confidence: number;
+            evidence: string;
+            dimensions: string;
+            timestamp: string;
+          }>(
+            `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:DERIVED_FROM]->(s:Signal)
+             RETURN s.id as id, s.type as type, s.value as value, s.confidence as confidence,
+                    s.evidence as evidence, s.dimensions as dimensions, toString(s.timestamp) as timestamp
+             ORDER BY s.confidence DESC
+             LIMIT 50`,
+            { userId: request.user.userId }
+          );
+
+          const signals: BehavioralSignal[] = signalRecords.map((r) => ({
+            id: r.id,
+            type: r.type as BehavioralSignal['type'],
+            value: r.value,
+            confidence: r.confidence,
+            evidence: r.evidence,
+            sourceDataId: '',
+            timestamp: r.timestamp,
+            dimensions: r.dimensions ? JSON.parse(r.dimensions) : {},
+          }));
+
+          const mapper = new DimensionMapper(signals);
+          const dimensions = mapper.mapToDimensions();
+
+          const generator = new NarrativeGenerator();
+          const narrative = await generator.generate(distributions, signals, dimensions, sim.scenarioType);
+          distributions.narrative = narrative;
+        } catch (error) {
+          logger.error({ error, simulationId: id }, 'Narrative generation failed, returning results without narrative');
+        }
+      }
+
       return {
         status: sim.status,
-        distributions: sim.results ? JSON.parse(sim.results) : null,
+        distributions,
       };
     },
   });
