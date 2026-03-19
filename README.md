@@ -249,6 +249,71 @@ monte config dir              # Show config directory
 
 ---
 
+## 📊 Data Quality Guide
+
+Not all data is equal. Monte Engine extracts behavioral signals from your files — the richer the data, the more accurate the simulation. Here's what generates the best results, ranked by signal quality:
+
+### 🏆 Tier 1 — Highest Impact (feed these first)
+
+| Data Type | Format | What Monte Extracts | Signals |
+|-----------|--------|---------------------|---------|
+| **Search History** | JSON (Google Takeout) | Financial intent, career goals, education interests, relocation plans, health focus | `financial_trading`, `career_change`, `education`, `relocation`, `health_fitness` + urgency scoring |
+| **Social Media Posts** | JSON (Reddit/Twitter export) | Risk tolerance, emotional state, decision patterns, social engagement | `high_risk_tolerance`, `anxiety`, `decision_paralysis`, `high_social_engagement` |
+| **Bank Transactions** | CSV | Spending habits, financial discipline, investment behavior | `impulse_spending`, `budget_struggles`, `active_investor` |
+
+> **Why Tier 1?** These reveal *actual behavior* — what you searched, how you spend, what you post when nobody's watching. This is the "revealed preference" data that Monte was designed for.
+
+### 🥈 Tier 2 — Strong Signal
+
+| Data Type | Format | What Monte Extracts | Signals |
+|-----------|--------|---------------------|---------|
+| **Personal Notes** | Markdown (Obsidian/Notion export) | Thinking structure, goal-setting patterns, self-awareness depth | `highly_organized` / `freeform_thinker`, `goal_oriented`, `deep_self_reflection` |
+| **Watch History** | JSON (YouTube/Netflix Takeout) | Learning style, content preferences, consumption patterns | `educational_content`, `learning_focused`, `high_media_consumption` |
+
+> **Why Tier 2?** Notes and watch history are rich but narrower — they tell Monte *how you think* and *what you consume*, but don't capture the financial/career/emotional signals that Tier 1 data provides.
+
+### 🥉 Tier 3 — Supporting Data
+
+| Data Type | Format | What Monte Extracts |
+|-----------|--------|---------------------|
+| **PDFs / Documents** | PDF, DOCX | Stored for future extraction (limited current processing) |
+| **Images** | PNG, JPG | Stored for future vision-based extraction |
+| **Generic Text** | TXT | May trigger various extractors depending on content |
+
+> **Why Tier 3?** These are stored in MinIO but current extractors have limited processing for binary formats. Future versions will add vision and document parsing.
+
+### 💡 Power Move: Contradictions
+
+The **best** simulations come from data that *contradicts itself*. Monte's ContradictionDetector specifically looks for:
+
+- **"I'm disciplined" + overdraft fees** → stated vs revealed gap
+- **YOLO posts + budget struggles** → cross-domain contradiction  
+- **Goal-oriented notes + repeated failures** → temporal contradiction
+
+These contradictions are what make Monte different from generic personality tests. Feed data from multiple tiers for the richest contradiction detection.
+
+### Where to Get Your Data
+
+| Platform | How to Export | File You Get |
+|----------|--------------|-------------|
+| Google | [takeout.google.com](https://takeout.google.com) | Search history JSON, YouTube watch history JSON |
+| Reddit | [reddit.com/settings/data-request](https://www.reddit.com/settings/data-request) | Posts/comments JSON |
+| Twitter/X | Settings → Your Account → Download Archive | tweets.json |
+| Bank/Credit Card | Your bank's export feature | transactions.csv |
+| Obsidian | Just point at your vault folder | .md files |
+| Notion | Settings → Export → Markdown | .md files |
+| Spotify | [spotify.com/account/privacy](https://www.spotify.com/account/privacy) | streaming_history.json |
+
+### Quick Test (No Real Data Needed)
+
+```bash
+monte ingest tests/fixtures    # Uses built-in sample data
+monte persona build
+monte simulate run -s day_trading --wait
+```
+
+---
+
 ## 🎲 Simulation Scenarios
 
 Monte Engine includes 8 pre-built scenarios:

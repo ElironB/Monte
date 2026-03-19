@@ -1,0 +1,11 @@
+date,description,amount,category
+2026-01-05,Amazon Late Night Purchase,89.99,shopping
+2026-01-08,Amazon Impulse Buy,149.99,shopping
+2026-01-12,Overdraft Fee,35.00,fee
+2026-01-15,Late Fee - Credit Card,29.00,fee
+2026-01-20,Insufficient Funds Charge,25.00,fee
+2026-02-01,Dividend Payment - Vanguard,125.00,investment
+2026-02-05,Deposit to Investment Account,500.00,investment
+2026-02-10,Brokerage Transfer,1000.00,investment
+2026-02-15,Amazon 2am Order,67.50,shopping
+2026-03-01,Declined Transaction,0.00,error
