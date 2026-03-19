@@ -17,7 +17,8 @@ const createSchema = z.object({
   scenarioType: z.enum(SCENARIOS),
   name: z.string().min(1).max(100),
   parameters: z.record(z.unknown()).optional(),
-  cloneCount: z.number().min(100).max(10000).default(1000),
+  cloneCount: z.number().min(10).max(10000).default(1000),
+  capitalAtRisk: z.number().positive().optional(),
 });
 
 const listQuerySchema = z.object({
@@ -158,6 +159,7 @@ async function simulationRoutes(fastify: FastifyInstance) {
            status: 'pending',
            parameters: $parameters,
            cloneCount: $cloneCount,
+           capitalAtRisk: $capitalAtRisk,
            progress: 0,
            completedBatches: 0,
            createdAt: datetime()
@@ -171,6 +173,7 @@ async function simulationRoutes(fastify: FastifyInstance) {
           scenarioType: body.scenarioType,
           parameters: JSON.stringify(body.parameters ?? {}),
           cloneCount: body.cloneCount,
+          capitalAtRisk: body.capitalAtRisk ?? null,
         }
       );
 

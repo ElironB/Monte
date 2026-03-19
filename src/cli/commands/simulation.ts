@@ -47,6 +47,7 @@ simulationCommands
   .requiredOption('-s, --scenario <type>', 'scenario type (day_trading, startup_founding, career_change, etc.)')
   .option('-n, --name <name>', 'simulation name')
   .option('-c, --clones <count>', 'number of clones', '1000')
+  .option('--capital-at-risk <amount>', 'capital at risk for Kelly sizing', parseFloat)
   .option('--wait', 'wait for completion and show results', false)
   .action(async (options) => {
     try {
@@ -57,6 +58,7 @@ simulationCommands
 
       const result = await api.createSimulation(options.scenario, name, {
         cloneCount,
+        capitalAtRisk: options.capitalAtRisk,
       }) as {
         simulationId: string;
         status: string;

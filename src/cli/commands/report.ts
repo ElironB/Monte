@@ -54,6 +54,17 @@ interface NarrativeResult {
   recommendation: string;
 }
 
+interface KellyOutput {
+  successProbability: number;
+  netOddsRatio: number;
+  fullKellyPercentage: number;
+  adjustedKellyPercentage: number;
+  optimalCommitmentAmount: number;
+  kellyFractionUsed: number;
+  rationale: string;
+  warning?: string;
+}
+
 interface AggregatedResults {
   scenarioId: string;
   cloneCount: number;
@@ -62,6 +73,7 @@ interface AggregatedResults {
   statistics: SimulationStatistics;
   stratifiedBreakdown: StratifiedBreakdown;
   narrative?: NarrativeResult;
+  kelly?: KellyOutput;
 }
 
 interface SimulationInfo {
@@ -264,6 +276,28 @@ function renderBehavioralProfile(traits: PersonaTrait[]): string {
   return lines.join('\n');
 }
 
+function renderKellySection(kelly: KellyOutput): string {
+  const lines: string[] = [];
+  lines.push('## Position Sizing (Kelly Criterion)');
+  lines.push('');
+  lines.push('| Metric | Value |');
+  lines.push('|--------|-------|');
+  lines.push(`| Success Probability | ${formatPct(kelly.successProbability)} |`);
+  lines.push(`| Net Odds Ratio | ${kelly.netOddsRatio.toFixed(2)}:1 |`);
+  lines.push(`| Full Kelly | ${formatPct(kelly.fullKellyPercentage)} |`);
+  lines.push(`| Your Kelly (adjusted) | ${formatPct(kelly.adjustedKellyPercentage)} |`);
+  lines.push(`| Recommended Commitment | ${formatCurrency(kelly.optimalCommitmentAmount)} |`);
+  lines.push('');
+  lines.push(`> ${kelly.rationale}`);
+  if (kelly.warning) {
+    lines.push('');
+    lines.push(`> Warning: ${kelly.warning}`);
+  }
+  lines.push('');
+  lines.push('> Kelly sizing is a probabilistic simulation output, not financial advice.');
+  return lines.join('\n');
+}
+
 function generateReport(
   sim: SimulationInfo,
   results: AggregatedResults,
@@ -323,6 +357,11 @@ function generateReport(
   }
 
   sections.push('---');
+
+  if (results.kelly) {
+    sections.push(renderKellySection(results.kelly));
+    sections.push('---');
+  }
 
   if (traits && traits.length > 0) {
     const profileTable = renderBehavioralProfile(traits);

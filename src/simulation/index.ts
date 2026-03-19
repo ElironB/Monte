@@ -8,6 +8,7 @@ export * from './chaosInjector.js';
 export * from './engine.js';
 export * from './resultAggregator.js';
 export * from './narrativeGenerator.js';
+export * from './kellyCalculator.js';
 export * from './baseRateRegistry.js';
 
 // World Agents

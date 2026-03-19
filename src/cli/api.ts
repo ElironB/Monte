@@ -45,7 +45,7 @@ export const api = {
 
   // Simulations
   listSimulations: () => makeRequest('/simulation'),
-  createSimulation: (scenarioType: string, name: string, options?: { parameters?: Record<string, unknown>; cloneCount?: number }) =>
+  createSimulation: (scenarioType: string, name: string, options?: { parameters?: Record<string, unknown>; cloneCount?: number; capitalAtRisk?: number }) =>
     makeRequest('/simulation', {
       method: 'POST',
       body: JSON.stringify({
@@ -53,6 +53,7 @@ export const api = {
         name,
         parameters: options?.parameters,
         cloneCount: options?.cloneCount,
+        capitalAtRisk: options?.capitalAtRisk,
       }),
     }),
   getSimulation: (id: string) => makeRequest(`/simulation/${id}`),
