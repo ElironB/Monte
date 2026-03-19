@@ -1,8 +1,18 @@
 // Education World Agent - Completion rates, skill acquisition, degree ROI models
 // Based on NCES data and education research
 
-import { BaseWorldAgent, HISTORICAL_DATA } from './base.js';
+import { BaseWorldAgent } from './base.js';
 import { CloneExecutionContext, WorldEvent, OutcomeEffect } from '../types.js';
+import { getBaseRate } from '../baseRateRegistry.js';
+
+const BACHELORS_COMPLETION_RATE =
+  getBaseRate('advanced_degree', 'completion_rate_bachelors', ['4yr_institution', 'first_time_students'])?.rate ?? 0.62;
+const MASTERS_COMPLETION_RATE =
+  getBaseRate('advanced_degree', 'completion_rate_masters', ['graduate_program'])?.rate ?? 0.78;
+const MBA_COMPLETION_RATE =
+  getBaseRate('advanced_degree', 'completion_rate_mba', ['accredited_program'])?.rate ?? 0.95;
+const BOOTCAMP_COMPLETION_RATE =
+  getBaseRate('career_change', 'completion_rate_bootcamp', ['coding_bootcamp'])?.rate ?? 0.71;
 
 interface EducationState {
   programType: 'bachelors' | 'masters' | 'mba' | 'bootcamp' | 'certificate';
@@ -46,28 +56,28 @@ export class EducationWorldAgent extends BaseWorldAgent {
     bachelors: {
       duration: 48,
       baseTuition: 40000,
-      completionRate: HISTORICAL_DATA.education.completionRates.bachelors,
+      completionRate: BACHELORS_COMPLETION_RATE,
       skillValue: 0.7,
       salaryBoost: 0.65, // 65% salary increase vs high school
     },
     masters: {
       duration: 24,
       baseTuition: 30000,
-      completionRate: HISTORICAL_DATA.education.completionRates.masters,
+      completionRate: MASTERS_COMPLETION_RATE,
       skillValue: 0.85,
       salaryBoost: 0.85,
     },
     mba: {
       duration: 24,
       baseTuition: 60000,
-      completionRate: HISTORICAL_DATA.education.completionRates.mba,
+      completionRate: MBA_COMPLETION_RATE,
       skillValue: 0.9,
       salaryBoost: 1.2, // 120% salary increase
     },
     bootcamp: {
       duration: 4,
       baseTuition: 15000,
-      completionRate: HISTORICAL_DATA.education.completionRates.bootcamp,
+      completionRate: BOOTCAMP_COMPLETION_RATE,
       skillValue: 0.75,
       salaryBoost: 0.45,
     },
