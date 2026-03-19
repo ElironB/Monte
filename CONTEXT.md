@@ -1,6 +1,6 @@
 # Monte Engine - Agent Handoff Context
 
-> **CRITICAL**: Read this before making ANY changes. This document contains the architectural decisions, phase status, and design philosophy required to continue implementation correctly.
+> **CRITICAL**: Read this before making ANY changes. This document contains the product strategy, architectural decisions, phase status, and what was recently changed.
 
 ---
 
@@ -24,233 +24,175 @@
 
 ---
 
+## Product Strategy
+
+### Two-phase approach:
+
+1. **Open Source (NOW)** — Self-hosted, single-user. `docker compose up`, everything runs locally. User owns their data, runs simulations on their machine. No cloud dependency for core functionality.
+
+2. **Cloud Version (LATER)** — Hosted API at something like `api.monte.dev`. Users `npm i -g monte`, run `monte login`, and hit hosted infra. Same CLI, different endpoint. Like Resend, Firecrawl, Supabase CLI model.
+
+### Current focus: Ship open source v1
+
+The CLI is already structured for both — `monte config set-api` switches between `localhost:3000` and a future cloud URL. But right now, everything must work self-hosted with zero cloud dependencies.
+
+### What belongs in open source vs cloud:
+
+| Feature | Open Source | Cloud |
+|---------|------------|-------|
+| Auth system | No auth (local user) | JWT + API keys + multi-user |
+| Data ingestion | `monte ingest <dir>` (file-based) | OAuth connectors via Composio |
+| LLM provider | User provides own key (any OpenAI-compatible) | Managed LLM routing |
+| Infrastructure | Docker Compose (Neo4j, Redis, MinIO) | Managed services |
+| CLI | Points to localhost | Points to hosted API |
+
+---
+
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ 1. DATA INGESTION LAYER                                  │
-│ Multi-source connectors → RawSourceData → Signals       │
-│ (Search, Social, Financial, Notes, Media)               │
+│ CLI: monte ingest <dir> → recursive scan → auto-detect  │
+│ API: POST /ingestion/upload → MinIO → BullMQ queue      │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
 │ 2. SIGNAL EXTRACTION + CONTRADICTION DETECTION           │
-│ 5 Extractors → BehavioralSignal[] → Contradictions      │
+│ 5 Extractors (regex/pattern) → BehavioralSignal[]       │
+│ ContradictionDetector → stated vs revealed conflicts    │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
 │ 3. PERSONA CONSTRUCTION (GraphRAG → Neo4j)               │
 │ DimensionMapper → 6 dimensions → GraphBuilder            │
-│ PersonaCompressor → Master Persona                     │
-│ CloneGenerator → 1,000 stratified clones               │
+│ PersonaCompressor → Master Persona                      │
+│ CloneGenerator → 1,000 stratified clones                │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│ 4. SIMULATION ENGINE ✅ COMPLETE                         │
+│ 4. SIMULATION ENGINE                                     │
 │ Decision Graph + World Agents + LLM Fork Evaluator      │
-│ Chaos Injector + Batch Orchestrator                    │
+│ Chaos Injector + Batch Orchestrator (OpenAI SDK)        │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│ 5. RESULTS LAYER                                        │
-│ Probability distributions → API + CLI output           │
+│ 5. RESULTS LAYER                                         │
+│ Probability distributions → API + CLI output            │
 └─────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Recent Changes (Open Source Refactoring)
+
+These three changes were merged into main in March 2026. They reshape Monte from a cloud-first multi-user app to a self-hosted open source tool.
+
+### 1. Auth System Removed (PR #2)
+
+**Why**: Self-hosted single-user tool doesn't need login.
+
+**What changed**:
+- Auth middleware (`src/api/plugins/auth.ts`) is now a passthrough — injects fixed `local-user` ID into every request
+- Local user auto-created in Neo4j on server startup (`src/index.ts`)
+- Deleted: `src/api/routes/auth.ts`, `src/api/plugins/apiKey.ts`, `src/api/routes/apikeys.ts`, `src/cli/commands/auth.ts`
+- Removed: `bcrypt`, `jsonwebtoken` dependencies
+- Removed: `JWT_SECRET`, `REFRESH_TOKEN_SECRET`, `API_KEY_SALT` env vars
+- CLI no longer has `monte auth *` commands
+- All `requireAuth()` calls removed from CLI commands
+- `request.user.userId` pattern preserved — every route still gets a user context, it's just always the local user
+
+### 2. LLM Unified on OpenAI SDK (PR #3)
+
+**Why**: One SDK, any provider. User provides API key + base URL for whatever they use.
+
+**What changed**:
+- Replaced `groq-sdk` with `openai` package
+- `src/simulation/forkEvaluator.ts` rewritten — single `OpenAI` client with configurable `baseURL`
+- `callGroq()` and `callAnthropic()` replaced with single `callLLM()` method
+- `src/config/index.ts` — `groq`/`anthropic` config replaced with unified `llm` block
+- New env vars: `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_REASONING_MODEL`
+- Old env vars removed: `GROQ_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
+- Complexity routing preserved: standard model for simple forks, optional reasoning model for complex ones (>0.6 complexity)
+- Heuristic fallback still works when no LLM key provided
+
+**Provider examples**:
+```
+# Groq
+LLM_BASE_URL=https://api.groq.com/openai/v1
+LLM_MODEL=llama-3.1-70b-versatile
+
+# OpenRouter (single key for everything)
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_MODEL=meta-llama/llama-3.1-70b-instruct
+
+# OpenAI
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+```
+
+### 3. Directory-Based Ingestion (PR #4)
+
+**Why**: Users dump files in a folder and run one command. No manual source registration.
+
+**What changed**:
+- `src/cli/commands/ingestion.ts` rewritten — `monte ingest <path>` recursively scans directories
+- Auto-detects source type by extension + content peeking:
+  - `.md`, `.txt` → `notes`
+  - `.json` → inspects content: `search_history`, `watch_history`, `social_media`, `financial`, or `files`
+  - `.csv` → checks headers for financial keywords, otherwise `files`
+  - `.pdf`, `.docx`, images → `files`
+- Skips hidden files, `node_modules`, `.git`, etc.
+- Groups files by detected type, uploads in batches of 10
+- `src/api/routes/ingestion.ts` — accepts all extractor sourceTypes + optional `sourceType` in upload
+- Removed: `monte ingest add` and `monte ingest upload` commands
+- Kept: `monte ingest status`, `monte ingest list`, `monte ingest delete`
 
 ---
 
 ## Implementation Status
 
 ### ✅ PHASE 1 - Core Infrastructure (COMPLETE)
-
-**Commit**: `959cbaa`
-
-**What's Done**:
-
-- Fastify API with passthrough auth (no login required, auto-creates local user)
-- Neo4j 5.x with connection pooling
-- Redis for queues and caching
-- MinIO for object storage
-- BullMQ for job queues (ingestion, persona, simulation)
-- Docker Compose setup
-- All API routes: users, health, ingestion, persona, simulation, CLI
-- Rate limiting, Swagger docs
-
-**Key Files**:
-
-- `src/index.ts` - Fastify server bootstrap
-- `src/config/*` - Database connections
-- `src/api/routes/*` - All API endpoints
-- `src/api/plugins/*` - Auth passthrough, rate limiting, swagger
-
----
+- Fastify API with passthrough auth (no login, auto-creates local user)
+- Neo4j 5.x, Redis 7, MinIO (S3-compatible), BullMQ job queues
+- Docker Compose for all services
+- Rate limiting, Swagger docs at `/docs`
 
 ### ✅ PHASE 2 - Ingestion Layer (COMPLETE)
-
-**Commit**: `9d0c2d2`
-
-**What's Done**:
-
-- `RawSourceData` and `BehavioralSignal` types
-- 5 signal extractors:
-  1. `SearchHistoryExtractor` - financial, career, education intent
-  2. `SocialBehaviorExtractor` - risk tolerance, anxiety, decision paralysis
-  3. `FinancialBehaviorExtractor` - impulse spending, budget struggles
-  4. `CognitiveStructureExtractor` - organization level, goal-setting
-  5. `MediaConsumptionExtractor` - educational bias, binge patterns
-- `ContradictionDetector` - stated vs revealed, temporal, cross-domain
-- Composio SDK client (placeholder)
-- Real ingestion worker processing
-
-**Key Files**:
-
-- `src/ingestion/types.ts` - Core data types
-- `src/ingestion/extractors/*.ts` - 5 extractors
-- `src/ingestion/contradictionDetector.ts` - Contradiction detection
-- `src/ingestion/queue/workers/index.ts` - Ingestion processing
-
----
+- 5 signal extractors (regex/pattern-based, no LLM cost):
+  1. `SearchHistoryExtractor` — finance, career, education, relocation, health intent
+  2. `SocialBehaviorExtractor` — risk tolerance, anxiety, decision paralysis
+  3. `FinancialBehaviorExtractor` — impulse spending, budget struggles, investment
+  4. `CognitiveStructureExtractor` — organization, goal-setting, self-reflection
+  5. `MediaConsumptionExtractor` — educational bias, binge patterns
+- `ContradictionDetector` — stated vs revealed, temporal, cross-domain
+- Composio SDK client (placeholder — not functional, for future cloud version)
 
 ### ✅ PHASE 3 - Persona Construction (COMPLETE)
-
-**Commit**: `1809c2a`
-
-**What's Done**:
-
-- `DimensionMapper` - 6 behavioral dimensions with recency weighting
-  - riskTolerance, timePreference, socialDependency
-  - learningStyle, decisionSpeed, emotionalVolatility
-- `GraphBuilder` - Neo4j graph construction
-  - Trait nodes with confidence weights
-  - Memory nodes
-  - Relationships (CORRELATES_WITH, CONTRADICTS)
-- `PersonaCompressor` - Master persona generation
-  - Summary generation
-  - Risk profile calculation
-  - Narrative summary with contradictions
-- `CloneGenerator` - 1,000 stratified clones
-  - 10% edge cases (5th/95th percentile)
-  - 20% outliers (10th/90th percentile)
-  - 70% typical (20th-80th percentile)
-  - Internal consistency enforcement
-
-**Key Files**:
-
-- `src/persona/dimensionMapper.ts` - Dimension scoring
-- `src/persona/graphBuilder.ts` - Neo4j graph writes
-- `src/persona/personaCompressor.ts` - Master persona
-- `src/persona/cloneGenerator.ts` - 1000 clone generation
-
-**How It Works**:
-
-1. Persona build triggered via `POST /persona`
-2. Queues `persona` job
-3. Worker fetches all signals for user
-4. `DimensionMapper` converts signals to 6 dimensions
-5. `GraphBuilder` creates trait/memory nodes in Neo4j
-6. `PersonaCompressor` generates narrative summary
-7. `CloneGenerator` creates 1000 clones stored in Neo4j
-
----
+- `DimensionMapper` — 6 behavioral dimensions with recency weighting
+- `GraphBuilder` — Neo4j graph with Trait nodes, Memory nodes, relationships
+- `PersonaCompressor` — master persona with narrative summary
+- `CloneGenerator` — 1,000 stratified clones (10% edge, 20% outlier, 70% typical)
 
 ### ✅ PHASE 4 - Simulation Engine (COMPLETE)
-
-**Commit**: `0171a32`
-
-**What's Done**:
-
-#### 1. Decision Graph System ✅
-
-- `src/simulation/decisionGraph.ts` - 8 complete scenarios
-- Decision nodes, event nodes, outcome nodes
-- day_trading, startup_founding, career_change, advanced_degree, geographic_relocation, real_estate_purchase, health_fitness_goal, custom
-
-#### 2. World Agents (4 total) ✅
-
-- `src/simulation/worldAgents/base.ts` - Base agent with historical data (S&P 500, BLS)
-- `src/simulation/worldAgents/financial.ts` - Market returns, inflation, liquidity models
-- `src/simulation/worldAgents/career.ts` - Job market, salary growth, burnout
-- `src/simulation/worldAgents/education.ts` - Completion rates, ROI models
-- `src/simulation/worldAgents/social.ts` - Network effects, relocation costs
-
-#### 3. LLM Fork Evaluator ✅
-
-- `src/simulation/forkEvaluator.ts` - Complexity scoring (0-1)
-- Single OpenAI SDK client with configurable `baseURL`
-- Works with any OpenAI-compatible API: Groq, OpenRouter, OpenAI, Together, etc.
-- Standard model for bulk/simple forks, optional reasoning model for complex/high-stakes forks
-- Threshold: complexity > 0.6 = reasoning model
-- Hard cap: 20 reasoning model calls per simulation
-- Heuristic fallback when LLM unavailable
-
-#### 4. Chaos Injector ✅
-
-- `src/simulation/chaosInjector.ts`
-- Black swan events: medical, market crash, job loss, relationship, natural_disaster
-- Behavioral trait modifiers affect probability
-- Max 2 events per simulation
-
-#### 5. Batch Orchestrator ✅
-
-- `src/simulation/engine.ts` - SimulationEngine class
-- Executes 1000 clones in parallel batches
-- Real-time progress tracking via BullMQ
-- `src/ingestion/queue/workers/index.ts` - `processSimulation` updated
-
-#### 6. Result Aggregator ✅
-
-- `src/simulation/resultAggregator.ts`
-- Histogram generation for all metrics
-- Outcome distributions (success/failure/neutral)
-- Timeline distributions
-- Stratified breakdown by clone category
-- Store results in Neo4j Simulation node
-
-**How It Works**:
-
-1. Simulation triggered via `POST /simulation` with scenarioType
-2. Queues 10 batches of 100 clones each
-3. Worker fetches clones from Neo4j
-4. `SimulationEngine` executes each clone through decision graph
-5. `ForkEvaluator` uses LLM or heuristic for decision nodes
-6. `ChaosInjector` adds random black swan events
-7. World agents apply market/career/education/social effects
-8. Results aggregated and stored in Neo4j
-9. Final batch marks simulation as `completed`
-
----
+- 8 decision graph scenarios (day_trading, startup, career_change, etc.)
+- 4 World Agents with empirical data (Financial, Career, Education, Social)
+- LLM Fork Evaluator via OpenAI SDK (any provider via baseURL)
+- Chaos Injector (black swan events)
+- Batch Orchestrator (1000 clones in parallel batches of 100)
+- Result Aggregator (histograms, outcome distributions, stratified breakdown)
 
 ### ✅ PHASE 5 - CLI & API Polish (COMPLETE)
+- SSE streaming for simulation progress
+- OpenTelemetry tracing with Jaeger
+- Full `monte` CLI: `ingest`, `persona`, `simulate`, `config`
+- Directory-based ingestion (`monte ingest <dir>`)
+- Pagination, filtering, caching on list endpoints
 
-**Commit**: `5022c77`
-
-**What's Done**:
-
-- SSE streaming: Real-time simulation progress via Redis pub/sub + `/stream/simulation/:id/progress` endpoint
-- OpenTelemetry Tracing: Distributed tracing with Jaeger support via `@opentelemetry/sdk-*` packages
-- Self-hosted mode: No authentication required - single local user auto-created on startup
-- CLI Interface: Full `monte` CLI with `persona`, `simulate`, `ingest`, `config` commands (no auth commands needed)
-- API Polish: Pagination, filtering, caching for list endpoints (simulation, ingestion, users)
-
-**Key Files**:
-
-- `src/api/plugins/auth.ts` - Passthrough auth plugin (injects local user)
-- `src/api/routes/stream.ts` - SSE streaming endpoint
-- `src/config/tracing.ts` - OpenTelemetry/Jaeger configuration
-- `src/cli/*` - Complete CLI implementation (index.ts, api.ts, config.ts, commands/)
-- `src/ingestion/queue/workers/index.ts` - Redis progress publishing for SSE
-
----
-
-### ⏳ PHASE 6 - Extended Sources (NEXT)
-
-**Status**: NOT STARTED
-
-- Gmail integration via Composio
-- GitHub integration via Composio
-- LinkedIn integration via Composio
-- Slack integration via Composio
-- Webhook notifications for simulation completion
+### ⏳ PHASE 6 - Extended Sources (NOT STARTED — DEFERRED TO CLOUD)
+- Gmail, GitHub, LinkedIn, Slack integrations via Composio
+- These require OAuth/API keys and are better suited for the cloud version
+- Open source users use `monte ingest <dir>` with exported data files instead
 
 ---
 
@@ -259,215 +201,185 @@
 ```
 Monte/
 ├── src/
-│   ├── index.ts                    # Fastify bootstrap
+│   ├── index.ts                    # Fastify bootstrap + local user creation
 │   ├── api/
 │   │   ├── plugins/
-│   │   │   ├── auth.ts            # Passthrough auth (local user injection)
+│   │   │   ├── auth.ts            # Passthrough auth (injects local-user)
 │   │   │   ├── rateLimit.ts       # Rate limiting
 │   │   │   └── schema.ts          # Swagger/OpenAPI
 │   │   └── routes/
-│   │       ├── users.ts           # CRUD
+│   │       ├── users.ts           # User CRUD
 │   │       ├── health.ts          # Health checks
-│   │       ├── ingestion.ts       # Data sources, upload
-│   │       ├── persona.ts         # Build/management
+│   │       ├── ingestion.ts       # Data sources + file upload
+│   │       ├── persona.ts         # Build/manage personas
 │   │       ├── simulation.ts      # Run simulations
-│   │       └── cli.ts             # Agent endpoints
+│   │       ├── cli.ts             # CLI-optimized endpoints
+│   │       └── stream.ts          # SSE streaming
 │   ├── config/
-│   │   ├── index.ts               # Env validation (Zod)
+│   │   ├── index.ts               # Env validation (Zod) — no auth config
 │   │   ├── neo4j.ts               # Neo4j driver
+│   │   ├── neo4j-schema.ts        # Constraints/indexes
 │   │   ├── redis.ts               # Redis client
 │   │   ├── minio.ts               # MinIO client
-│   │   └── neo4j-schema.ts        # Constraints setup
+│   │   └── tracing.ts             # OpenTelemetry setup
 │   ├── ingestion/
 │   │   ├── types.ts               # RawSourceData, BehavioralSignal
-│   │   ├── contradictionDetector.ts # Contradiction detection
+│   │   ├── contradictionDetector.ts
 │   │   ├── composio/
-│   │   │   └── client.ts          # SDK integration (placeholder)
+│   │   │   └── client.ts          # Placeholder (not functional)
 │   │   ├── extractors/
 │   │   │   ├── base.ts            # Abstract extractor
-│   │   │   ├── searchHistory.ts   # Search intent
-│   │   │   ├── socialBehavior.ts  # Risk, anxiety
-│   │   │   ├── financialBehavior.ts # Spending patterns
-│   │   │   ├── cognitiveStructure.ts # Notes analysis
-│   │   │   └── mediaConsumption.ts # Watch patterns
+│   │   │   ├── searchHistory.ts
+│   │   │   ├── socialBehavior.ts
+│   │   │   ├── financialBehavior.ts
+│   │   │   ├── cognitiveStructure.ts
+│   │   │   └── mediaConsumption.ts
 │   │   └── queue/
-│   │       ├── ingestionQueue.ts  # BullMQ setup
+│   │       ├── ingestionQueue.ts  # BullMQ queues
 │   │       └── workers/
-│   │           └── index.ts       # Real processing
-│   ├── persona/                   # ✅ COMPLETE
-│   │   ├── dimensionMapper.ts     # 6 dimensions
-│   │   ├── graphBuilder.ts        # Neo4j graph
-│   │   ├── personaCompressor.ts   # Master persona
-│   │   └── cloneGenerator.ts      # 1000 clones
-│   ├── simulation/                # ✅ COMPLETE
-│   │   ├── decisionGraph.ts       # 8 scenarios
-│   │   ├── worldAgents/
-│   │   │   ├── base.ts            # Base agent + historical data
-│   │   │   ├── financial.ts       # Market models
-│   │   │   ├── career.ts          # Job market
-│   │   │   ├── education.ts       # Degree ROI
-│   │   │   └── social.ts          # Network effects
-│   │   ├── forkEvaluator.ts       # LLM routing
-│   │   ├── chaosInjector.ts       # Black swans
-│   │   ├── engine.ts              # Simulation execution
-│   │   └── resultAggregator.ts    # Distributions
+│   │           └── index.ts       # Ingestion + persona + simulation workers
+│   ├── persona/
+│   │   ├── dimensionMapper.ts     # 6 behavioral dimensions
+│   │   ├── graphBuilder.ts        # Neo4j graph writes
+│   │   ├── personaCompressor.ts   # Master persona generation
+│   │   └── cloneGenerator.ts      # 1000 stratified clones
+│   ├── simulation/
+│   │   ├── types.ts               # All simulation types
+│   │   ├── decisionGraph.ts       # 8 scenario definitions
+│   │   ├── engine.ts              # SimulationEngine class
+│   │   ├── forkEvaluator.ts       # OpenAI SDK, configurable baseURL
+│   │   ├── chaosInjector.ts       # Black swan events
+│   │   ├── resultAggregator.ts    # Distribution calculation
+│   │   └── worldAgents/
+│   │       ├── base.ts            # Base agent + S&P 500/BLS data
+│   │       ├── financial.ts       # Market returns, inflation
+│   │       ├── career.ts          # Job market, burnout
+│   │       ├── education.ts       # Completion rates, ROI
+│   │       └── social.ts          # Network effects
+│   ├── cli/
+│   │   ├── index.ts               # Commander.js entry point
+│   │   ├── api.ts                 # API client (no auth headers)
+│   │   ├── config.ts              # ~/.monte config (no auth storage)
+│   │   └── commands/
+│   │       ├── ingestion.ts       # monte ingest <dir>, status, list, delete
+│   │       ├── persona.ts         # monte persona status/build/history/traits
+│   │       ├── simulation.ts      # monte simulate run/list/progress/results
+│   │       └── config.ts          # monte config show/set-api/set-defaults
 │   └── utils/
 │       ├── logger.ts              # Pino logging
-│       └── errors.ts                # Error classes
+│       └── errors.ts              # Error classes
 ├── tests/
-│   ├── setup.ts                   # Test config
-│   └── auth.test.ts               # Auth tests
 ├── docs/
-│   └── monte.md                   # Implementation status
-├── docker-compose.yml             # Neo4j, Redis, MinIO
-├── Dockerfile                     # Production build
-├── package.json                 # Dependencies
-└── tsconfig.json                # TypeScript config
+│   └── monte.txt                  # Full PRD (read for product context)
+├── docker-compose.yml             # Neo4j, Redis, MinIO, API
+├── Dockerfile                     # Multi-stage Node.js build
+├── package.json                   # Dependencies (openai, NOT groq-sdk)
+├── tsconfig.json                  # TypeScript config
+└── .env.example                   # Template (no auth vars)
 ```
+
+### Files that NO LONGER EXIST (deleted in open source refactoring):
+- `src/api/routes/auth.ts` — register/login/refresh/me endpoints
+- `src/api/plugins/apiKey.ts` — API key auth plugin
+- `src/api/routes/apikeys.ts` — API key management
+- `src/cli/commands/auth.ts` — CLI auth commands
 
 ---
 
 ## Key Design Decisions
 
-### 1. Authentication
+### 1. No Authentication (Self-Hosted)
+Single local user (`local-user`) auto-created on startup. Auth plugin is a passthrough. `request.user.userId` pattern preserved for Neo4j query isolation — makes it easy to add multi-user auth back for the cloud version.
 
-**Self-hosted mode: no authentication required.** Single local user (`local-user`) is auto-created on startup and injected into every request. No login, no JWT, no API keys.
+### 2. LLM via OpenAI SDK + configurable baseURL
+One `openai` package, swap providers by changing `LLM_BASE_URL`. No provider-specific SDKs. Complexity routing: standard model for simple forks, optional reasoning model for complex ones (>0.6 score). Heuristic fallback when no LLM key.
 
-The `request.user.userId` pattern is preserved throughout the codebase - the auth plugin now just injects a fixed local user instead of validating tokens.
+### 3. File-Based Data Ingestion
+`monte ingest <dir>` — recursive scan, auto-detect source types. No OAuth connectors for open source. Users export their data (Google Takeout, Obsidian vault, bank CSVs) and feed it in. Composio connector exists as placeholder for cloud version.
 
-### 2. Database Schema
+### 4. Signal Extraction is Rule-Based
+Regex/pattern matching, NOT LLM. Too expensive to use LLM for extraction. LLM only used in simulation phase for fork evaluation.
 
-**Neo4j Nodes**:
+### 5. Stratified Clone Sampling
+1000 clones: 10% edge (5th/95th), 20% outlier (10th/90th), 70% typical (20th-80th). Internal consistency enforcement between dimensions.
 
-- `User` - id, email, name (no passwordHash needed)
-- `Persona` - id, version, buildStatus, summary, etc.
-- `DataSource` - id, sourceType, status, metadata
-- `Signal` - id, type, value, confidence, evidence
-- `Trait` - id, name, value, confidence (from dimensions)
-- `Memory` - id, type, content, timestamp
-- `Clone` - id, parameters (JSON), percentile, category
-- `Simulation` - id, name, status, results (JSON)
-- `Contradiction` - id, type, description, severity
-
-**Relationships**:
-
-- `(User)-[:HAS_PERSONA]->(Persona)`
-- `(User)-[:HAS_DATA_SOURCE]->(DataSource)`
-- `(DataSource)-[:HAS_SIGNAL]->(Signal)`
-- `(Persona)-[:HAS_TRAIT]->(Trait)`
-- `(Persona)-[:HAS_MEMORY]->(Memory)`
-- `(Persona)-[:HAS_CLONE]->(Clone)`
-- `(Persona)-[:DERIVED_FROM]->(Signal)`
-- `(Trait)-[:CORRELATES_WITH]->(Trait)`
-- `(Trait)-[:CONTRADICTS]->(Trait)`
-- `(Signal)-[:CONTRADICTS]->(Contradiction)`
-
-### 3. Queue System
-
-- **Ingestion Queue**: Process uploaded files → extract signals
-- **Persona Queue**: Build graph + generate 1000 clones
-- **Simulation Queue**: Run clone batches (100 clones/batch) → aggregate results
-
-### 4. Stratified Sampling (Clones)
-
-- Must cover edge cases, not just average
-- 10% at extremes (5th, 95th percentile)
-- 20% at outliers (10th, 90th percentile)
-- 70% typical (20th-80th percentile)
-- Internal consistency enforcement
-
-### 5. LLM Routing (Phase 4)
-
-- Uses OpenAI SDK with configurable `baseURL` for provider flexibility
-- Standard model for bulk/simple forks
-- Optional reasoning model (configurable) for complex/high-stakes forks
-- Complexity score 0-1
-- Threshold: >0.6 = reasoning model
-- Hard cap: 20 reasoning calls per simulation
-- Just change `LLM_BASE_URL` to swap providers (Groq → OpenRouter → OpenAI, etc.)
+### 6. World Agents Use Empirical Data
+Historical S&P 500 returns, BLS job market data, education completion rates. NOT made-up numbers.
 
 ---
 
 ## Environment Variables
 
 ```bash
-# Required
+# Infrastructure (required)
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=<min 8 chars>
+NEO4J_PASSWORD=password123
 REDIS_URL=redis://localhost:6379
 MINIO_ENDPOINT=localhost
 MINIO_PORT=9000
-MINIO_ACCESS_KEY=<min 1 char>
-MINIO_SECRET_KEY=<min 1 char>
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
 
-# LLM (optional - works with any OpenAI-compatible API)
-LLM_API_KEY=                    # Required for LLM evaluation
+# LLM (required for simulation — heuristic fallback if missing)
+LLM_API_KEY=                    # Any OpenAI-compatible provider
 LLM_BASE_URL=https://api.groq.com/openai/v1
 LLM_MODEL=llama-3.1-70b-versatile
-LLM_REASONING_MODEL=            # Optional: separate model for complex decisions
-COMPOSIO_API_KEY=
+LLM_REASONING_MODEL=            # Optional: separate model for complex forks
 
-# Server
+# Optional
+COMPOSIO_API_KEY=               # For future Composio integrations
 PORT=3000
 NODE_ENV=development
 LOG_LEVEL=info
-
-# OpenTelemetry (optional)
 OTEL_ENABLED=false
-OTEL_SERVICE_NAME=monte-engine
-OTEL_EXPORTER_JAEGER_ENDPOINT=http://localhost:14268/api/traces
+```
+
+**No auth env vars needed.** No `JWT_SECRET`, no `REFRESH_TOKEN_SECRET`, no `API_KEY_SALT`.
+
+---
+
+## CLI Reference
+
+```bash
+# Ingest data
+monte ingest ./my-data            # Scan directory, auto-detect, upload
+monte ingest status               # Show all source statuses
+monte ingest list                 # List data sources
+monte ingest delete <id> --force  # Delete a source
+
+# Build persona
+monte persona build               # Build from ingested data
+monte persona status              # Check build status
+monte persona traits              # View behavioral dimensions
+monte persona history             # Version history
+
+# Run simulations
+monte simulate run -s day_trading --wait    # Run and wait for results
+monte simulate list                         # List all simulations
+monte simulate progress <id>                # Check progress
+monte simulate results <id> -f json         # Get results (table or json)
+monte simulate scenarios                    # List available scenarios
+
+# Config
+monte config show                 # Show current config
+monte config set-api <url>        # Change API endpoint
+monte config set-defaults -s day_trading -c 1000
 ```
 
 ---
 
-## Current Git Status
+## Quick Start
 
+```bash
+cd /home/Monte
+cp .env.example .env
+# Edit .env — set NEO4J_PASSWORD, LLM_API_KEY, LLM_BASE_URL
+docker-compose up -d neo4j redis minio
+npm install
+npm run dev
+# Server at http://localhost:3000, docs at http://localhost:3000/docs
 ```
-On branch phase5-complete
-1 commit ahead of origin/main
-
-Commits:
-1. 959cbaa - Phase 1: Core Infrastructure
-2. 9d0c2d2 - Phase 2: Ingestion Layer
-3. 9e65564 - Docs: Implementation status
-4. 1809c2a - Phase 3: Persona Construction
-5. 0171a32 - Phase 4: Simulation Engine
-6. 5022c77 - Phase 5: CLI & API Polish (HEAD)
-```
-
-**Note**: Branch `phase5-complete` pushed to origin. Create PR via GitHub to merge into main.
-
----
-
-## Next Steps for Next Agent
-
-### Immediate: Phase 6 - Extended Sources
-
-1. **Gmail Integration**
-   - Email patterns analysis (communication frequency, response times)
-   - Sentiment extraction from email content
-   - Professional network analysis
-
-2. **GitHub Integration**
-   - Commit patterns (consistency, timing)
-   - Code review behavior
-   - Project diversity analysis
-
-3. **LinkedIn Integration**
-   - Career progression patterns
-   - Network size and engagement
-   - Job change frequency
-
-4. **Slack Integration**
-   - Communication style analysis
-   - Response patterns
-   - Collaboration metrics
-
-5. **Webhook Notifications**
-   - Simulation completion webhooks
-   - Real-time notifications to external systems
-   - Configurable event filters
 
 ---
 
@@ -488,55 +400,17 @@ Commits:
 
 ## Critical Notes
 
-1. **Signal extraction is rule-based** (regex/pattern matching) - NOT using LLM for extraction (too expensive). LLM only used in Phase 4 for fork evaluation.
-
-2. **Clones are parameter variants** - same structure, different values on 6 dimensions. NOT different personalities entirely.
-
-3. **World agents must use empirical data** - historical returns, base rates from research. NOT made-up numbers.
-
-4. **Contradictions are IMPORTANT** - they reveal where users say one thing but do another. These drive simulation accuracy.
-
-5. **Simulation returns distributions** - always histograms/probabilities, never single numbers.
-
-6. **TypeScript errors** - use `// @ts-nocheck` sparingly if ioredis types cause issues (already used in redis.ts).
+1. **Signal extraction is rule-based** (regex/pattern matching) — NOT using LLM for extraction. LLM only used for fork evaluation in simulation.
+2. **Clones are parameter variants** — same structure, different values on 6 dimensions. NOT different personalities.
+3. **World agents must use empirical data** — historical returns, base rates from research. NOT made-up numbers.
+4. **Contradictions are IMPORTANT** — revealed vs stated behavior discrepancies drive simulation accuracy.
+5. **Simulation returns distributions** — always histograms/probabilities, never single numbers.
+6. **No auth in open source** — `request.user.userId` is always `local-user`. Don't add auth back unless building the cloud version.
+7. **LLM is provider-agnostic** — OpenAI SDK with `baseURL`. Never import provider-specific SDKs.
+8. **TypeScript errors** — use `// @ts-nocheck` sparingly if ioredis types cause issues (already used in redis.ts).
 
 ---
 
-## Quick Commands
-
-```bash
-# Run locally
-cd /home/Monte
-cp .env.example .env
-# Edit .env with real values
-docker-compose up -d neo4j redis minio
-npm install
-npm run dev
-
-# Build
-npm run build
-
-# Commit (when push available)
-git add -A
-git commit -m "Phase X: Description"
-
-# Check status
-git log --oneline -5
-git status
-```
-
----
-
-## Questions?
-
-If unclear on ANYTHING in this document:
-
-1. Read `docs/monte.md` for implementation details
-2. Check `src/ingestion/types.ts` for data types
-3. Look at completed phases for patterns
-4. When in doubt, follow the PRD philosophy: probability distributions over point estimates
-
----
-
-**Last Updated**: Phase 5 complete (auth removed), ready for Phase 6
-**Agent**: Continue with Phase 6 - Extended Sources
+**Last Updated**: March 2026 — Open source refactoring complete (auth removed, LLM unified, directory ingest added)
+**Status**: Phases 1-5 complete. Phase 6 deferred to cloud version.
+**Next**: Ship open source v1 — end-to-end testing, documentation polish, sample data files.
