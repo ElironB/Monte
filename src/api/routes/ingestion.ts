@@ -8,12 +8,13 @@ import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const dataSourceSchema = z.object({
-  sourceType: z.enum(['obsidian', 'notion', 'file', 'composio']),
+  sourceType: z.enum(['search_history', 'watch_history', 'social_media', 'financial', 'notes', 'files', 'composio']),
   name: z.string().min(1).max(100),
   metadata: z.record(z.unknown()).optional(),
 });
 
 const uploadSchema = z.object({
+  sourceType: z.string().optional(),
   files: z.array(z.object({
     filename: z.string(),
     content: z.string(),
@@ -163,6 +164,7 @@ async function ingestionRoutes(fastify: FastifyInstance) {
     schema: { description: 'Upload files (base64)', tags: ['ingestion'], security: [{ bearerAuth: [] }] },
     handler: async (request, reply) => {
       const body = uploadSchema.parse(request.body);
+      const sourceType = body.sourceType || 'files';
       const files: Array<{ filename: string; objectName: string; url: string }> = [];
 
       for (const file of body.files) {
@@ -177,7 +179,7 @@ async function ingestionRoutes(fastify: FastifyInstance) {
         `MATCH (u:User {id: $userId})
          CREATE (d:DataSource {
            id: $sourceId,
-           sourceType: 'file',
+           sourceType: $sourceType,
            name: $name,
            status: 'processing',
            metadata: $metadata,
@@ -190,7 +192,8 @@ async function ingestionRoutes(fastify: FastifyInstance) {
         {
           userId: request.user.userId,
           sourceId,
-          name: `Upload ${new Date().toISOString()}`,
+          sourceType,
+          name: `${sourceType} ${new Date().toISOString()}`,
           metadata: JSON.stringify({ files: files.map(f => f.filename) }),
         }
       );
@@ -199,7 +202,7 @@ async function ingestionRoutes(fastify: FastifyInstance) {
         await scheduleIngestionJob({
           userId: request.user.userId,
           sourceId,
-          sourceType: 'file',
+          sourceType,
           filePath: file.objectName,
           metadata: { filename: file.filename },
         });

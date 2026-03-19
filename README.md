@@ -78,6 +78,21 @@ npm run dev
 The API will be available at `http://localhost:3000`
 Documentation at `http://localhost:3000/docs`
 
+### 5. Ingest Your Data
+
+Put your data files in a folder (Google Takeout exports, Obsidian vault, transaction CSVs, etc.):
+
+```bash
+monte ingest ./my-data
+```
+
+Then build your persona and run simulations:
+
+```bash
+monte persona build
+monte simulate run -s day_trading
+```
+
 ---
 
 ## 📚 Documentation
@@ -201,10 +216,10 @@ monte simulate results <id>   # View results
 monte simulate scenarios      # List available scenarios
 
 # Data Sources
+monte ingest <path>           # Scan directory and ingest all files
+monte ingest status           # Show status of all ingestion jobs
 monte ingest list             # List data sources
-monte ingest add -t file -n "My Data"
-monte ingest upload file1.txt file2.csv
-monte ingest status <id>      # Check processing status
+monte ingest delete <id>      # Delete a data source
 
 # Configuration
 monte config show             # Show configuration

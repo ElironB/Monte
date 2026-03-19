@@ -69,10 +69,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ sourceType, name, metadata }),
     }),
-  uploadFiles: (files: Array<{ filename: string; content: string; mimetype: string }>) =>
+  uploadFiles: (files: Array<{ filename: string; content: string; mimetype: string }>, sourceType?: string) =>
     makeRequest('/ingestion/upload', {
       method: 'POST',
-      body: JSON.stringify({ files }),
+      body: JSON.stringify({ files, sourceType }),
     }),
   getDataSourceStatus: (id: string) => makeRequest(`/ingestion/sources/${id}/status`),
   deleteDataSource: (id: string) =>
