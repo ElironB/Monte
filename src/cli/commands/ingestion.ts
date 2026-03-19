@@ -107,8 +107,6 @@ ingestionCommands
   .argument('[path]', 'directory or file path to ingest')
   .description('Scan a directory and ingest all supported files')
   .action(async (path) => {
-    requireAuth();
-
     if (!path) {
       console.error('Usage: monte ingest <path>');
       console.error('  e.g., monte ingest ./my-data');
@@ -184,7 +182,6 @@ ingestionCommands
   .command('status')
   .description('Show ingestion status for all sources')
   .action(async () => {
-    requireAuth();
     try {
       const sources = await api.listDataSources() as Array<{
         id: string;

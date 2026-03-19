@@ -134,7 +134,7 @@ connectCommands
       return;
     }
 
-    console.log(`\nSelected: ${selected.map((s) => PLATFORMS.find((p) => p.slug === s)!.name).join(', ')}`);
+    console.log(`\nSelected: ${selected.map((s: string) => PLATFORMS.find((p) => p.slug === s)!.name).join(', ')}`);
     console.log('\nGenerating connection links...\n');
 
     const pendingConnections: PendingConnection[] = [];
@@ -143,7 +143,7 @@ connectCommands
       const platform = PLATFORMS.find((p) => p.slug === slug)!;
       try {
         const result = await initiateConnection(binary, slug);
-        const maxNameLen = Math.max(...selected.map((s) => PLATFORMS.find((p) => p.slug === s)!.name.length));
+        const maxNameLen = Math.max(...selected.map((s: string) => PLATFORMS.find((p) => p.slug === s)!.name.length));
         console.log(`  ${platform.name.padEnd(maxNameLen + 1)} ${result.redirectUrl}`);
         pendingConnections.push({
           slug,

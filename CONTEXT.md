@@ -216,6 +216,47 @@ LLM_MODEL=gpt-4o-mini
 - LLM-generated divergence explanation
 - Options: `-s <scenario>`, `-c <clones>`, `-o <path>`, `--no-narrative`, `--stdout`
 
+### 10. Base Rate Registry (PR #13)
+
+**Why**: Hardcoded probability constants with no citations look made-up. A registry with ESMA/BLS/NCES sources says "we did the research."
+
+**What changed**:
+- New `src/simulation/baseRateRegistry.ts` — 15+ cited empirical base rates
+- Sources: ESMA retail trader study (280k sample), BLS Business Employment Dynamics, NCES Digest of Education Statistics, Case-Shiller Index, AACSB, CIRR
+- Query interface: `getBaseRate(scenario, metric, conditions?)`, `getScenarioRates()`, `getDomainRates()`
+- `applyPersonaModulation()` — shifts base rate by persona score within ±8% bounds
+- World agents (financial, career, education) refactored to query registry instead of inline constants
+- `HISTORICAL_DATA` in `base.ts` marked deprecated, backed by registry values
+
+### 11. Kelly Criterion Position Sizing (PR #14)
+
+**Why**: Makes Monte's output actionable — not just "what will happen" but "how much to commit."
+
+**What changed**:
+- New `src/simulation/kellyCalculator.ts` — full Kelly with fractional adjustment
+- Computed from actual simulation data: success probability from outcome distribution, net odds from mean gain/loss across clones
+- Fractional Kelly scaled by loss aversion (derived from `1 - riskTolerance`)
+- High risk tolerance → half Kelly, low → quarter Kelly
+- Warnings for negative Kelly (negative EV) and >100% Kelly (extreme variance)
+- Wired into simulation results when `capitalAtRisk` is provided
+- CLI: `--capital-at-risk` flag on `monte simulate run`
+- Included in `monte report` output as "Position Sizing" section
+
+### 12. Bayesian Incremental Persona Updates (PR #15)
+
+**Why**: Rebuilding the entire persona from scratch every time destroys evidence accumulation. A belief corroborated by 3 sources across 3 ingestions should carry higher confidence.
+
+**What changed**:
+- New `src/persona/bayesianUpdater.ts` — `BayesianUpdater` class
+- `processPersona` now branches: first build = full pipeline, subsequent builds = incremental Bayesian update
+- Incremental path: fetches only NEW signals (not linked to any persona), runs Bayes' theorem on each dimension
+- Evidence classification: corroborating (delta < 0.1), contradicting (delta > 0.3), neutral
+- Confidence capped at 0.05–0.95 (no belief is ever certain)
+- New evidence caps at 40% influence per update (blend weight)
+- Update history tracked on Trait nodes for auditability
+- Low confidence flagging when posterior < 0.2 after 3+ evidence updates
+- Clone regeneration happens after every update (traits change → clones must reflect them)
+
 ---
 
 ## Implementation Status
@@ -293,6 +334,11 @@ LLM_MODEL=gpt-4o-mini
   - LLM-generated divergence explanation
   - Options: `-s <scenario>`, `-c <clones>`, `-o <path>`, `--no-narrative`, `--stdout`
 
+### ✅ PHASE 8 - Decision Theory (COMPLETE)
+- **Base Rate Registry**: 15+ empirically-cited base rates (ESMA, BLS, NCES, Case-Shiller) with query interface and persona modulation
+- **Kelly Criterion**: Position sizing from actual simulation data, fractional Kelly adjusted by behavioral risk tolerance
+- **Bayesian Updates**: Incremental persona refinement — evidence accumulates across ingestions instead of full rebuild
+
 ---
 
 ## File Structure
@@ -343,12 +389,15 @@ Monte/
 │   │   ├── graphBuilder.ts        # Neo4j graph writes
 │   │   ├── personaCompressor.ts   # Master persona generation
 │   │   ├── cloneGenerator.ts      # 1000 stratified clones
+│   │   ├── bayesianUpdater.ts     # Incremental persona updates via Bayes
 │   │   └── syntheticGenerator.ts  # LLM synthetic persona data generation
 │   ├── simulation/
 │   │   ├── types.ts               # All simulation types
 │   │   ├── decisionGraph.ts       # 8 scenario definitions
 │   │   ├── engine.ts              # SimulationEngine class
+│   │   ├── baseRateRegistry.ts    # Empirical base rates with citations
 │   │   ├── forkEvaluator.ts       # OpenAI SDK, configurable baseURL
+│   │   ├── kellyCalculator.ts     # Kelly criterion position sizing
 │   │   ├── chaosInjector.ts       # Black swan events
 │   │   ├── resultAggregator.ts    # Distribution calculation
 │   │   ├── narrativeGenerator.ts  # LLM narrative analysis for results
@@ -551,6 +600,6 @@ npm run dev
 
 ---
 
-**Last Updated**: March 2026 — YC readiness features complete (PRs #7-#11)
-**Status**: Phases 1-7 complete.
+**Last Updated**: March 2026 — Decision theory features complete (PRs #13-#15)
+**Status**: Phases 1-8 complete.
 **Next**: End-to-end integration testing, Docker quick-start validation, v0.1.0 release.
