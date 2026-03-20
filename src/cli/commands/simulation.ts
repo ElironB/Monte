@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { api } from '../api.js';
+import { parseSimulationQuery } from '../queryParser.js';
 import {
   dimText,
   icons,
@@ -21,7 +22,167 @@ function formatPercent(value: number): string {
 }
 
 export const simulationCommands = new Command('simulate')
-  .description(chalk.dim('Simulation commands'));
+  .description(chalk.dim('Run a simulation from a natural language description'))
+  .usage('[query] [--clones <count>] [--wait]')
+  .allowUnknownOption()
+  .argument('[query...]', 'Describe your decision in plain English')
+  .addHelpText(
+    'after',
+    `
+Options:
+  -c, --clones <count>  Number of clones for natural-language simulations
+  --wait                Wait for completion and show results
+
+Examples:
+  $ monte simulate "should I quit my job and start a business?"
+  $ monte simulate "is buying a $600k house smart right now?"
+  $ monte simulate "should I take this $3500 freelance gig?"
+
+Advanced mode:
+  $ monte simulate run -s day_trading --wait
+  $ monte simulate scenarios
+`,
+  )
+  .action(async () => {
+    try {
+      const options = parseNaturalLanguageInvocation(getNaturalLanguageArgs());
+      const query = options.query;
+
+      if (!query) {
+        console.log(chalk.cyan('Usage: monte simulate "your decision question"'));
+        console.log(chalk.dim('  e.g., monte simulate "should I quit my job and day trade?"'));
+        console.log(chalk.dim('  e.g., monte simulate "should I buy a house for $600k?"'));
+        console.log(chalk.dim('\nOr use specific commands:'));
+        console.log(chalk.dim('  monte simulate run -s day_trading --wait'));
+        console.log(chalk.dim('  monte simulate scenarios'));
+        return;
+      }
+
+      const params = await parseSimulationQuery(query);
+      const parameters = params.timeframe === undefined
+        ? params.context
+        : { ...params.context, timeframe: params.timeframe };
+
+      console.log(chalk.cyan('Parsed simulation:'));
+      console.log(`  ${chalk.dim('Scenario:')} ${chalk.white.bold(params.scenarioType)}`);
+      console.log(`  ${chalk.dim('Name:')} ${chalk.white(params.name)}`);
+      if (params.capitalAtRisk !== undefined) {
+        console.log(`  ${chalk.dim('Capital at risk:')} ${chalk.white.bold(`$${params.capitalAtRisk.toLocaleString()}`)}`);
+      }
+      if (params.timeframe !== undefined) {
+        console.log(`  ${chalk.dim('Timeframe:')} ${chalk.white(`${params.timeframe} months`)}`);
+      }
+      console.log();
+
+      await createSimulationAndHandleResult(params.scenarioType, params.name, {
+        cloneCount: options.cloneCount,
+        capitalAtRisk: params.capitalAtRisk,
+        parameters,
+        wait: options.wait,
+      });
+    } catch (err) {
+      console.error(`${icons.error} ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+type SimulationCreateResult = {
+  simulationId: string;
+  status: string;
+  cloneCount: number;
+};
+
+async function createSimulationAndHandleResult(
+  scenarioType: string,
+  name: string,
+  options: {
+    cloneCount: number;
+    capitalAtRisk?: number;
+    parameters?: Record<string, unknown>;
+    wait?: boolean;
+  },
+): Promise<void> {
+  console.log(
+    `${infoLabel('Creating simulation')} ${valueText(`"${name}"`)} ${dimText('with')} ${valueText(options.cloneCount)} ${dimText('clones...')}`,
+  );
+
+  const result = await api.createSimulation(scenarioType, name, {
+    cloneCount: options.cloneCount,
+    capitalAtRisk: options.capitalAtRisk,
+    parameters: options.parameters,
+  }) as SimulationCreateResult;
+
+  console.log(`${icons.success} ${chalk.green.bold('Simulation created')}`);
+  console.log(`  ${infoLabel('Simulation ID:')} ${chalk.cyan(result.simulationId)}`);
+  console.log(`  ${infoLabel('Status:')} ${statusColor(result.status)}`);
+  console.log(`  ${infoLabel('Clones:')} ${valueText(result.cloneCount)}`);
+
+  if (options.wait) {
+    console.log(`\n${infoLabel('Waiting for completion...')}`);
+    await waitForSimulation(result.simulationId);
+    return;
+  }
+
+  console.log(`\n${dimText(`Run \`monte simulate progress ${result.simulationId}\` to check progress`)}`);
+  console.log(dimText(`Run \`monte simulate results ${result.simulationId}\` for results when done`));
+}
+
+function getNaturalLanguageArgs(): string[] {
+  const args = process.argv.slice(2);
+  const simulateIndex = args.findIndex(arg => arg === 'simulate');
+  return simulateIndex === -1 ? args : args.slice(simulateIndex + 1);
+}
+
+function parseNaturalLanguageInvocation(args: string[]): { query?: string; cloneCount: number; wait: boolean } {
+  let cloneCount = 1000;
+  let wait = false;
+  const queryParts: string[] = [];
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+
+    if (arg === '--wait') {
+      wait = true;
+      continue;
+    }
+
+    if (arg === '-c' || arg === '--clones') {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error('Missing value for --clones');
+      }
+      cloneCount = parseCloneCount(value);
+      index++;
+      continue;
+    }
+
+    if (arg.startsWith('--clones=')) {
+      cloneCount = parseCloneCount(arg.split('=', 2)[1]);
+      continue;
+    }
+
+    if (arg.startsWith('-')) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
+    queryParts.push(arg);
+  }
+
+  const query = queryParts.join(' ').trim();
+  return {
+    query: query.length > 0 ? query : undefined,
+    cloneCount,
+    wait,
+  };
+}
+
+function parseCloneCount(value: string): number {
+  const cloneCount = parseInt(value, 10);
+  if (Number.isNaN(cloneCount)) {
+    throw new Error(`Invalid clone count: ${value}`);
+  }
+  return cloneCount;
+}
 
 simulationCommands
   .command('list')
@@ -73,32 +234,11 @@ simulationCommands
     try {
       const name = options.name || `${options.scenario}-${Date.now()}`;
       const cloneCount = parseInt(options.clones, 10);
-
-      console.log(
-        `${infoLabel('Creating simulation')} ${valueText(`"${name}"`)} ${dimText('with')} ${valueText(cloneCount)} ${dimText('clones...')}`,
-      );
-
-      const result = await api.createSimulation(options.scenario, name, {
+      await createSimulationAndHandleResult(options.scenario, name, {
         cloneCount,
         capitalAtRisk: options.capitalAtRisk,
-      }) as {
-        simulationId: string;
-        status: string;
-        cloneCount: number;
-      };
-
-      console.log(`${icons.success} ${chalk.green.bold('Simulation created')}`);
-      console.log(`  ${infoLabel('Simulation ID:')} ${chalk.cyan(result.simulationId)}`);
-      console.log(`  ${infoLabel('Status:')} ${statusColor(result.status)}`);
-      console.log(`  ${infoLabel('Clones:')} ${valueText(result.cloneCount)}`);
-
-      if (options.wait) {
-        console.log(`\n${infoLabel('Waiting for completion...')}`);
-        await waitForSimulation(result.simulationId);
-      } else {
-        console.log(`\n${dimText(`Run \`monte simulate progress ${result.simulationId}\` to check progress`)}`);
-        console.log(dimText(`Run \`monte simulate results ${result.simulationId}\` for results when done`));
-      }
+        wait: options.wait,
+      });
     } catch (err) {
       console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);

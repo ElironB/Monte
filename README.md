@@ -47,8 +47,8 @@ monte ingest ./generated-persona
 # Build behavioral persona from signals
 monte persona build
 
-# Run simulation
-monte simulate run -s day_trading --wait
+# Run simulation from plain English
+monte simulate "should I quit my job and day trade with my $80k savings?" --wait
 
 # Generate full report with narrative analysis
 monte report <simulation-id>
@@ -64,9 +64,18 @@ monte compare ./persona-conservative ./persona-aggressive -s day_trading
 
 ### Custom Scenarios
 
-Don't see your decision? Use the `custom` scenario type:
+Describe decisions in plain English by default:
 
 ```bash
+monte simulate "should I move to Berlin from NYC?" --wait
+monte simulate "should I buy this $1300 iPhone or wait?"
+monte simulate "is buying a $600k house smart right now?"
+```
+
+Need explicit control? Advanced mode still works:
+
+```bash
+monte simulate run -s day_trading --wait
 monte simulate run -s custom --name "moving-to-berlin" --wait
 ```
 
@@ -152,7 +161,7 @@ Then build your persona and run simulations:
 
 ```bash
 monte persona build
-monte simulate run -s day_trading
+monte simulate "should I day trade full time?"
 ```
 
 ---
@@ -294,7 +303,9 @@ monte persona traits                        # View behavioral dimensions
 monte persona history                       # Version history
 
 # Run simulations
-monte simulate run -s day_trading --wait    # Run and wait for results
+monte simulate "should I quit my job and start a business?"   # Natural-language simulation
+monte simulate "is buying a $600k house smart right now?"     # Auto-detects scenario + capital
+monte simulate run -s day_trading --wait                      # Advanced explicit mode
 monte simulate list                         # List all simulations
 monte simulate progress <id>                # Check progress
 monte simulate results <id>                 # View results
