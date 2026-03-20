@@ -146,6 +146,8 @@ monte ingest ./my-data
 
 ### 6. Connect Platforms (Optional)
 
+⚠️ **Status: Work in Progress** — Composio integration is experimental. The underlying library is deprecated and connections may be unstable.
+
 Optionally connect your data platforms for richer behavioral data:
 
 ```bash
@@ -156,7 +158,7 @@ monte connect confirm        # Verify connections
 
 Powered by [Composio](https://composio.dev/) — get your free API key at composio.dev
 
-Or skip this and use file-based ingestion only.
+**For production use, we recommend file-based ingestion only until Composio integration stabilizes.**
 
 ### 7. Build & Simulate
 
@@ -443,6 +445,8 @@ MINIO_SECRET_KEY=<min 1 char>
 OPENROUTER_API_KEY=your_key        # Recommended: one key for LLM + embeddings
 # OR
 GROQ_API_KEY=your_key              # Groq fast inference for chat completions only
+# OR (planned)
+# OLLAMA_BASE_URL=http://localhost:11434  # Local Ollama server (coming soon)
 
 # Embeddings
 # Auto-uses OPENROUTER_API_KEY when present.
@@ -454,9 +458,10 @@ GROQ_API_KEY=your_key              # Groq fast inference for chat completions on
 # Optional model overrides
 # LLM_MODEL=openai/gpt-oss-20b
 # LLM_REASONING_MODEL=openai/gpt-oss-120b
+# For Ollama (planned): LLM_MODEL=llama3.1:70b
 
-# Composio (optional)
-COMPOSIO_API_KEY=your_key   # Free at composio.dev — required for monte connect
+# Composio (optional, experimental)
+COMPOSIO_API_KEY=your_key   # Free at composio.dev — WIP: library deprecated
 
 # OpenTelemetry (optional)
 OTEL_ENABLED=false
@@ -577,7 +582,9 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - Built with [Fastify](https://fastify.io/), [Neo4j](https://neo4j.com/), [BullMQ](https://bullmq.io/)
 - LLM integration via [OpenAI SDK](https://github.com/openai/openai-node) - works with Groq, OpenRouter, OpenAI, Together, and any OpenAI-compatible API
-- Platform integrations powered by [Composio](https://composio.dev/) — connect 100+ apps via OAuth
+- Monte Carlo simulations adapted from decision science research
+- Platform integrations powered by [Composio](https://composio.dev/) (experimental)
+- Future local model support via [Ollama](https://ollama.com/)
 - Inspired by "The Black Swan" and behavioral economics research
 
 ---
@@ -599,10 +606,11 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] CLI interface
 - [x] API pagination & caching
 
-### Phase 6 ✅
+### Phase 6 ⚠️ (Experimental)
 - [x] Interactive `monte connect` with platform picker
 - [x] Composio OAuth integration (Google, Reddit, Spotify, GitHub, Notion, Slack, LinkedIn, Twitter)
 - [x] Connection verification (`monte connect confirm`)
+- ⚠️ Note: Composio integration is WIP — composio-core dependency is deprecated
 
 ### Phase 7 ✅
 - [x] Quantitative signal extraction (frequency, temporal patterns, trends)
@@ -617,8 +625,10 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Bayesian incremental persona updates (evidence accumulation)
 
 ### Future
+- [ ] Ollama local model support (run Monte with local LLMs instead of cloud APIs)
 - [ ] Web UI
 - [ ] Custom scenario builder
+- [ ] Composio integration stabilization (migrate to supported library)
 - [ ] End-to-end integration testing
 - [ ] Docker quick-start validation
 
