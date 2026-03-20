@@ -136,6 +136,11 @@ npm run dev
 The API will be available at `http://localhost:3000`
 Documentation at `http://localhost:3000/docs`
 
+**Verify your setup:**
+```bash
+monte doctor    # Checks all services + API keys
+```
+
 ### 5. Ingest Your Data
 
 Put your data files in a folder (Google Takeout exports, Obsidian vault, transaction CSVs, etc.):
@@ -146,7 +151,7 @@ monte ingest ./my-data
 
 ### 6. Connect Platforms (Optional)
 
-⚠️ **Status: Work in Progress** — Composio integration is experimental. The underlying library is deprecated and connections may be unstable.
+⚠️ **Status: Work in Progress** — Composio integration is experimental. Platform connections may be unstable.
 
 Optionally connect your data platforms for richer behavioral data:
 
@@ -335,6 +340,10 @@ monte report <id> --no-narrative            # Skip LLM narrative
 monte report <id> --stdout                  # Print to terminal
 monte report <id> -o custom-report.md       # Custom output path
 
+# Health Check
+monte doctor                                # Run full setup validation
+                                            # Checks: API, Neo4j, Redis, MinIO, LLM key, embedding key
+
 # Configuration
 monte config show                           # Show current config
 monte config set-api <url>                  # Change API endpoint
@@ -461,7 +470,7 @@ GROQ_API_KEY=your_key              # Groq fast inference for chat completions on
 # For Ollama (planned): LLM_MODEL=llama3.1:70b
 
 # Composio (optional, experimental)
-COMPOSIO_API_KEY=your_key   # Free at composio.dev — WIP: library deprecated
+COMPOSIO_API_KEY=your_key   # Free at composio.dev — WIP, experimental
 
 # OpenTelemetry (optional)
 OTEL_ENABLED=false
@@ -487,7 +496,7 @@ This starts:
 
 ### Kubernetes
 
-See `k8s/` directory for example manifests (production deployment guide coming soon).
+Kubernetes manifests are not yet included. For now, use Docker Compose for deployment.
 
 ### Environment-Specific Notes
 
@@ -507,7 +516,7 @@ See `k8s/` directory for example manifests (production deployment guide coming s
 
 | Metric | Target |
 |--------|--------|
-| 1000-clone simulation | < 90 seconds (p95) |
+| 1000-clone simulation | ~2 min (OpenRouter) / ~25s (Groq paid) |
 | Persona build | < 5 minutes |
 | API response | < 200ms (p95) |
 | LLM calls per sim | < 100 |
@@ -565,10 +574,10 @@ Monte/
 
 - **Self-hosted**: No external authentication required - runs locally
 - **Rate Limiting**: Per-endpoint rate limits
-- **Data Encryption**: All sensitive data encrypted at rest
+- **Data Storage**: Data stored locally in Neo4j, Redis, and MinIO — no data leaves your infrastructure
 - **Input Validation**: Zod schemas for all inputs
 
-Please report security vulnerabilities to security@monte-engine.io
+Please report security vulnerabilities via [GitHub Issues](https://github.com/ElironB/Monte/issues) or DM [@ElironK300](https://twitter.com/ElironK300).
 
 ---
 
@@ -624,13 +633,19 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Kelly Criterion position sizing from simulation data
 - [x] Bayesian incremental persona updates (evidence accumulation)
 
+### Phase 9 ✅
+- [x] Vector embeddings replace all keyword matching (cosine similarity)
+- [x] Natural language simulation queries (`monte simulate "should I..."`)
+- [x] Parallel clone execution with rate-limit-safe concurrency
+- [x] Startup validation (fail-fast on missing API keys)
+- [x] `monte doctor` CLI health check
+- [x] End-to-end smoke test (`npm run test:e2e`)
+
 ### Future
 - [ ] Ollama local model support (run Monte with local LLMs instead of cloud APIs)
 - [ ] Web UI
 - [ ] Custom scenario builder
-- [ ] Composio integration stabilization (migrate to supported library)
-- [ ] End-to-end integration testing
-- [ ] Docker quick-start validation
+- [ ] Composio integration stabilization
 
 ---
 
