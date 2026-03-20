@@ -44,5 +44,7 @@ export interface SignalContradiction {
   type: 'stated_vs_revealed' | 'temporal' | 'cross_domain';
   description: string;
   severity: 'low' | 'medium' | 'high';
+  magnitude: number;
+  affectedDimensions: string[];
   resolution?: string;
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ContradictionDetector } from '../src/ingestion/contradictionDetector.js';
+import type { ConceptEmbeddings } from '../src/embeddings/dimensionConcepts.js';
 import { BehavioralSignal } from '../src/ingestion/types.js';
 
 function makeSignal(overrides: Partial<BehavioralSignal>): BehavioralSignal {
@@ -17,17 +18,26 @@ function makeSignal(overrides: Partial<BehavioralSignal>): BehavioralSignal {
 }
 
 describe('ContradictionDetector', () => {
-  it('detects cross-domain contradictions (risk tolerance vs financial stress)', () => {
+  const dimensionConceptEmbeddings: ConceptEmbeddings = {
+    riskTolerance: { high: [1, 0], low: [-1, 0] },
+    timePreference: { high: [0.9, 0.1], low: [-0.9, -0.1] },
+    socialDependency: { high: [0.7, 0.7], low: [-0.7, -0.7] },
+    learningStyle: { high: [0, 1], low: [0, -1] },
+    decisionSpeed: { high: [0.8, 0.2], low: [-0.8, -0.2] },
+    emotionalVolatility: { high: [0.6, 0.8], low: [-0.6, -0.8] },
+  };
+
+  it('detects cross-domain contradictions (risk tolerance vs financial stress)', async () => {
     const signals = [
       makeSignal({ type: 'cognitive_trait', value: 'high_risk_tolerance' }),
       makeSignal({ type: 'financial_behavior', value: 'impulse_spending' }),
     ];
     const detector = new ContradictionDetector(signals);
-    const contradictions = detector.detect();
+    const contradictions = await detector.detect();
     expect(contradictions.some(c => c.type === 'cross_domain')).toBe(true);
   });
 
-  it('detects temporal contradictions (goal-oriented but repeated failures)', () => {
+  it('detects temporal contradictions (goal-oriented but repeated failures)', async () => {
     const signals = [
       makeSignal({ value: 'goal_oriented' }),
       makeSignal({ value: 'budget_struggles' }),
@@ -36,17 +46,81 @@ describe('ContradictionDetector', () => {
       makeSignal({ value: 'budget_struggles' }),
     ];
     const detector = new ContradictionDetector(signals);
-    const contradictions = detector.detect();
+    const contradictions = await detector.detect();
     expect(contradictions.some(c => c.type === 'temporal')).toBe(true);
   });
 
-  it('returns empty when no contradictions', () => {
+  it('returns empty when no contradictions', async () => {
     const signals = [
       makeSignal({ value: 'educational_content' }),
       makeSignal({ value: 'learning_focused' }),
     ];
     const detector = new ContradictionDetector(signals);
-    const contradictions = detector.detect();
+    const contradictions = await detector.detect();
     expect(contradictions).toHaveLength(0);
+  });
+
+  it('adds numeric magnitudes and affected dimensions to detected contradictions', async () => {
+    const signals = [
+      makeSignal({ value: 'goal_oriented' }),
+      makeSignal({ value: 'budget_struggles' }),
+      makeSignal({ value: 'budget_struggles' }),
+      makeSignal({ value: 'budget_struggles' }),
+      makeSignal({ value: 'budget_struggles' }),
+    ];
+
+    const contradictions = await new ContradictionDetector(signals).detect();
+    expect(contradictions).toHaveLength(1);
+    expect(contradictions[0].magnitude).toBeGreaterThanOrEqual(0);
+    expect(contradictions[0].magnitude).toBeLessThanOrEqual(1);
+    expect(contradictions[0].affectedDimensions).toEqual(['emotionalVolatility', 'decisionSpeed']);
+  });
+
+  it('calculates higher magnitude for signals further apart on the dimension axis', () => {
+    const stated = makeSignal({ value: 'patient planner' });
+    const revealedClose = makeSignal({ value: 'slightly urgent' });
+    const revealedFar = makeSignal({ value: 'maximally urgent' });
+    const signalEmbeddings = new Map<string, number[]>([
+      [stated.id, [-0.2, 0.98]],
+      [revealedClose.id, [0.2, 0.98]],
+      [revealedFar.id, [1, 0]],
+    ]);
+
+    const detector = new ContradictionDetector(
+      [stated, revealedClose, revealedFar],
+      signalEmbeddings,
+      dimensionConceptEmbeddings
+    );
+
+    const closeMagnitude = (detector as any).calculateMagnitude(
+      stated.id,
+      revealedClose.id,
+      dimensionConceptEmbeddings.riskTolerance.high,
+      dimensionConceptEmbeddings.riskTolerance.low
+    );
+    const farMagnitude = (detector as any).calculateMagnitude(
+      stated.id,
+      revealedFar.id,
+      dimensionConceptEmbeddings.riskTolerance.high,
+      dimensionConceptEmbeddings.riskTolerance.low
+    );
+
+    expect(closeMagnitude).toBeGreaterThanOrEqual(0);
+    expect(farMagnitude).toBeLessThanOrEqual(1);
+    expect(farMagnitude).toBeGreaterThan(closeMagnitude);
+  });
+
+  it('falls back to severity-based magnitude when dimension concepts are unavailable', async () => {
+    const signals = [
+      makeSignal({ value: 'goal_oriented' }),
+      makeSignal({ value: 'budget_struggles' }),
+      makeSignal({ value: 'budget_struggles' }),
+      makeSignal({ value: 'budget_struggles' }),
+      makeSignal({ value: 'budget_struggles' }),
+    ];
+
+    const contradictions = await new ContradictionDetector(signals, new Map(), null).detect();
+    expect(contradictions[0].severity).toBe('high');
+    expect(contradictions[0].magnitude).toBe(0.8);
   });
 });
