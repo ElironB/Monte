@@ -610,7 +610,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Interactive `monte connect` with platform picker
 - [x] Composio OAuth integration (Google, Reddit, Spotify, GitHub, Notion, Slack, LinkedIn, Twitter)
 - [x] Connection verification (`monte connect confirm`)
-- ⚠️ Note: Composio integration is WIP — composio-core dependency is deprecated
+- ⚠️ Note: Composio integration is WIP
 
 ### Phase 7 ✅
 - [x] Quantitative signal extraction (frequency, temporal patterns, trends)
