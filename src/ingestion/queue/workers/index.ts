@@ -10,6 +10,7 @@ import { SocialBehaviorExtractor } from '../../extractors/socialBehavior.js';
 import { FinancialBehaviorExtractor } from '../../extractors/financialBehavior.js';
 import { CognitiveStructureExtractor } from '../../extractors/cognitiveStructure.js';
 import { MediaConsumptionExtractor } from '../../extractors/mediaConsumption.js';
+import { SemanticExtractor } from '../../extractors/semanticExtractor.js';
 import { ContradictionDetector } from '../../contradictionDetector.js';
 import { DimensionMapper } from '../../../persona/dimensionMapper.js';
 import { GraphBuilder } from '../../../persona/graphBuilder.js';
@@ -32,6 +33,8 @@ const extractors = [
   new CognitiveStructureExtractor(),
   new MediaConsumptionExtractor(),
 ];
+
+const semanticExtractor = new SemanticExtractor();
 
 async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
   logger.info({ jobId: job.id }, 'Processing ingestion');
@@ -68,6 +71,21 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
           extractor.sourceTypes.some(st => sourceType.includes(st))) {
         const signals = await extractor.extract(rawData);
         allSignals.push(...signals);
+      }
+    }
+
+    if (semanticExtractor.sourceTypes.includes(sourceType)) {
+      try {
+        const semanticSignals = await semanticExtractor.extract(rawData);
+        const existingValues = new Set(allSignals.map(signal => signal.value.toLowerCase()));
+        const newSemanticSignals = semanticSignals.filter(signal => !existingValues.has(signal.value.toLowerCase()));
+        allSignals.push(...newSemanticSignals);
+        logger.info(
+          { sourceId: rawData.sourceId, semanticSignalCount: newSemanticSignals.length },
+          'Semantic extraction complete',
+        );
+      } catch (err) {
+        logger.warn({ err, sourceId: rawData.sourceId }, 'Semantic extraction failed');
       }
     }
     
