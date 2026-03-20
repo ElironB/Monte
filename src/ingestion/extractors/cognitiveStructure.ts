@@ -13,6 +13,7 @@ export class CognitiveStructureExtractor extends SignalExtractor {
   async extract(data: RawSourceData): Promise<BehavioralSignal[]> {
     const signals: BehavioralSignal[] = [];
     const content = data.rawContent;
+    const signalTimestamp = data.metadata?.timestamp;
     const lower = content.toLowerCase();
     const wordCount = content.split(/\s+/).filter(Boolean).length;
     if (wordCount === 0) return signals;
@@ -37,6 +38,7 @@ export class CognitiveStructureExtractor extends SignalExtractor {
             frequency: structureElements,
             recurrence: calculateRecurrence(structureElements, Math.ceil(wordCount / 100)),
           },
+          signalTimestamp,
         ),
       );
     } else if (structureElements < 2 && wordCount > 500) {
@@ -48,6 +50,7 @@ export class CognitiveStructureExtractor extends SignalExtractor {
           `Minimal structure (${structureElements} elements) in ${wordCount} words`,
           data.sourceId,
           { category: 'cognition', frequency: structureElements },
+          signalTimestamp,
         ),
       );
     }
@@ -78,6 +81,7 @@ export class CognitiveStructureExtractor extends SignalExtractor {
             frequency: goalMatches.length,
             recurrence: calculateRecurrence(sectionsWithGoals, sections.length),
           },
+          signalTimestamp,
         ),
       );
     }
@@ -104,6 +108,7 @@ export class CognitiveStructureExtractor extends SignalExtractor {
             frequency: totalReflection,
             recurrence: calculateRecurrence(totalReflection, wordCount),
           },
+          signalTimestamp,
         ),
       );
     }

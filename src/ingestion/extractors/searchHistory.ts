@@ -63,6 +63,7 @@ export class SearchHistoryExtractor extends SignalExtractor {
       if (matched.length === 0) continue;
 
       const matchedTimestamps = matched.map(e => e.timestamp);
+      const latestTimestamp = this.getLatestTimestamp(matchedTimestamps);
       const temporal = analyzeTemporalPatterns(matchedTimestamps);
       const recurrence = calculateRecurrence(matched.length, totalEntries);
 
@@ -87,6 +88,7 @@ export class SearchHistoryExtractor extends SignalExtractor {
             temporalCluster: temporal.dominantCluster,
             intensityTrend: trend,
           },
+          latestTimestamp,
         ),
       );
     }
@@ -143,6 +145,7 @@ export class SearchHistoryExtractor extends SignalExtractor {
               category: cat.category,
               urgency: cat.category === 'finance' || cat.category === 'career' ? this.extractUrgency(content) : undefined,
             },
+            data.metadata?.timestamp,
           ),
         );
       }
