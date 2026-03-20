@@ -174,5 +174,45 @@ describe('DimensionMapper', () => {
       expect(result.dimensions.riskTolerance).toBeGreaterThanOrEqual(0);
       expect(result.dimensions.riskTolerance).toBeLessThanOrEqual(1);
     });
+
+    it('weights revealed-side signals higher than stated-side signals', () => {
+      const stated = makeSignal('claims extreme caution');
+      const revealed = makeSignal('keeps taking speculative bets');
+      const signalEmbeddings = new Map<string, number[]>([
+        [stated.id, [-1, 0]],
+        [revealed.id, [1, 0]],
+      ]);
+
+      const correctRoles: SignalContradiction[] = [{
+        id: 'c1',
+        signalAId: stated.id,
+        signalBId: revealed.id,
+        type: 'stated_vs_revealed',
+        description: 'test',
+        severity: 'high',
+        magnitude: 0.8,
+        affectedDimensions: ['riskTolerance'],
+      }];
+      const swappedRoles: SignalContradiction[] = [{
+        ...correctRoles[0],
+        signalAId: revealed.id,
+        signalBId: stated.id,
+      }];
+
+      const correctScore = new DimensionMapper(
+        [stated, revealed],
+        conceptEmbeddings,
+        signalEmbeddings,
+        correctRoles
+      ).mapToDimensions().riskTolerance;
+      const swappedScore = new DimensionMapper(
+        [stated, revealed],
+        conceptEmbeddings,
+        signalEmbeddings,
+        swappedRoles
+      ).mapToDimensions().riskTolerance;
+
+      expect(correctScore).toBeGreaterThan(swappedScore);
+    });
   });
 });

@@ -155,6 +155,8 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
       const contradictions = await detector.detect();
       
       for (const contradiction of contradictions) {
+        const { statedSignalId, revealedSignalId } = getContradictionRoleAssignment(contradiction);
+
         await runWriteSingle(
           `CREATE (c:Contradiction {
             id: $id,
@@ -163,6 +165,8 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
             severity: $severity,
             magnitude: $magnitude,
             affectedDimensions: $affectedDimensions,
+            statedSignalId: $statedSignalId,
+            revealedSignalId: $revealedSignalId,
             createdAt: datetime()
           })
           WITH c
@@ -176,6 +180,8 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
             severity: contradiction.severity,
             magnitude: contradiction.magnitude,
             affectedDimensions: JSON.stringify(contradiction.affectedDimensions),
+            statedSignalId,
+            revealedSignalId,
             signalAId: contradiction.signalAId,
             signalBId: contradiction.signalBId,
           }
@@ -382,26 +388,28 @@ async function fetchContradictions(userId: string): Promise<SignalContradiction[
     severity: string;
     magnitude: number | null;
     affectedDimensions: string | null;
-    signalAId: string;
-    signalBId: string;
+    statedSignalId: string | null;
+    revealedSignalId: string | null;
+    connectedSignalIds: string[] | null;
   }>(
-    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_SIGNAL]->(s1:Signal)-[:CONTRADICTS]->(c:Contradiction)<-[:CONTRADICTS]-(s2:Signal)
-     WHERE s1.id < s2.id
-     RETURN DISTINCT c.id as id,
+    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_SIGNAL]->(:Signal)-[:CONTRADICTS]->(c:Contradiction)
+     WITH DISTINCT c
+     OPTIONAL MATCH (s:Signal)-[:CONTRADICTS]->(c)
+     RETURN c.id as id,
             c.type as type,
             c.description as description,
             c.severity as severity,
             c.magnitude as magnitude,
             c.affectedDimensions as affectedDimensions,
-            s1.id as signalAId,
-            s2.id as signalBId`,
+            c.statedSignalId as statedSignalId,
+            c.revealedSignalId as revealedSignalId,
+            collect(DISTINCT s.id) as connectedSignalIds`,
     { userId }
   );
 
   return records.map(record => ({
     id: record.id,
-    signalAId: record.signalAId,
-    signalBId: record.signalBId,
+    ...resolveFetchedContradictionSignals(record),
     type: record.type as SignalContradiction['type'],
     description: record.description,
     severity: record.severity as SignalContradiction['severity'],
@@ -416,6 +424,44 @@ async function fetchContradictions(userId: string): Promise<SignalContradiction[
       ? JSON.parse(record.affectedDimensions) as string[]
       : [],
   }));
+}
+
+function getContradictionRoleAssignment(
+  contradiction: SignalContradiction
+): { statedSignalId: string | null; revealedSignalId: string | null } {
+  switch (contradiction.type) {
+    case 'stated_vs_revealed':
+    case 'temporal':
+    case 'cross_domain':
+      return {
+        statedSignalId: contradiction.signalAId,
+        revealedSignalId: contradiction.signalBId,
+      };
+    default:
+      return {
+        statedSignalId: null,
+        revealedSignalId: null,
+      };
+  }
+}
+
+function resolveFetchedContradictionSignals(record: {
+  statedSignalId: string | null;
+  revealedSignalId: string | null;
+  connectedSignalIds: string[] | null;
+}): Pick<SignalContradiction, 'signalAId' | 'signalBId'> {
+  if (record.statedSignalId && record.revealedSignalId) {
+    return {
+      signalAId: record.statedSignalId,
+      signalBId: record.revealedSignalId,
+    };
+  }
+
+  const fallbackIds = [...new Set(record.connectedSignalIds ?? [])].sort();
+  return {
+    signalAId: record.statedSignalId ?? fallbackIds[0] ?? '',
+    signalBId: record.revealedSignalId ?? fallbackIds[1] ?? fallbackIds[0] ?? '',
+  };
 }
 
 function ensureEmbeddingsConfigured(): void {
