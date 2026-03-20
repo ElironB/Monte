@@ -53,6 +53,7 @@ export class SocialBehaviorExtractor extends SignalExtractor {
 
     if (totalRiskHits > 0) {
       const ts = riskPosts.map(p => p.timestamp);
+      const latestTimestamp = this.getLatestTimestamp(ts);
       const temporal = analyzeTemporalPatterns(ts);
       const trendPoints = this.buildTrendPoints(riskPosts, RISK_PATTERN);
       const coOcc: string[] = [];
@@ -73,12 +74,14 @@ export class SocialBehaviorExtractor extends SignalExtractor {
             intensityTrend: detectTrend(trendPoints),
             coOccurrence: coOcc.length > 0 ? coOcc : undefined,
           },
+          latestTimestamp,
         ),
       );
     }
 
     if (totalAnxietyHits > 0) {
       const ts = anxietyPosts.map(p => p.timestamp);
+      const latestTimestamp = this.getLatestTimestamp(ts);
       const temporal = analyzeTemporalPatterns(ts);
       const trendPoints = this.buildTrendPoints(anxietyPosts, ANXIETY_PATTERN);
       const coOcc: string[] = [];
@@ -100,12 +103,14 @@ export class SocialBehaviorExtractor extends SignalExtractor {
             intensityTrend: detectTrend(trendPoints),
             coOccurrence: coOcc.length > 0 ? coOcc : undefined,
           },
+          latestTimestamp,
         ),
       );
     }
 
     if (totalDecisionHits > 0) {
       const ts = decisionPosts.map(p => p.timestamp);
+      const latestTimestamp = this.getLatestTimestamp(ts);
       const temporal = analyzeTemporalPatterns(ts);
 
       signals.push(
@@ -121,12 +126,14 @@ export class SocialBehaviorExtractor extends SignalExtractor {
             recurrence: calculateRecurrence(decisionPosts.length, totalPosts),
             temporalCluster: temporal.dominantCluster,
           },
+          latestTimestamp,
         ),
       );
     }
 
     const postCount = (data.metadata as { postCount?: number }).postCount || totalPosts;
     if (postCount > 50) {
+      const latestTimestamp = this.getLatestTimestamp(posts.map(post => post.timestamp));
       signals.push(
         this.createSignal(
           'social_pattern',
@@ -135,6 +142,7 @@ export class SocialBehaviorExtractor extends SignalExtractor {
           `High volume of social activity: ${postCount} posts`,
           data.sourceId,
           { category: 'social', frequency: postCount },
+          latestTimestamp,
         ),
       );
     }
@@ -173,20 +181,20 @@ export class SocialBehaviorExtractor extends SignalExtractor {
 
     if (RISK_PATTERN.test(content)) {
       RISK_PATTERN.lastIndex = 0;
-      signals.push(this.createSignal('cognitive_trait', 'high_risk_tolerance', 0.45, 'Social media language indicates risk-seeking behavior', data.sourceId, { category: 'psychology' }));
+      signals.push(this.createSignal('cognitive_trait', 'high_risk_tolerance', 0.45, 'Social media language indicates risk-seeking behavior', data.sourceId, { category: 'psychology' }, data.metadata?.timestamp));
     }
     if (ANXIETY_PATTERN.test(content)) {
       ANXIETY_PATTERN.lastIndex = 0;
-      signals.push(this.createSignal('emotional_state', 'anxiety', 0.42, 'Expressions of stress or anxiety detected', data.sourceId, { category: 'psychology', sentiment: 'negative' }));
+      signals.push(this.createSignal('emotional_state', 'anxiety', 0.42, 'Expressions of stress or anxiety detected', data.sourceId, { category: 'psychology', sentiment: 'negative' }, data.metadata?.timestamp));
     }
     if (DECISION_PATTERN.test(content)) {
       DECISION_PATTERN.lastIndex = 0;
-      signals.push(this.createSignal('cognitive_trait', 'decision_paralysis', 0.39, 'Indecision patterns in posts', data.sourceId, { category: 'psychology' }));
+      signals.push(this.createSignal('cognitive_trait', 'decision_paralysis', 0.39, 'Indecision patterns in posts', data.sourceId, { category: 'psychology' }, data.metadata?.timestamp));
     }
 
     const postCount = (data.metadata as { postCount?: number }).postCount || 1;
     if (postCount > 50) {
-      signals.push(this.createSignal('social_pattern', 'high_social_engagement', 0.6, `High volume of social activity: ${postCount} posts`, data.sourceId, { category: 'social' }));
+      signals.push(this.createSignal('social_pattern', 'high_social_engagement', 0.6, `High volume of social activity: ${postCount} posts`, data.sourceId, { category: 'social' }, data.metadata?.timestamp));
     }
     return signals;
   }

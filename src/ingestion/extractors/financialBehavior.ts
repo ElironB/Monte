@@ -36,6 +36,7 @@ export class FinancialBehaviorExtractor extends SignalExtractor {
     if (impulseTxns.length > 0) {
       const impulseSpend = impulseTxns.reduce((s, t) => s + Math.abs(t.amount), 0);
       const ts = impulseTxns.map(t => t.date);
+      const latestTimestamp = this.getLatestTimestamp(ts);
       const temporal = analyzeTemporalPatterns(ts);
       const trendPoints = impulseTxns.map(t => ({ timestamp: t.date, value: Math.abs(t.amount) }));
 
@@ -53,6 +54,7 @@ export class FinancialBehaviorExtractor extends SignalExtractor {
             temporalCluster: temporal.dominantCluster,
             intensityTrend: detectTrend(trendPoints),
           },
+          latestTimestamp,
         ),
       );
     }
@@ -61,6 +63,7 @@ export class FinancialBehaviorExtractor extends SignalExtractor {
     if (feeTxns.length > 0) {
       const feeTotal = feeTxns.reduce((s, t) => s + Math.abs(t.amount), 0);
       const ts = feeTxns.map(t => t.date);
+      const latestTimestamp = this.getLatestTimestamp(ts);
       const temporal = analyzeTemporalPatterns(ts);
       const trendPoints = feeTxns.map(t => ({ timestamp: t.date, value: 1 }));
 
@@ -79,6 +82,7 @@ export class FinancialBehaviorExtractor extends SignalExtractor {
             temporalCluster: temporal.dominantCluster,
             intensityTrend: detectTrend(trendPoints),
           },
+          latestTimestamp,
         ),
       );
     }
@@ -86,6 +90,7 @@ export class FinancialBehaviorExtractor extends SignalExtractor {
     const investTxns = transactions.filter(t => INVEST_PATTERN.test(t.description) || t.category === 'investment');
     if (investTxns.length > 0) {
       const ts = investTxns.map(t => t.date);
+      const latestTimestamp = this.getLatestTimestamp(ts);
       const temporal = analyzeTemporalPatterns(ts);
 
       const months = new Set(investTxns.map(t => t.date.slice(0, 7)));
@@ -107,6 +112,7 @@ export class FinancialBehaviorExtractor extends SignalExtractor {
             temporalCluster: temporal.dominantCluster,
             intensityTrend: detectTrend(trendPoints),
           },
+          latestTimestamp,
         ),
       );
     }
@@ -150,13 +156,13 @@ export class FinancialBehaviorExtractor extends SignalExtractor {
     const content = data.rawContent.toLowerCase();
 
     if (IMPULSE_PATTERN.test(content)) {
-      signals.push(this.createSignal('financial_behavior', 'impulse_spending', 0.42, 'Transaction patterns suggest impulse purchases', data.sourceId, { category: 'finance' }));
+      signals.push(this.createSignal('financial_behavior', 'impulse_spending', 0.42, 'Transaction patterns suggest impulse purchases', data.sourceId, { category: 'finance' }, data.metadata?.timestamp));
     }
     if (FEE_PATTERN.test(content)) {
-      signals.push(this.createSignal('financial_behavior', 'budget_struggles', 0.48, 'Financial stress indicators in transactions', data.sourceId, { category: 'finance', sentiment: 'negative' }));
+      signals.push(this.createSignal('financial_behavior', 'budget_struggles', 0.48, 'Financial stress indicators in transactions', data.sourceId, { category: 'finance', sentiment: 'negative' }, data.metadata?.timestamp));
     }
     if (INVEST_PATTERN.test(content)) {
-      signals.push(this.createSignal('financial_behavior', 'active_investor', 0.45, 'Regular investment activity detected', data.sourceId, { category: 'finance' }));
+      signals.push(this.createSignal('financial_behavior', 'active_investor', 0.45, 'Regular investment activity detected', data.sourceId, { category: 'finance' }, data.metadata?.timestamp));
     }
     return signals;
   }
