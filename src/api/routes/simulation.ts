@@ -5,6 +5,8 @@ import { NarrativeGenerator } from '../../simulation/narrativeGenerator.js';
 import { AggregatedResults } from '../../simulation/types.js';
 import { BehavioralSignal } from '../../ingestion/types.js';
 import { DimensionMapper } from '../../persona/dimensionMapper.js';
+import { getDimensionConceptEmbeddings } from '../../embeddings/dimensionConcepts.js';
+import { EmbeddingService } from '../../embeddings/embeddingService.js';
 import { logger } from '../../utils/logger.js';
 import { cacheGet, cacheSet } from '../../config/redis.js';
 import { scheduleSimulationBatch } from '../../ingestion/queue/ingestionQueue.js';
@@ -273,10 +275,12 @@ async function simulationRoutes(fastify: FastifyInstance) {
             evidence: string;
             dimensions: string;
             timestamp: string;
+            embedding: number[] | null;
           }>(
             `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:DERIVED_FROM]->(s:Signal)
              RETURN s.id as id, s.type as type, s.value as value, s.confidence as confidence,
-                    s.evidence as evidence, s.dimensions as dimensions, toString(s.timestamp) as timestamp
+                    s.evidence as evidence, s.dimensions as dimensions, toString(s.timestamp) as timestamp,
+                    s.embedding as embedding
              ORDER BY s.confidence DESC
              LIMIT 50`,
             { userId: request.user.userId }
@@ -292,8 +296,16 @@ async function simulationRoutes(fastify: FastifyInstance) {
             timestamp: r.timestamp,
             dimensions: r.dimensions ? JSON.parse(r.dimensions) : {},
           }));
+          const signalEmbeddings = new Map(
+            signalRecords
+              .filter(record => Array.isArray(record.embedding))
+              .map(record => [record.id, (record.embedding ?? []).map(value => Number(value))])
+          );
+          const conceptEmbeddings = EmbeddingService.isAvailable()
+            ? await getDimensionConceptEmbeddings()
+            : null;
 
-          const mapper = new DimensionMapper(signals);
+          const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings);
           const dimensions = mapper.mapToDimensions();
 
           const generator = new NarrativeGenerator();

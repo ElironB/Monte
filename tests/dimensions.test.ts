@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { DimensionMapper } from '../src/persona/dimensionMapper.js';
+import type { ConceptEmbeddings } from '../src/embeddings/dimensionConcepts.js';
 import { BehavioralSignal } from '../src/ingestion/types.js';
 
 function makeSignal(value: string, type: string = 'cognitive_trait', confidence: number = 0.8): BehavioralSignal {
   return {
     id: `sig-${Math.random().toString(36).slice(2, 8)}`,
-    type: type as any,
+    type: type as BehavioralSignal['type'],
     value,
     confidence,
     evidence: 'test',
@@ -15,39 +16,57 @@ function makeSignal(value: string, type: string = 'cognitive_trait', confidence:
   };
 }
 
+const conceptEmbeddings: ConceptEmbeddings = {
+  riskTolerance: { high: [1, 0], low: [-1, 0] },
+  timePreference: { high: [0.9, 0.1], low: [-0.9, -0.1] },
+  socialDependency: { high: [0.7, 0.7], low: [-0.7, -0.7] },
+  learningStyle: { high: [0, 1], low: [0, -1] },
+  decisionSpeed: { high: [0.8, 0.2], low: [-0.8, -0.2] },
+  emotionalVolatility: { high: [0.6, 0.8], low: [-0.6, -0.8] },
+};
+
 describe('DimensionMapper', () => {
-  it('maps high risk signals to elevated riskTolerance', () => {
+  it('maps semantically aligned high-risk signals to elevated riskTolerance', () => {
     const signals = [
-      makeSignal('high_risk_tolerance'),
-      makeSignal('financial_trading', 'interest'),
-      makeSignal('impulse_spending', 'financial_behavior'),
+      makeSignal('speculative investing appetite'),
+      makeSignal('comfortable making volatile bets', 'interest'),
+      makeSignal('impulsive financial swing', 'financial_behavior'),
     ];
-    const mapper = new DimensionMapper(signals);
+    const signalEmbeddings = new Map(signals.map((signal, index) => [
+      signal.id,
+      [1, index * 0.05],
+    ]));
+
+    const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings);
     const dims = mapper.mapToDimensions();
     expect(dims.riskTolerance).toBeGreaterThan(0.5);
   });
 
-  it('maps anxiety signals to elevated emotionalVolatility', () => {
+  it('maps emotionally reactive signals to elevated emotionalVolatility', () => {
     const signals = [
-      makeSignal('anxiety', 'emotional_state'),
+      makeSignal('panic-driven reaction', 'emotional_state'),
     ];
-    const mapper = new DimensionMapper(signals);
+    const signalEmbeddings = new Map([[signals[0].id, [0.6, 0.8]]]);
+
+    const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings);
     const dims = mapper.mapToDimensions();
     expect(dims.emotionalVolatility).toBeGreaterThan(0.5);
   });
 
-  it('maps goal + education signals to learning-oriented dimensions', () => {
+  it('maps research-oriented signals to learning-oriented dimensions', () => {
     const signals = [
-      makeSignal('educational_content', 'interest'),
-      makeSignal('learning_focused'),
-      makeSignal('deep_self_reflection'),
+      makeSignal('prefers formal study before acting', 'interest'),
+      makeSignal('reads documentation deeply'),
+      makeSignal('likes structured courses'),
     ];
-    const mapper = new DimensionMapper(signals);
+    const signalEmbeddings = new Map(signals.map(signal => [signal.id, [0, 1]]));
+
+    const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings);
     const dims = mapper.mapToDimensions();
     expect(dims.learningStyle).toBeGreaterThan(0.5);
   });
 
-  it('returns neutral (0.5) with no signals', () => {
+  it('returns neutral (0.5) with no embeddings available', () => {
     const mapper = new DimensionMapper([]);
     const dims = mapper.mapToDimensions();
     expect(dims.riskTolerance).toBe(0.5);
@@ -56,17 +75,26 @@ describe('DimensionMapper', () => {
 
   it('all dimensions are bounded 0-1', () => {
     const signals = [
-      makeSignal('high_risk_tolerance'),
-      makeSignal('anxiety', 'emotional_state'),
-      makeSignal('impulse_spending', 'financial_behavior'),
-      makeSignal('goal_oriented'),
-      makeSignal('educational_content', 'interest'),
-      makeSignal('decision_paralysis'),
-      makeSignal('high_social_engagement', 'social_pattern'),
+      makeSignal('speculative risk appetite'),
+      makeSignal('reactive under pressure', 'emotional_state'),
+      makeSignal('urgent need for immediate action', 'financial_behavior'),
+      makeSignal('long research sprint'),
+      makeSignal('prefers team validation', 'social_pattern'),
+      makeSignal('slow careful analysis'),
     ];
-    const mapper = new DimensionMapper(signals);
+    const vectors = [
+      [1, 0],
+      [0.6, 0.8],
+      [0.9, 0.1],
+      [0, 1],
+      [0.7, 0.7],
+      [-0.8, -0.2],
+    ];
+    const signalEmbeddings = new Map(signals.map((signal, index) => [signal.id, vectors[index]]));
+
+    const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings);
     const dims = mapper.mapToDimensions();
-    for (const [key, val] of Object.entries(dims)) {
+    for (const val of Object.values(dims)) {
       expect(val).toBeGreaterThanOrEqual(0);
       expect(val).toBeLessThanOrEqual(1);
     }

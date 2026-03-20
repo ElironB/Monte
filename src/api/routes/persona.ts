@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { runQuery, runQuerySingle, runWriteSingle } from '../../config/neo4j.js';
 import { schedulePersonaBuild } from '../../ingestion/queue/ingestionQueue.js';
 import { ValidationError } from '../../utils/errors.js';
+import { EmbeddingService } from '../../embeddings/embeddingService.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const createSchema = z.object({
@@ -41,6 +42,10 @@ async function personaRoutes(fastify: FastifyInstance) {
     schema: { description: 'Build persona', tags: ['persona'], security: [{ bearerAuth: [] }] },
     handler: async (request, reply) => {
       const body = createSchema.parse(request.body);
+
+      if (!EmbeddingService.isAvailable()) {
+        throw new ValidationError('Embeddings require OPENROUTER_API_KEY or EMBEDDING_API_KEY. Groq does not support embeddings.');
+      }
 
       const hasSources = await runQuerySingle<{ count: number }>(
         `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)

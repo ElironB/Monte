@@ -1,21 +1,17 @@
-// LLM Fork Evaluator - Single OpenAI SDK client with configurable baseURL
-// Works with any OpenAI-compatible API: Groq, OpenRouter, OpenAI, Together, etc.
-// Complexity threshold: >0.6 = reasoning model, with max 20 reasoning calls per simulation
-
 import OpenAI from 'openai';
 import {
   DecisionNode,
+  DecisionOption,
   SimulationState,
   LLMEvaluation,
   ForkEvaluationRequest,
   CloneParameters,
-  Scenario,
 } from './types.js';
 import { getScenario } from './decisionGraph.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
+import { EmbeddingService, cosineSimilarity } from '../embeddings/embeddingService.js';
 
-// LLM Call tracking
 interface LLMUsage {
   standardCalls: number;
   reasoningCalls: number;
@@ -23,7 +19,37 @@ interface LLMUsage {
   estimatedCost: number;
 }
 
+interface HeuristicConceptEmbeddings {
+  aggressiveRisk: number[];
+  cautiousPreservation: number[];
+  immediateAction: number[];
+  deliberatePlanning: number[];
+  collaborativeAction: number[];
+  independentAction: number[];
+  longTermPatience: number[];
+  emotionalImpulse: number[];
+  theoreticalLearning: number[];
+  experientialLearning: number[];
+  exitPreservation: number[];
+}
+
+const HEURISTIC_CONCEPT_TEXTS: Record<keyof HeuristicConceptEmbeddings, string> = {
+  aggressiveRisk: 'aggressive risk-taking, bold speculation, all-in moves, high-upside and high-volatility choice',
+  cautiousPreservation: 'cautious preservation, safe conservative option, downside protection, capital preservation',
+  immediateAction: 'take action immediately, start now, quick decisive move, bias toward action',
+  deliberatePlanning: 'plan carefully, analyze first, research deeply, deliberate measured action',
+  collaborativeAction: 'partner with others, team-based move, network-driven collaboration, social coordination',
+  independentAction: 'independent solo move, self-directed decision, acting alone without outside input',
+  longTermPatience: 'patient long-term orientation, future payoff, delayed gratification, invest and wait',
+  emotionalImpulse: 'emotion-driven exciting leap, passion move, dramatic change, impulsive pursuit of excitement',
+  theoreticalLearning: 'study, learn, degree, research, theoretical understanding before acting',
+  experientialLearning: 'practice, experiment, hands-on trial, learn by doing, direct experience',
+  exitPreservation: 'quit, stop, exit, retreat, preserve resources, reduce exposure and protect capital',
+};
+
 export class ForkEvaluator {
+  private static heuristicConceptEmbeddings: HeuristicConceptEmbeddings | null = null;
+
   private client: OpenAI | null = null;
   private model: string;
   private reasoningModel: string | null;
@@ -51,7 +77,6 @@ export class ForkEvaluator {
     }
   }
 
-  // Evaluate a decision fork for a clone
   async evaluateFork(
     request: ForkEvaluationRequest,
     availableReasoningCalls: number = this.MAX_REASONING_CALLS
@@ -60,18 +85,17 @@ export class ForkEvaluator {
     const complexity = this.calculateComplexity(decisionNode, cloneParams, state);
 
     const useReasoning = complexity > this.COMPLEXITY_THRESHOLD &&
-                         availableReasoningCalls > 0 &&
-                         this.reasoningModel !== null;
+      availableReasoningCalls > 0 &&
+      this.reasoningModel !== null;
 
     try {
       return await this.callLLM(request, complexity, useReasoning);
     } catch (error) {
       logger.error({ error, scenario: scenario.id }, 'LLM evaluation failed, using heuristic fallback');
-      return this.heuristicEvaluation(request, complexity);
+      return await this.heuristicEvaluation(request, complexity);
     }
   }
 
-  // Calculate complexity score (0-1)
   calculateComplexity(
     decisionNode: DecisionNode,
     cloneParams: CloneParameters,
@@ -80,43 +104,34 @@ export class ForkEvaluator {
     let complexity = 0;
     const factors: number[] = [];
 
-    // Factor 1: Number of options (more options = more complex)
     const optionCount = decisionNode.options.length;
     factors.push(Math.min(1, optionCount / 5));
 
-    // Factor 2: Financial stakes (high capital = high stakes)
     const capitalAtRisk = Math.abs(state.capital) / 100000;
     factors.push(Math.min(1, capitalAtRisk));
 
-    // Factor 3: Time pressure (low timeElapsed relative to typical scenario)
     const timePressure = state.timeElapsed < 3 ? 0.3 : 0;
     factors.push(timePressure);
 
-    // Factor 4: Clone behavioral complexity
-    // High risk tolerance with emotional volatility = complex decision
     const behavioralComplexity =
       (cloneParams.riskTolerance * cloneParams.emotionalVolatility +
-       cloneParams.decisionSpeed * (1 - cloneParams.timePreference)) / 2;
+        cloneParams.decisionSpeed * (1 - cloneParams.timePreference)) / 2;
     factors.push(behavioralComplexity);
 
-    // Factor 5: Scenario requires evaluation flag
     const requiresDeepThought = decisionNode.options.some(o => o.requiresEvaluation) ? 0.3 : 0;
     factors.push(requiresDeepThought);
 
-    // Factor 6: Contradictions in state (high stress + high stakes)
     const stressVal = state.metrics.stressLevel;
     const stateStress = typeof stressVal === 'number' ? stressVal : 0;
     const contradictionFactor = stateStress * capitalAtRisk;
     factors.push(Math.min(1, contradictionFactor));
 
-    // Weighted average
     const weights = [0.2, 0.25, 0.1, 0.2, 0.15, 0.1];
-    complexity = factors.reduce((sum, f, i) => sum + f * weights[i], 0);
+    complexity = factors.reduce((sum, factor, index) => sum + factor * weights[index], 0);
 
     return Math.min(1, Math.max(0, complexity));
   }
 
-  // Call LLM (unified OpenAI SDK client)
   private async callLLM(
     request: ForkEvaluationRequest,
     complexity: number,
@@ -166,9 +181,8 @@ export class ForkEvaluator {
     );
   }
 
-  // Build prompt for LLM
   private buildPrompt(request: ForkEvaluationRequest): string {
-    const { cloneParams, decisionNode, state, scenario } = request;
+    const { cloneParams, decisionNode, state } = request;
 
     const traitDescriptions = this.describeTraits(cloneParams);
     const stateDescription = this.describeState(state);
@@ -201,7 +215,6 @@ Respond with JSON in this format:
 The confidence should be 0.7-0.95 based on how clear the choice is given the traits.`;
   }
 
-  // Describe clone traits for prompt
   private describeTraits(params: CloneParameters): string {
     const descriptions: string[] = [];
 
@@ -244,7 +257,6 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
     return descriptions.join('\n') || '- Moderate on all behavioral dimensions';
   }
 
-  // Describe current state for prompt
   private describeState(state: SimulationState): string {
     const parts: string[] = [];
 
@@ -265,7 +277,6 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
     return parts.join('\n');
   }
 
-  // Parse LLM response
   private parseLLMResponse(
     content: string,
     decisionNode: DecisionNode,
@@ -275,11 +286,10 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
       const parsed = JSON.parse(content);
 
       const chosenOptionId = parsed.chosenOptionId ||
-                            parsed.option ||
-                            parsed.choice ||
-                            decisionNode.options[0].id;
+        parsed.option ||
+        parsed.choice ||
+        decisionNode.options[0].id;
 
-      // Validate option exists
       const validOption = decisionNode.options.find(o => o.id === chosenOptionId);
       const finalOptionId = validOption ? chosenOptionId : decisionNode.options[0].id;
 
@@ -292,7 +302,6 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
     } catch (error) {
       logger.warn({ content, error }, 'Failed to parse LLM response');
 
-      // Fallback to first option
       return {
         chosenOptionId: decisionNode.options[0].id,
         reasoning: 'Parsing failed, defaulting to first option',
@@ -302,14 +311,31 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
     }
   }
 
-  // Heuristic evaluation when LLM unavailable
-  private heuristicEvaluation(
+  private async heuristicEvaluation(
     request: ForkEvaluationRequest,
     complexity: number
-  ): LLMEvaluation {
+  ): Promise<LLMEvaluation> {
     const { cloneParams, decisionNode, state } = request;
 
-    // Simple heuristic based on trait matching
+    if (EmbeddingService.isAvailable()) {
+      try {
+        const concepts = await this.getHeuristicConceptEmbeddings();
+        const optionEmbeddings = await this.getOptionEmbeddings(decisionNode.options);
+        const semanticSelection = this.chooseSemanticOption(decisionNode.options, optionEmbeddings, cloneParams, state, concepts);
+
+        if (semanticSelection) {
+          return {
+            chosenOptionId: semanticSelection.option.id,
+            reasoning: semanticSelection.reasoning,
+            confidence: 0.6,
+            complexity,
+          };
+        }
+      } catch (error) {
+        logger.warn({ error }, 'Embedding-based heuristic fallback failed, using keyword heuristic');
+      }
+    }
+
     let bestOption = decisionNode.options[0];
     let bestScore = -Infinity;
 
@@ -317,7 +343,6 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
       let score = 0;
       const label = option.label.toLowerCase();
 
-      // Risk matching
       if (cloneParams.riskTolerance > 0.7) {
         if (label.includes('aggressive') || label.includes('bold') || label.includes('all-in')) {
           score += 2;
@@ -328,7 +353,6 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
         }
       }
 
-      // Speed matching
       if (cloneParams.decisionSpeed > 0.7) {
         if (label.includes('now') || label.includes('immediate') || label.includes('start')) {
           score += 1;
@@ -339,16 +363,14 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
         }
       }
 
-      // Social matching
       if (cloneParams.socialDependency > 0.7) {
         if (label.includes('partner') || label.includes('team') || label.includes('network')) {
           score += 1;
         }
       }
 
-      // Capital stress adjustment
-      if (state.capital < 10000 && label.includes('quit') || label.includes('stop')) {
-        score += 1; // Prefer exit when broke
+      if ((state.capital < 10000 && label.includes('quit')) || label.includes('stop')) {
+        score += 1;
       }
 
       if (score > bestScore) {
@@ -365,12 +387,97 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
     };
   }
 
-  // Get usage stats
+  private async getHeuristicConceptEmbeddings(): Promise<HeuristicConceptEmbeddings> {
+    if (ForkEvaluator.heuristicConceptEmbeddings) {
+      return ForkEvaluator.heuristicConceptEmbeddings;
+    }
+
+    const service = EmbeddingService.getInstance();
+    const keys = Object.keys(HEURISTIC_CONCEPT_TEXTS) as Array<keyof HeuristicConceptEmbeddings>;
+    const embeddings = await service.embedBatch(keys.map(key => HEURISTIC_CONCEPT_TEXTS[key]));
+
+    ForkEvaluator.heuristicConceptEmbeddings = keys.reduce((acc, key, index) => {
+      acc[key] = embeddings[index];
+      return acc;
+    }, {} as HeuristicConceptEmbeddings);
+
+    return ForkEvaluator.heuristicConceptEmbeddings;
+  }
+
+  private async getOptionEmbeddings(options: DecisionOption[]): Promise<Map<string, number[]>> {
+    const service = EmbeddingService.getInstance();
+    const texts = options.map(option => `${option.label}. ${option.value}`);
+    const embeddings = await service.embedBatch(texts);
+    const map = new Map<string, number[]>();
+
+    options.forEach((option, index) => {
+      map.set(option.id, embeddings[index]);
+    });
+
+    return map;
+  }
+
+  private chooseSemanticOption(
+    options: DecisionOption[],
+    optionEmbeddings: Map<string, number[]>,
+    cloneParams: CloneParameters,
+    state: SimulationState,
+    concepts: HeuristicConceptEmbeddings
+  ): { option: DecisionOption; reasoning: string } | null {
+    let bestOption: DecisionOption | null = null;
+    let bestScore = -Infinity;
+
+    for (const option of options) {
+      const embedding = optionEmbeddings.get(option.id);
+      if (!embedding) {
+        continue;
+      }
+
+      let score = 0;
+
+      score += this.scorePole(cloneParams.riskTolerance, embedding, concepts.cautiousPreservation, concepts.aggressiveRisk, 2.2);
+      score += this.scorePole(cloneParams.decisionSpeed, embedding, concepts.deliberatePlanning, concepts.immediateAction, 1.4);
+      score += this.scorePole(cloneParams.socialDependency, embedding, concepts.independentAction, concepts.collaborativeAction, 1.1);
+      score += this.scorePole(cloneParams.timePreference, embedding, concepts.longTermPatience, concepts.immediateAction, 1.3);
+      score += this.scorePole(cloneParams.learningStyle, embedding, concepts.experientialLearning, concepts.theoreticalLearning, 1.0);
+      score += this.scorePole(cloneParams.emotionalVolatility, embedding, concepts.cautiousPreservation, concepts.emotionalImpulse, 0.9);
+
+      if (state.capital < 10000) {
+        score += cosineSimilarity(embedding, concepts.exitPreservation) * 0.9;
+        score += cosineSimilarity(embedding, concepts.cautiousPreservation) * 0.7;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestOption = option;
+      }
+    }
+
+    if (!bestOption) {
+      return null;
+    }
+
+    return {
+      option: bestOption,
+      reasoning: `Semantic heuristic selected ${bestOption.label} from cosine alignment with dominant clone traits`,
+    };
+  }
+
+  private scorePole(
+    traitValue: number,
+    optionEmbedding: number[],
+    lowConcept: number[],
+    highConcept: number[],
+    weight: number
+  ): number {
+    const direction = cosineSimilarity(optionEmbedding, highConcept) - cosineSimilarity(optionEmbedding, lowConcept);
+    return (traitValue - 0.5) * 2 * direction * weight;
+  }
+
   getUsage(): LLMUsage {
     return { ...this.usage };
   }
 
-  // Reset usage stats
   resetUsage(): void {
     this.usage = {
       standardCalls: 0,
@@ -380,7 +487,6 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
     };
   }
 
-  // Check if LLM services are available
   isAvailable(): {
     llm: boolean;
     reasoning: boolean;
@@ -394,15 +500,12 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
   }
 }
 
-// Export singleton instance
 export const forkEvaluator = new ForkEvaluator();
 
-// Export factory for fresh instances (useful for testing)
 export function createForkEvaluator(): ForkEvaluator {
   return new ForkEvaluator();
 }
 
-// Quick evaluation function
 export async function evaluateDecision(
   cloneParams: CloneParameters,
   decisionNode: DecisionNode,
@@ -420,7 +523,6 @@ export async function evaluateDecision(
   });
 }
 
-// Batch evaluation for efficiency
 export async function evaluateBatch(
   requests: ForkEvaluationRequest[],
   maxReasoningCalls: number = 20
@@ -441,7 +543,6 @@ export async function evaluateBatch(
   return results;
 }
 
-// Complexity scoring for external use
 export { calculateComplexity };
 function calculateComplexity(
   decisionNode: DecisionNode,
@@ -451,7 +552,6 @@ function calculateComplexity(
   return forkEvaluator.calculateComplexity(decisionNode, cloneParams, state);
 }
 
-// Cost estimation
 export function estimateEvaluationCost(
   totalDecisions: number,
   complexDecisionRatio: number = 0.3
@@ -467,7 +567,6 @@ export function estimateEvaluationCost(
   const tokensPerCall = 500;
   const reasoningTokensPerCall = 600;
 
-  // Generic cost estimation ($0.50-1.00 per 1M tokens typical range)
   const standardCost = simpleCount * tokensPerCall * 0.0000005;
   const reasoningCost = Math.min(complexCount, 20) * reasoningTokensPerCall * 0.000001;
 

@@ -17,6 +17,8 @@ import { GraphBuilder } from '../../../persona/graphBuilder.js';
 import { PersonaCompressor } from '../../../persona/personaCompressor.js';
 import { CloneGenerator, CloneParameters } from '../../../persona/cloneGenerator.js';
 import { BayesianUpdater } from '../../../persona/bayesianUpdater.js';
+import { EmbeddingService } from '../../../embeddings/embeddingService.js';
+import { getDimensionConceptEmbeddings } from '../../../embeddings/dimensionConcepts.js';
 import { BehavioralSignal } from '../../types.js';
 
 // Phase 4: Simulation Engine imports
@@ -114,10 +116,35 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
         }
       );
     }
+
+    let signalEmbeddings = new Map<string, number[]>();
+    if (allSignals.length > 0 && EmbeddingService.isAvailable()) {
+      try {
+        const service = EmbeddingService.getInstance();
+        const signalTexts = allSignals.map(signal => `${signal.type}: ${signal.value} — ${signal.evidence}`);
+        const embeddings = await service.embedBatch(signalTexts);
+
+        for (let i = 0; i < allSignals.length; i++) {
+          const embedding = embeddings[i];
+          signalEmbeddings.set(allSignals[i].id, embedding);
+          await runWriteSingle(
+            `MATCH (s:Signal {id: $signalId})
+             SET s.embedding = $embedding
+             RETURN s.id as id`,
+            { signalId: allSignals[i].id, embedding }
+          );
+        }
+
+        logger.info({ sourceId, embeddedCount: allSignals.length }, 'Signal embeddings stored');
+      } catch (err) {
+        signalEmbeddings = new Map();
+        logger.warn({ err, sourceId }, 'Failed to embed signals — dimension mapping will use fallback');
+      }
+    }
     
     if (allSignals.length > 0) {
-      const detector = new ContradictionDetector(allSignals);
-      const contradictions = detector.detect();
+      const detector = new ContradictionDetector(allSignals, signalEmbeddings);
+      const contradictions = await detector.detect();
       
       for (const contradiction of contradictions) {
         await runWriteSingle(
@@ -200,12 +227,16 @@ interface StoredSignalRecord {
 }
 
 async function processFullBuild(userId: string, personaId: string): Promise<void> {
+  ensureEmbeddingsConfigured();
+
   const signals = await fetchSignals(userId);
   const signalIds = signals.map(signal => signal.id);
+  const signalEmbeddings = await fetchSignalEmbeddings(signalIds);
+  const conceptEmbeddings = await getDimensionConceptEmbeddings();
 
   logger.info({ personaId, signalCount: signals.length }, 'Building persona from all signals');
 
-  const mapper = new DimensionMapper(signals);
+  const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings);
   const dimensions = mapper.mapToDimensions();
 
   const graphBuilder = new GraphBuilder(userId, personaId);
@@ -230,12 +261,16 @@ async function processIncrementalUpdate(
 
   await clonePersonaState(previousPersonaId, personaId);
 
+  ensureEmbeddingsConfigured();
+
   const newSignals = await fetchSignals(userId, true);
 
   if (newSignals.length > 0) {
-    const mapper = new DimensionMapper(newSignals);
+    const signalEmbeddings = await fetchSignalEmbeddings(newSignals.map(signal => signal.id));
+    const conceptEmbeddings = await getDimensionConceptEmbeddings();
+    const mapper = new DimensionMapper(newSignals, conceptEmbeddings, signalEmbeddings);
     const newDimensions = mapper.mapToDimensions();
-    const updater = new BayesianUpdater(userId, personaId);
+    const updater = new BayesianUpdater(userId, personaId, conceptEmbeddings, signalEmbeddings);
     const updateResult = await updater.update(newSignals, newDimensions);
 
     await linkSignalsToPersona(personaId, newSignals.map(signal => signal.id));
@@ -297,6 +332,35 @@ async function fetchSignals(userId: string, onlyNewSignals: boolean = false): Pr
     timestamp: record.timestamp,
     dimensions: parseSignalDimensions(record.dimensions),
   }));
+}
+
+
+async function fetchSignalEmbeddings(signalIds: string[]): Promise<Map<string, number[]>> {
+  const map = new Map<string, number[]>();
+  if (signalIds.length === 0) {
+    return map;
+  }
+
+  const records = await runQuery<{ id: string; embedding: number[] | null }>(
+    `MATCH (s:Signal)
+     WHERE s.id IN $signalIds AND s.embedding IS NOT NULL
+     RETURN s.id as id, s.embedding as embedding`,
+    { signalIds }
+  );
+
+  for (const record of records) {
+    if (Array.isArray(record.embedding)) {
+      map.set(record.id, record.embedding.map(value => Number(value)));
+    }
+  }
+
+  return map;
+}
+
+function ensureEmbeddingsConfigured(): void {
+  if (!EmbeddingService.isAvailable()) {
+    throw new Error('Embeddings require OPENROUTER_API_KEY or EMBEDDING_API_KEY. Groq does not support embeddings.');
+  }
 }
 
 function parseSignalDimensions(

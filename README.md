@@ -115,7 +115,10 @@ Minimum required variables:
 NEO4J_PASSWORD=your_secure_password
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
-OPENROUTER_API_KEY=your_key    # or GROQ_API_KEY
+OPENROUTER_API_KEY=your_key    # recommended: covers both LLM + embeddings
+# OR
+GROQ_API_KEY=your_key
+EMBEDDING_API_KEY=your_key     # required with Groq-only setups
 ```
 
 ### 3. Start Infrastructure
@@ -194,9 +197,8 @@ monte simulate "should I day trade full time?"
                      ↓
 ┌─────────────────────────────────────────────────────────┐
 │ 3. PERSONA CONSTRUCTION (GraphRAG → Neo4j)             │
-│ DimensionMapper → 6 dimensions → GraphBuilder           │
-│ PersonaCompressor → Master Persona                     │
-│ CloneGenerator → 1,000 stratified clones               │
+│ Signal embeddings + cosine similarity → 6 dimensions   │
+│ GraphBuilder → Master Persona → 1,000 stratified clones│
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -222,9 +224,21 @@ monte simulate "should I day trade full time?"
 | Object Storage | MinIO (S3-compatible) |
 | Observability | OpenTelemetry + Jaeger |
 | LLM Provider | OpenAI SDK → Groq or OpenRouter (gpt-oss-20b / gpt-oss-120b) |
+| Embeddings | OpenAI-compatible embeddings via OpenRouter (`openai/text-embedding-3-small`) |
 | Integrations | Composio (optional platform connections) |
 
 ---
+
+
+### Embedding-driven persona mapping
+
+Monte no longer maps signals to dimensions with hardcoded keyword lists. During ingestion, every `Signal` gets an embedding stored on the Neo4j node. During `monte persona build`, the builder compares those vectors against rich behavioral concept descriptions for each dimension and uses cosine similarity to score relevance and direction.
+
+- Default embedding model: `openai/text-embedding-3-small`
+- Default provider path: OpenRouter via `OPENROUTER_API_KEY`
+- Redis caches static concept vectors for 30 days and signal vectors for 7 days
+- Neo4j stores signal embeddings on `Signal.embedding` and creates a native `signal_embedding` vector index
+- Groq does not provide embeddings, so Groq-only setups must also set `OPENROUTER_API_KEY` or `EMBEDDING_API_KEY`
 
 ## 🔌 API Reference
 
@@ -425,10 +439,17 @@ MINIO_PORT=9000
 MINIO_ACCESS_KEY=<min 1 char>
 MINIO_SECRET_KEY=<min 1 char>
 
-# LLM Provider (pick ONE — required for simulation)
-OPENROUTER_API_KEY=your_key        # One key for all models (recommended)
+# LLM Provider
+OPENROUTER_API_KEY=your_key        # Recommended: one key for LLM + embeddings
 # OR
-GROQ_API_KEY=your_key              # Groq fast inference
+GROQ_API_KEY=your_key              # Groq fast inference for chat completions only
+
+# Embeddings
+# Auto-uses OPENROUTER_API_KEY when present.
+# If you run Groq-only for LLMs, you must also set one of these:
+# EMBEDDING_API_KEY=your_key
+# EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+# EMBEDDING_MODEL=openai/text-embedding-3-small
 
 # Optional model overrides
 # LLM_MODEL=openai/gpt-oss-20b

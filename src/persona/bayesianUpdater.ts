@@ -1,3 +1,5 @@
+import { cosineSimilarity } from '../embeddings/embeddingService.js';
+import type { ConceptEmbeddings } from '../embeddings/dimensionConcepts.js';
 import { runQuerySingle, runWriteSingle } from '../config/neo4j.js';
 import { BehavioralSignal } from '../ingestion/types.js';
 import { logger } from '../utils/logger.js';
@@ -7,15 +9,7 @@ const MIN_CONFIDENCE = 0.05;
 const MAX_CONFIDENCE = 0.95;
 const LOW_CONFIDENCE_THRESHOLD = 0.2;
 const MAX_BLEND_WEIGHT = 0.4;
-
-const DIMENSION_SIGNALS: Record<keyof BehavioralDimensions, string[]> = {
-  riskTolerance: ['high_risk_tolerance', 'impulse_spending', 'financial_trading', 'yolo'],
-  timePreference: ['goal_oriented', 'patient', 'urgent', 'impulse_spending'],
-  socialDependency: ['high_social_engagement', 'social_pattern', 'independent'],
-  learningStyle: ['educational_content', 'learning_focused', 'experiential', 'deep_self_reflection'],
-  decisionSpeed: ['decision_paralysis', 'impulse_spending', 'goal_oriented', 'patient'],
-  emotionalVolatility: ['anxiety', 'emotional_state', 'stable', 'high_risk_tolerance'],
-};
+const SIMILARITY_THRESHOLD = 0.25;
 
 export interface BayesianUpdate {
   dimension: keyof BehavioralDimensions;
@@ -44,16 +38,34 @@ interface ExistingTrait {
 export class BayesianUpdater {
   private userId: string;
   private personaId: string;
+  private conceptEmbeddings: ConceptEmbeddings | null;
+  private signalEmbeddings: Map<string, number[]>;
 
-  constructor(userId: string, personaId: string) {
+  constructor(
+    userId: string,
+    personaId: string,
+    conceptEmbeddings?: ConceptEmbeddings | null,
+    signalEmbeddings?: Map<string, number[]>
+  ) {
     this.userId = userId;
     this.personaId = personaId;
+    this.conceptEmbeddings = conceptEmbeddings ?? null;
+    this.signalEmbeddings = signalEmbeddings ?? new Map();
   }
 
   async update(
     newSignals: BehavioralSignal[],
-    newDimensions: BehavioralDimensions
+    newDimensions: BehavioralDimensions,
+    conceptEmbeddings?: ConceptEmbeddings | null,
+    signalEmbeddings?: Map<string, number[]>
   ): Promise<PersonaUpdateResult> {
+    if (conceptEmbeddings !== undefined) {
+      this.conceptEmbeddings = conceptEmbeddings;
+    }
+    if (signalEmbeddings !== undefined) {
+      this.signalEmbeddings = signalEmbeddings;
+    }
+
     const updates: BayesianUpdate[] = [];
 
     for (const [dimension, newValue] of Object.entries(newDimensions) as Array<[
@@ -181,11 +193,23 @@ export class BayesianUpdater {
     signals: BehavioralSignal[],
     dimension: keyof BehavioralDimensions
   ): BehavioralSignal[] {
-    const patterns = DIMENSION_SIGNALS[dimension] ?? [];
+    if (!this.conceptEmbeddings || this.signalEmbeddings.size === 0) {
+      return [];
+    }
+
+    const concepts = this.conceptEmbeddings[dimension];
+    if (!concepts) {
+      return [];
+    }
+
     return signals.filter(signal => {
-      const value = signal.value.toLowerCase();
-      const type = signal.type.toLowerCase();
-      return patterns.some(pattern => value.includes(pattern.toLowerCase()) || type.includes(pattern.toLowerCase()));
+      const embedding = this.signalEmbeddings.get(signal.id);
+      if (!embedding) {
+        return false;
+      }
+      const simHigh = cosineSimilarity(embedding, concepts.high);
+      const simLow = cosineSimilarity(embedding, concepts.low);
+      return Math.max(simHigh, simLow) >= SIMILARITY_THRESHOLD;
     });
   }
 
