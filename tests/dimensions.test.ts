@@ -3,7 +3,12 @@ import { DimensionMapper } from '../src/persona/dimensionMapper.js';
 import type { ConceptEmbeddings } from '../src/embeddings/dimensionConcepts.js';
 import { BehavioralSignal, SignalContradiction } from '../src/ingestion/types.js';
 
-function makeSignal(value: string, type: string = 'cognitive_trait', confidence: number = 0.8): BehavioralSignal {
+function makeSignal(
+  value: string,
+  type: string = 'cognitive_trait',
+  confidence: number = 0.8,
+  timestamp: string = new Date().toISOString(),
+): BehavioralSignal {
   return {
     id: `sig-${Math.random().toString(36).slice(2, 8)}`,
     type: type as BehavioralSignal['type'],
@@ -11,7 +16,7 @@ function makeSignal(value: string, type: string = 'cognitive_trait', confidence:
     confidence,
     evidence: 'test',
     sourceDataId: 'test',
-    timestamp: new Date().toISOString(),
+    timestamp,
     dimensions: {},
   };
 }
@@ -71,6 +76,39 @@ describe('DimensionMapper', () => {
     const dims = mapper.mapToDimensions();
     expect(dims.riskTolerance).toBe(0.5);
     expect(dims.emotionalVolatility).toBe(0.5);
+  });
+
+  it('applies recency decay — older signals contribute less', () => {
+    const recentSignal = makeSignal(
+      'speculative investing appetite',
+      'cognitive_trait',
+      0.8,
+      new Date().toISOString(),
+    );
+    const oldSignal = makeSignal(
+      'speculative investing appetite',
+      'cognitive_trait',
+      0.8,
+      new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+
+    const oldMapper = new DimensionMapper(
+      [oldSignal],
+      conceptEmbeddings,
+      new Map([[oldSignal.id, [1, 0]]]),
+    );
+    const oldDims = oldMapper.mapToDimensions();
+
+    const recentMapper = new DimensionMapper(
+      [recentSignal],
+      conceptEmbeddings,
+      new Map([[recentSignal.id, [1, 0]]]),
+    );
+    const recentDims = recentMapper.mapToDimensions();
+
+    expect(Math.abs(recentDims.riskTolerance - 0.5)).toBeGreaterThan(
+      Math.abs(oldDims.riskTolerance - 0.5),
+    );
   });
 
   it('all dimensions are bounded 0-1', () => {

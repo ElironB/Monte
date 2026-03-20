@@ -138,6 +138,21 @@ describe('SearchHistoryExtractor', () => {
     expect(finSignal!.dimensions.intensityTrend).toBeDefined();
     expect(['increasing', 'decreasing', 'stable']).toContain(finSignal!.dimensions.intensityTrend);
   });
+
+  it('preserves original event timestamp from matched entries', async () => {
+    const data = makeRaw('search_history', JSON.stringify({
+      searches: [
+        { query: 'stock trading basics', timestamp: '2025-06-15T10:30:00Z' },
+        { query: 'best crypto exchange', timestamp: '2025-07-20T14:00:00Z' },
+      ],
+    }));
+
+    const signals = await extractor.extract(data);
+    const tradingSignal = signals.find(s => s.value === 'financial_trading');
+
+    expect(tradingSignal).toBeDefined();
+    expect(tradingSignal!.timestamp).toBe('2025-07-20T14:00:00Z');
+  });
 });
 
 // =============================================================================
@@ -200,6 +215,21 @@ describe('SocialBehaviorExtractor', () => {
     const anxiety = signals.find(s => s.value === 'anxiety');
     expect(anxiety).toBeDefined();
     expect(anxiety!.dimensions.intensityTrend).toBe('increasing');
+  });
+
+  it('preserves latest post timestamp for extracted signals', async () => {
+    const data = makeRaw('social_media', JSON.stringify({
+      posts: [
+        { title: 'first', body: 'yolo', timestamp: '2025-02-01T10:00:00Z' },
+        { title: 'latest', body: 'diamond hands to the moon', timestamp: '2025-05-10T16:45:00Z' },
+      ],
+    }));
+
+    const signals = await extractor.extract(data);
+    const riskSignal = signals.find(s => s.value === 'high_risk_tolerance');
+
+    expect(riskSignal).toBeDefined();
+    expect(riskSignal!.timestamp).toBe('2025-05-10T16:45:00Z');
   });
 });
 
@@ -286,6 +316,20 @@ describe('FinancialBehaviorExtractor', () => {
 
     expect(largeImpulse.dimensions.frequency).toBeGreaterThan(smallImpulse.dimensions.frequency!);
   });
+
+  it('preserves latest transaction date for extracted signals', async () => {
+    const csv = [
+      'date,description,amount,category',
+      '2025-01-05T02:30:00Z,Amazon Impulse,89.99,shopping',
+      '2025-03-15T03:15:00Z,Amazon Late Night,49.99,shopping',
+    ].join('\n');
+
+    const signals = await extractor.extract(makeRaw('financial', csv));
+    const impulse = signals.find(s => s.value === 'impulse_spending');
+
+    expect(impulse).toBeDefined();
+    expect(impulse!.timestamp).toBe('2025-03-15T03:15:00Z');
+  });
 });
 
 // =============================================================================
@@ -351,6 +395,20 @@ describe('CognitiveStructureExtractor', () => {
     const denseOrg = denseSignals.find(s => s.value === 'highly_organized');
     expect(denseOrg).toBeDefined();
     expect(denseOrg!.confidence).toBeGreaterThan(minOrg?.confidence ?? 0);
+  });
+
+  it('uses metadata timestamp when notes include no per-entry timestamps', async () => {
+    const data = makeRaw(
+      'notes',
+      '# My Goals\n\n## Section\n\n- item 1\n- item 2\n\n' + 'word '.repeat(1100),
+      { timestamp: '2024-11-03T09:15:00Z' },
+    );
+
+    const signals = await extractor.extract(data);
+    const organized = signals.find(s => s.value === 'highly_organized');
+
+    expect(organized).toBeDefined();
+    expect(organized!.timestamp).toBe('2024-11-03T09:15:00Z');
   });
 });
 
@@ -418,5 +476,20 @@ describe('MediaConsumptionExtractor', () => {
     const edu = signals.find(s => s.value === 'educational_content');
     expect(edu).toBeDefined();
     expect(['increasing', 'decreasing', 'stable']).toContain(edu!.dimensions.intensityTrend);
+  });
+
+  it('preserves latest watch timestamp for extracted signals', async () => {
+    const data = makeRaw('watch_history', JSON.stringify({
+      history: [
+        { title: 'Tutorial: Python Basics', date: '2025-01-10T09:00:00Z' },
+        { title: 'Documentary: AI Explained', date: '2025-04-22T20:15:00Z' },
+      ],
+    }));
+
+    const signals = await extractor.extract(data);
+    const educational = signals.find(s => s.value === 'educational_content');
+
+    expect(educational).toBeDefined();
+    expect(educational!.timestamp).toBe('2025-04-22T20:15:00Z');
   });
 });

@@ -12,7 +12,8 @@ export abstract class SignalExtractor {
     confidence: number,
     evidence: string,
     sourceDataId: string,
-    dimensions: BehavioralSignal['dimensions'] = {}
+    dimensions: BehavioralSignal['dimensions'] = {},
+    timestamp?: string
   ): BehavioralSignal {
     return {
       id: uuidv4(),
@@ -21,8 +22,27 @@ export abstract class SignalExtractor {
       confidence,
       evidence,
       sourceDataId,
-      timestamp: new Date().toISOString(),
+      timestamp: timestamp || new Date().toISOString(),
       dimensions,
     };
+  }
+
+  protected getLatestTimestamp(timestamps: Array<string | undefined | null>): string | undefined {
+    let latestTimestamp: string | undefined;
+    let latestTime = Number.NEGATIVE_INFINITY;
+
+    for (const timestamp of timestamps) {
+      if (!timestamp) continue;
+
+      const parsedTime = new Date(timestamp).getTime();
+      if (Number.isNaN(parsedTime)) continue;
+
+      if (parsedTime > latestTime) {
+        latestTime = parsedTime;
+        latestTimestamp = timestamp;
+      }
+    }
+
+    return latestTimestamp;
   }
 }

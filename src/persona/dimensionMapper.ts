@@ -1,4 +1,3 @@
-import { cosineSimilarity } from '../embeddings/embeddingService.js';
 import type { ConceptEmbeddings } from '../embeddings/dimensionConcepts.js';
 import { BehavioralSignal, SignalContradiction } from '../ingestion/types.js';
 
@@ -25,6 +24,25 @@ const DIMENSION_KEYS = [
   'decisionSpeed',
   'emotionalVolatility',
 ] as const;
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length === 0 || b.length === 0 || a.length !== b.length) {
+    return 0;
+  }
+
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dotProduct / denom;
+}
 
 export class DimensionMapper {
   private signals: BehavioralSignal[];

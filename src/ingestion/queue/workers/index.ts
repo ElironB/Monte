@@ -101,7 +101,7 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
            value: $value,
            confidence: $confidence,
            evidence: $evidence,
-           timestamp: datetime(),
+           timestamp: datetime($signalTimestamp),
            dimensions: $dimensions
          })
          CREATE (d)-[:HAS_SIGNAL]->(s)
@@ -113,6 +113,7 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
           value: signal.value,
           confidence: signal.confidence,
           evidence: signal.evidence,
+          signalTimestamp: signal.timestamp,
           dimensions: JSON.stringify(signal.dimensions),
         }
       );
