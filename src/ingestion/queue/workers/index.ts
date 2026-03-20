@@ -536,7 +536,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     const engine = new SimulationEngine(scenario, {
       useLLM: true,
       useChaos: true,
-      maxAnthropicCalls: 20,
+      maxLLMCalls: 20,
       logDecisions: false,
     });
     
@@ -617,20 +617,21 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       
       // Fetch all results for aggregation
       const allResults = await runQuery<{
+        cloneId: string;
         metrics: string;
         finalState: string;
         category: string;
         percentile: number;
       }>(
         `MATCH (s:Simulation {id: $simulationId})-[:HAS_RESULT]->(cr:CloneResult)
-         RETURN cr.metrics as metrics, cr.finalState as finalState,
+         RETURN cr.cloneId as cloneId, cr.metrics as metrics, cr.finalState as finalState,
                 cr.category as category, cr.percentile as percentile`,
         { simulationId }
       );
       
       // Convert to CloneResult format
       const aggregatedResults: CloneResult[] = allResults.map(r => ({
-        cloneId: 'aggregate',
+        cloneId: r.cloneId || 'unknown',
         parameters: {} as CloneParameters,
         stratification: {
           percentile: r.percentile || 50,

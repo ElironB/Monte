@@ -12,13 +12,20 @@ import {
   StratifiedBreakdown 
 } from './types.js';
 import { logger } from '../utils/logger.js';
+import { getInitialState } from './decisionGraph.js';
 
 export class ResultAggregator {
   private cloneResults: CloneResult[] = [];
   private scenarioId: string = '';
+  private initialCapital: number = 0;
 
   constructor(scenarioId: string) {
     this.scenarioId = scenarioId;
+    try {
+      this.initialCapital = getInitialState(scenarioId).capital;
+    } catch {
+      this.initialCapital = 0;
+    }
   }
 
   // Add a clone result
@@ -209,33 +216,42 @@ export class ResultAggregator {
     
     // Success criteria: good happiness, good capital, or key metric improved
     const happinessGood = finalState.happiness > 0.6;
-    const capitalGood = finalState.capital > 40000; // Context dependent
-    const healthGood = finalState.health > 0.7;
+    const capitalGood = this.initialCapital > 0
+      ? finalState.capital > this.initialCapital * 0.8
+      : finalState.capital > 0;
     
     // Check for outcome-specific success
-    const outcomeValue = String(metrics.outcome || '');
+    const outcomeValue = String(finalState.outcome || metrics.outcome || '');
     const outcomeSuccess = outcomeValue === 'success' || 
                           outcomeValue === 'career_trader' ||
                           outcomeValue === 'successful_transition' ||
                           outcomeValue === 'degree_roi_positive' ||
                           outcomeValue === 'relocation_success' ||
-                          outcomeValue === 'healthy_maintenance';
+                          outcomeValue === 'healthy_maintenance' ||
+                          outcomeValue === 'persistence_result' ||
+                          outcomeValue === 'strategic_retreat';
 
     // Failure criteria
     const happinessBad = finalState.happiness < 0.3;
-    const capitalBad = finalState.capital < 0;
-    const healthBad = finalState.health < 0.4;
+    const capitalBad = this.initialCapital > 0
+      ? finalState.capital < this.initialCapital * 0.2
+      : finalState.capital < 0;
     
     const outcomeFailure = outcomeValue === 'failure' ||
                           outcomeValue === 'shutdown' ||
                           outcomeValue === 'significant_loss' ||
                           outcomeValue === 'dropout' ||
-                          outcomeValue === 'bust';
+                          outcomeValue === 'bust' ||
+                          outcomeValue === 'abandoned';
+
+    const outcomeNeutral = outcomeValue === 'early_exit';
 
     if (outcomeSuccess || (happinessGood && capitalGood)) {
       return 'success';
     } else if (outcomeFailure || happinessBad || capitalBad) {
       return 'failure';
+    } else if (outcomeNeutral) {
+      return 'neutral';
     } else {
       return 'neutral';
     }
@@ -363,7 +379,7 @@ export class ResultAggregator {
     score += Math.min(30, Math.max(0, finalState.capital / 5000));
     
     // Outcome bonus
-    const outcomeScore = String(metrics.outcome || '');
+    const outcomeScore = String(finalState.outcome || metrics.outcome || '');
     if (outcomeScore === 'success' || 
         outcomeScore === 'career_trader' ||
         outcomeScore === 'successful_transition') {

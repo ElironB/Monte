@@ -37,21 +37,21 @@ interface WorldAgents {
 interface SimulationConfig {
   useLLM: boolean;
   useChaos: boolean;
-  maxAnthropicCalls: number;
+  maxLLMCalls: number;
   logDecisions: boolean;
 }
 
 export class SimulationEngine {
   private scenario: Scenario;
   private config: SimulationConfig;
-  private anthropicCallsUsed: number = 0;
+  private llmCallsUsed: number = 0;
 
   constructor(scenario: Scenario, config: Partial<SimulationConfig> = {}) {
     this.scenario = scenario;
     this.config = {
       useLLM: true,
       useChaos: true,
-      maxAnthropicCalls: 20,
+      maxLLMCalls: 20,
       logDecisions: false,
       ...config,
     };
@@ -183,7 +183,7 @@ export class SimulationEngine {
 
     if (requiresEvaluation && this.config.useLLM) {
       try {
-        const availableAnthropic = this.config.maxAnthropicCalls - this.anthropicCallsUsed;
+        const availableLLMCalls = this.config.maxLLMCalls - this.llmCallsUsed;
         
         const evaluation: LLMEvaluation = await forkEvaluator.evaluateFork(
           {
@@ -192,14 +192,14 @@ export class SimulationEngine {
             state: context.state,
             scenario: this.scenario,
           },
-          availableAnthropic
+          availableLLMCalls
         );
 
         chosenOptionId = evaluation.chosenOptionId;
         evaluatedByLLM = true;
 
         if (evaluation.complexity > 0.6) {
-          this.anthropicCallsUsed++;
+          this.llmCallsUsed++;
         }
 
         if (this.config.logDecisions) {
@@ -539,12 +539,12 @@ export class SimulationEngine {
 
   // Get LLM usage stats
   getLLMUsage(): {
-    anthropicCallsUsed: number;
-    maxAnthropicCalls: number;
+    llmCallsUsed: number;
+    maxLLMCalls: number;
   } {
     return {
-      anthropicCallsUsed: this.anthropicCallsUsed,
-      maxAnthropicCalls: this.config.maxAnthropicCalls,
+      llmCallsUsed: this.llmCallsUsed,
+      maxLLMCalls: this.config.maxLLMCalls,
     };
   }
 }
