@@ -1,48 +1,31 @@
+import { cosineSimilarity } from '../embeddings/embeddingService.js';
+import type { ConceptEmbeddings } from '../embeddings/dimensionConcepts.js';
 import { BehavioralSignal } from '../ingestion/types.js';
 
-// 6 core behavioral dimensions for persona modeling
 export interface BehavioralDimensions {
-  riskTolerance: number;        // 0-1 (conservative to risk-seeking)
-  timePreference: number;       // 0-1 (immediate to delayed gratification)
-  socialDependency: number;     // 0-1 (independent to group-oriented)
-  learningStyle: number;        // 0-1 (experiential to theoretical)
-  decisionSpeed: number;        // 0-1 (deliberative to impulsive)
-  emotionalVolatility: number;  // 0-1 (stable to reactive)
+  riskTolerance: number;
+  timePreference: number;
+  socialDependency: number;
+  learningStyle: number;
+  decisionSpeed: number;
+  emotionalVolatility: number;
 }
 
-// Dimension weights for scoring
-const DIMENSION_SCORING: Record<keyof BehavioralDimensions, { signals: string[]; weights: number[] }> = {
-  riskTolerance: {
-    signals: ['high_risk_tolerance', 'impulse_spending', 'financial_trading', 'yolo'],
-    weights: [1.0, 0.6, 0.7, 0.8],
-  },
-  timePreference: {
-    signals: ['goal_oriented', 'patient', 'urgent', 'impulse_spending'],
-    weights: [0.8, -0.7, 0.8, 0.7], // negative = delayed gratification
-  },
-  socialDependency: {
-    signals: ['high_social_engagement', 'social_pattern', 'independent'],
-    weights: [0.8, 0.6, -0.9],
-  },
-  learningStyle: {
-    signals: ['educational_content', 'learning_focused', 'experiential', 'deep_self_reflection'],
-    weights: [0.7, 0.8, -0.6, 0.5],
-  },
-  decisionSpeed: {
-    signals: ['decision_paralysis', 'impulse_spending', 'goal_oriented', 'patient'],
-    weights: [-0.9, 0.9, 0.4, -0.6],
-  },
-  emotionalVolatility: {
-    signals: ['anxiety', 'emotional_state', 'stable', 'high_risk_tolerance'],
-    weights: [0.9, 0.7, -0.8, 0.4],
-  },
-};
+const SIMILARITY_THRESHOLD = 0.25;
 
 export class DimensionMapper {
   private signals: BehavioralSignal[];
+  private conceptEmbeddings: ConceptEmbeddings | null;
+  private signalEmbeddings: Map<string, number[]>;
 
-  constructor(signals: BehavioralSignal[]) {
+  constructor(
+    signals: BehavioralSignal[],
+    conceptEmbeddings?: ConceptEmbeddings | null,
+    signalEmbeddings?: Map<string, number[]>
+  ) {
     this.signals = signals;
+    this.conceptEmbeddings = conceptEmbeddings ?? null;
+    this.signalEmbeddings = signalEmbeddings ?? new Map();
   }
 
   mapToDimensions(): BehavioralDimensions {
@@ -57,31 +40,48 @@ export class DimensionMapper {
   }
 
   private calculateDimension(dimension: keyof BehavioralDimensions): number {
-    const config = DIMENSION_SCORING[dimension];
+    if (this.conceptEmbeddings && this.conceptEmbeddings[dimension] && this.signalEmbeddings.size > 0) {
+      return this.calculateDimensionSemantic(dimension);
+    }
+    return 0.5;
+  }
+
+  private calculateDimensionSemantic(dimension: keyof BehavioralDimensions): number {
+    const concepts = this.conceptEmbeddings?.[dimension];
+    if (!concepts) {
+      return 0.5;
+    }
+
     let weightedSum = 0;
     let totalWeight = 0;
 
-    for (let i = 0; i < config.signals.length; i++) {
-      const signalPattern = config.signals[i];
-      const weight = config.weights[i];
-
-      // Find matching signals
-      const matchingSignals = this.signals.filter(s => 
-        s.value.toLowerCase().includes(signalPattern.toLowerCase()) ||
-        s.type.toLowerCase().includes(signalPattern.toLowerCase())
-      );
-
-      for (const signal of matchingSignals) {
-        const strength = this.getSignalStrength(signal);
-        const recencyBoost = this.getRecencyBoost(signal.timestamp);
-        weightedSum += strength * weight * recencyBoost;
-        totalWeight += Math.abs(weight) * recencyBoost;
+    for (const signal of this.signals) {
+      const embedding = this.signalEmbeddings.get(signal.id);
+      if (!embedding) {
+        continue;
       }
+
+      const simHigh = cosineSimilarity(embedding, concepts.high);
+      const simLow = cosineSimilarity(embedding, concepts.low);
+      const maxSim = Math.max(simHigh, simLow);
+
+      if (maxSim < SIMILARITY_THRESHOLD) {
+        continue;
+      }
+
+      const direction = simHigh - simLow;
+      const strength = this.getSignalStrength(signal);
+      const recency = this.getRecencyBoost(signal.timestamp);
+      const relevance = maxSim;
+
+      weightedSum += direction * strength * recency * relevance;
+      totalWeight += relevance * recency;
     }
 
-    // Normalize to 0-1 range with sigmoid-like curve
-    if (totalWeight === 0) return 0.5; // Neutral if no data
-    
+    if (totalWeight === 0) {
+      return 0.5;
+    }
+
     const rawScore = weightedSum / totalWeight;
     return this.sigmoidNormalize(rawScore);
   }
@@ -91,7 +91,7 @@ export class DimensionMapper {
     const frequencyBoost = (signal.dimensions.frequency || 0) * 0.3;
     const recurrenceBoost = (signal.dimensions.recurrence || 0) * 0.2;
     const trendBoost = signal.dimensions.intensityTrend === 'increasing' ? 0.1 :
-                       signal.dimensions.intensityTrend === 'decreasing' ? -0.1 : 0;
+      signal.dimensions.intensityTrend === 'decreasing' ? -0.1 : 0;
     return Math.min(1, base + frequencyBoost + recurrenceBoost + trendBoost);
   }
 
@@ -99,14 +99,11 @@ export class DimensionMapper {
     const signalDate = new Date(timestamp);
     const now = new Date();
     const daysDiff = (now.getTime() - signalDate.getTime()) / (1000 * 60 * 60 * 24);
-    
-    // Exponential decay: 1.0 for today, 0.5 after 90 days
     return Math.max(0.3, Math.exp(-daysDiff / 60));
   }
 
   private sigmoidNormalize(x: number): number {
-    // Map -1 to 1 range to 0 to 1 with curve
-    const scaled = (x + 1) / 2; // -1..1 -> 0..1
+    const scaled = (x + 1) / 2;
     return Math.max(0, Math.min(1, scaled));
   }
 }

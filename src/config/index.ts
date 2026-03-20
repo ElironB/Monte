@@ -39,6 +39,33 @@ function resolveLLMConfig() {
   };
 }
 
+function resolveEmbeddingConfig() {
+  if (process.env.EMBEDDING_API_KEY) {
+    return {
+      apiKey: process.env.EMBEDDING_API_KEY,
+      baseUrl: process.env.EMBEDDING_BASE_URL || 'https://openrouter.ai/api/v1',
+      model: process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small',
+      dimensions: 1536,
+    };
+  }
+
+  if (process.env.OPENROUTER_API_KEY) {
+    return {
+      apiKey: process.env.OPENROUTER_API_KEY,
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small',
+      dimensions: 1536,
+    };
+  }
+
+  return {
+    apiKey: undefined,
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openai/text-embedding-3-small',
+    dimensions: 1536,
+  };
+}
+
 const configSchema = z.object({
   neo4j: z.object({
     uri: z.string().default('bolt://localhost:7687'),
@@ -67,6 +94,12 @@ const configSchema = z.object({
     model: z.string().default('openai/gpt-oss-20b'),
     reasoningModel: z.string().default('openai/gpt-oss-120b'),
   }),
+  embedding: z.object({
+    apiKey: z.string().optional(),
+    baseUrl: z.string().url().default('https://openrouter.ai/api/v1'),
+    model: z.string().default('openai/text-embedding-3-small'),
+    dimensions: z.number().default(1536),
+  }).optional(),
   composio: z.object({
     apiKey: z.string().optional(),
   }).optional(),
@@ -100,6 +133,7 @@ export const config = configSchema.parse({
     logLevel: process.env.LOG_LEVEL,
   },
   llm: resolveLLMConfig(),
+  embedding: resolveEmbeddingConfig(),
   composio: {
     apiKey: process.env.COMPOSIO_API_KEY,
   },

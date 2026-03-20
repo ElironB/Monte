@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BehavioralSignal } from '../src/ingestion/types.js';
+import type { ConceptEmbeddings } from '../src/embeddings/dimensionConcepts.js';
 
 const { runQuerySingleMock, runWriteSingleMock } = vi.hoisted(() => ({
   runQuerySingleMock: vi.fn(),
@@ -35,6 +36,15 @@ function makeSignal(value: string, type: BehavioralSignal['type'], confidence: n
   };
 }
 
+const conceptEmbeddings: ConceptEmbeddings = {
+  riskTolerance: { high: [1, 0], low: [-1, 0] },
+  timePreference: { high: [0.9, 0.1], low: [-0.9, -0.1] },
+  socialDependency: { high: [0.7, 0.7], low: [-0.7, -0.7] },
+  learningStyle: { high: [0, 1], low: [0, -1] },
+  decisionSpeed: { high: [0.8, 0.2], low: [-0.8, -0.2] },
+  emotionalVolatility: { high: [0.6, 0.8], low: [-0.6, -0.8] },
+};
+
 describe('BayesianUpdater', () => {
   beforeEach(() => {
     runQuerySingleMock.mockReset();
@@ -42,16 +52,18 @@ describe('BayesianUpdater', () => {
     runWriteSingleMock.mockResolvedValue({ id: 'trait-1' });
   });
 
-  it('raises confidence for corroborating evidence', async () => {
+  it('raises confidence for corroborating semantic evidence', async () => {
     runQuerySingleMock.mockImplementation(async (_query: string, params: { dimName: string }) => ({
       value: params.dimName === 'riskTolerance' ? 0.82 : 0.5,
       confidence: params.dimName === 'riskTolerance' ? 0.7 : 0.6,
       evidenceCount: 2,
     }));
 
-    const updater = new BayesianUpdater('user-1', 'persona-1');
+    const signal = makeSignal('speculative conviction', 'cognitive_trait');
+    const signalEmbeddings = new Map([[signal.id, [1, 0]]]);
+    const updater = new BayesianUpdater('user-1', 'persona-1', conceptEmbeddings, signalEmbeddings);
     const result = await updater.update(
-      [makeSignal('high_risk_tolerance', 'cognitive_trait')],
+      [signal],
       {
         riskTolerance: 0.85,
         timePreference: 0.5,
@@ -79,16 +91,18 @@ describe('BayesianUpdater', () => {
     );
   });
 
-  it('flags low confidence after repeated contradicting evidence', async () => {
+  it('flags low confidence after repeated contradicting semantic evidence', async () => {
     runQuerySingleMock.mockImplementation(async (_query: string, params: { dimName: string }) => ({
       value: params.dimName === 'riskTolerance' ? 0.8 : 0.5,
       confidence: params.dimName === 'riskTolerance' ? 0.1 : 0.6,
       evidenceCount: 2,
     }));
 
-    const updater = new BayesianUpdater('user-1', 'persona-1');
+    const signal = makeSignal('cautious capital preservation', 'cognitive_trait', 1);
+    const signalEmbeddings = new Map([[signal.id, [1, 0]]]);
+    const updater = new BayesianUpdater('user-1', 'persona-1', conceptEmbeddings, signalEmbeddings);
     const result = await updater.update(
-      [makeSignal('high_risk_tolerance', 'cognitive_trait', 1)],
+      [signal],
       {
         riskTolerance: 0.1,
         timePreference: 0.5,

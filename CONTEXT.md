@@ -59,15 +59,14 @@ The CLI is already structured for both — `monte config set-api` switches betwe
                      ↓
 ┌─────────────────────────────────────────────────────────┐
 │ 2. SIGNAL EXTRACTION + CONTRADICTION DETECTION           │
-│ 5 Extractors (regex/pattern) → BehavioralSignal[]       │
-│ ContradictionDetector → stated vs revealed conflicts    │
+│ 5 Extractors + semantic extractor → BehavioralSignal[]  │
+│ ContradictionDetector → contradiction graph             │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
 │ 3. PERSONA CONSTRUCTION (GraphRAG → Neo4j)               │
-│ DimensionMapper → 6 dimensions → GraphBuilder            │
-│ PersonaCompressor → Master Persona                      │
-│ CloneGenerator → 1,000 stratified clones                │
+│ Signal embeddings + cosine similarity → 6 dimensions    │
+│ GraphBuilder → Master Persona → 1,000 stratified clones │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -251,6 +250,19 @@ GROQ_API_KEY=gsk_...
 - Update history tracked on Trait nodes for auditability
 - Low confidence flagging when posterior < 0.2 after 3+ evidence updates
 - Clone regeneration happens after every update (traits change → clones must reflect them)
+
+
+### 13. Embedding-based signal semantics
+
+**Why**: Keyword matching missed semantically equivalent signals whenever the vocabulary shifted.
+
+**What changed**:
+- New `src/embeddings/embeddingService.ts` wraps OpenAI-compatible embeddings with Redis caching
+- New `src/embeddings/dimensionConcepts.ts` stores rich high/low pole descriptions for each behavioral dimension
+- During ingestion, each `Signal` is embedded and stored on the Neo4j node as `s.embedding`
+- `DimensionMapper` and `BayesianUpdater` now compare signal vectors to dimension concept vectors with cosine similarity
+- Neo4j creates a native `signal_embedding` vector index on `Signal.embedding`
+- OpenRouter is the default embeddings provider; Groq-only LLM setups must also supply `OPENROUTER_API_KEY` or `EMBEDDING_API_KEY`
 
 ---
 
@@ -462,10 +474,13 @@ Users can optionally connect live platforms via `monte connect`. Uses Composio C
 ### 8. Signal Extraction is Quantitative
 Extractors parse structured data (JSON entries, CSV rows) to count frequencies, detect temporal patterns, and track trends. Not just "does keyword X exist" — measures "how often, when, and is it increasing." Shared `temporalUtils.ts` module provides `analyzeTemporalPatterns()`, `calculateRecurrence()`, `detectTrend()` across all 5 extractors.
 
-### 9. Output is Natural Language
+### 9. Persona mapping is embedding-based
+Signals are embedded with `openai/text-embedding-3-small`, stored on Neo4j `Signal` nodes, and compared against rich dimension concept embeddings with cosine similarity. No keyword fallback in `DimensionMapper` or `BayesianUpdater`; if embeddings are unavailable, persona builds should fail fast with a clear configuration error.
+
+### 10. Output is Natural Language
 Simulation results are interpreted by `NarrativeGenerator` into 6-section narrative analysis. Users get "your impulsive spending patterns suggest..." not just "success: 34.2%". Works with any OpenAI-compatible LLM, falls back to rich templates when no key is set.
 
-### 10. Synthetic Personas for Testing
+### 11. Synthetic Personas for Testing
 `monte generate` creates realistic behavioral data from a text description. No real data needed to demo or test. Generated files match exact ingestion formats.
 
 ---
@@ -483,13 +498,18 @@ MINIO_PORT=9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 
-# LLM (required — pick one provider)
-OPENROUTER_API_KEY=             # OpenRouter (recommended, one key)
+# LLM (required)
+OPENROUTER_API_KEY=             # Recommended: one key for LLM + embeddings
 # OR
-GROQ_API_KEY=                   # Groq fast inference
+GROQ_API_KEY=                   # Groq fast inference for chat completions only
 # Optional overrides:
 LLM_MODEL=openai/gpt-oss-20b   # Default standard model
 LLM_REASONING_MODEL=openai/gpt-oss-120b  # Default reasoning model
+
+# Embeddings (required unless OPENROUTER_API_KEY is set)
+# EMBEDDING_API_KEY=
+# EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+# EMBEDDING_MODEL=openai/text-embedding-3-small
 
 # Optional
 COMPOSIO_API_KEY=               # Enables `monte connect` OAuth platform integrations via Composio
@@ -559,7 +579,7 @@ monte config dir                  # Show config directory
 ```bash
 cd /home/Monte
 cp .env.example .env
-# Edit .env — set NEO4J_PASSWORD and either OPENROUTER_API_KEY or GROQ_API_KEY
+# Edit .env — set NEO4J_PASSWORD and OPENROUTER_API_KEY, or use GROQ_API_KEY plus EMBEDDING_API_KEY for Groq-only setups
 docker-compose up -d neo4j redis minio
 npm install
 npm run dev

@@ -23,6 +23,8 @@ const INDEXES = [
   'CREATE INDEX trait_name IF NOT EXISTS FOR (t:Trait) ON (t.name)',
 ];
 
+const VECTOR_INDEX = "CREATE VECTOR INDEX signal_embedding IF NOT EXISTS FOR (s:Signal) ON (s.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}";
+
 export async function initializeSchema(): Promise<void> {
   logger.info('Initializing Neo4j schema...');
 
@@ -36,7 +38,6 @@ export async function initializeSchema(): Promise<void> {
     }
   }
 
-  // Create indexes
   for (const index of INDEXES) {
     try {
       await runWrite(index);
@@ -44,6 +45,19 @@ export async function initializeSchema(): Promise<void> {
     } catch (err) {
       logger.debug({ index: index.split(' ')[2] }, 'Index creation skipped');
     }
+  }
+
+  try {
+    const driver = await getNeo4jDriver();
+    const session = driver.session();
+    try {
+      await session.run(VECTOR_INDEX);
+      logger.debug({ index: 'signal_embedding' }, 'Vector index created');
+    } finally {
+      await session.close();
+    }
+  } catch (err) {
+    logger.warn({ err, index: 'signal_embedding' }, 'Vector index creation skipped');
   }
 
   logger.info('Neo4j schema ready');
