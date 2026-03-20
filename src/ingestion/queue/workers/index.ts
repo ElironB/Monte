@@ -27,6 +27,7 @@ import { SimulationEngine } from '../../../simulation/engine.js';
 import { createAggregator } from '../../../simulation/resultAggregator.js';
 import { CloneResult } from '../../../simulation/types.js';
 import { calculateKelly } from '../../../simulation/kellyCalculator.js';
+import { RateLimiter, createConcurrencyLimiter, detectProviderRPM } from '../../../utils/rateLimiter.js';
 
 const extractors = [
   new SearchHistoryExtractor(),
@@ -613,30 +614,52 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       cloneCount: clones.length,
       scenario: scenarioType 
     }, 'Running simulation batch');
-    
-    // Create simulation engine
+
+    const configuredRPM = Number.parseInt(process.env.LLM_RPM_LIMIT || '', 10);
+    const rpm = configuredRPM > 0 ? configuredRPM : detectProviderRPM();
+    const configuredConcurrency = Number.parseInt(process.env.SIMULATION_CONCURRENCY || '', 10);
+    const concurrency = configuredConcurrency > 0 ? configuredConcurrency : 10;
+    const rateLimiter = new RateLimiter(rpm);
+
     const engine = new SimulationEngine(scenario, {
       useLLM: true,
       useChaos: true,
       maxLLMCalls: 20,
       logDecisions: false,
+      rateLimiter,
     });
-    
-    // Execute clones
+
     const results: CloneResult[] = [];
-    for (const clone of clones) {
-      try {
-        const result = await engine.executeClone(
-          clone.cloneId,
-          clone.parameters,
-          clone.stratification
-        );
-        results.push(result);
-      } catch (err) {
-        logger.error({ err, cloneId: clone.cloneId }, 'Clone simulation failed');
-        // Continue with other clones
-      }
-    }
+    const limit = createConcurrencyLimiter(concurrency);
+    const batchStart = Date.now();
+
+    await Promise.all(
+      clones.map((clone) =>
+        limit(async () => {
+          try {
+            const result = await engine.executeClone(
+              clone.cloneId,
+              clone.parameters,
+              clone.stratification
+            );
+            results.push(result);
+          } catch (err) {
+            logger.error({ err, cloneId: clone.cloneId }, 'Clone simulation failed');
+          }
+        })
+      )
+    );
+
+    const batchDuration = Date.now() - batchStart;
+    logger.info({
+      simulationId,
+      batchIndex: cloneBatchIndex,
+      cloneCount: clones.length,
+      durationMs: batchDuration,
+      avgPerClone: clones.length > 0 ? Math.round(batchDuration / clones.length) : 0,
+      concurrency,
+      rpm,
+    }, 'Simulation batch complete');
     
     // Store clone results in Neo4j
     for (const result of results) {

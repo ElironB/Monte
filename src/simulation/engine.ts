@@ -19,13 +19,14 @@ import {
   applyEffects, 
   categorizeOutcome,
 } from './decisionGraph.js';
-import { forkEvaluator } from './forkEvaluator.js';
+import { createForkEvaluator, type ForkEvaluator } from './forkEvaluator.js';
 import { chaosInjector, createChaosInjector } from './chaosInjector.js';
 import { FinancialWorldAgent } from './worldAgents/financial.js';
 import { CareerWorldAgent } from './worldAgents/career.js';
 import { EducationWorldAgent } from './worldAgents/education.js';
 import { SocialWorldAgent } from './worldAgents/social.js';
 import { logger } from '../utils/logger.js';
+import { type RateLimiter } from '../utils/rateLimiter.js';
 
 interface WorldAgents {
   financial: FinancialWorldAgent;
@@ -39,12 +40,14 @@ interface SimulationConfig {
   useChaos: boolean;
   maxLLMCalls: number;
   logDecisions: boolean;
+  rateLimiter?: RateLimiter;
 }
 
 export class SimulationEngine {
   private scenario: Scenario;
   private config: SimulationConfig;
   private llmCallsUsed: number = 0;
+  private evaluator: ForkEvaluator;
 
   constructor(scenario: Scenario, config: Partial<SimulationConfig> = {}) {
     this.scenario = scenario;
@@ -55,6 +58,7 @@ export class SimulationEngine {
       logDecisions: false,
       ...config,
     };
+    this.evaluator = createForkEvaluator({ rateLimiter: this.config.rateLimiter ?? null });
   }
 
   // Execute a single clone through the simulation
@@ -185,7 +189,7 @@ export class SimulationEngine {
       try {
         const availableLLMCalls = this.config.maxLLMCalls - this.llmCallsUsed;
         
-        const evaluation: LLMEvaluation = await forkEvaluator.evaluateFork(
+        const evaluation: LLMEvaluation = await this.evaluator.evaluateFork(
           {
             cloneParams: context.parameters,
             decisionNode: node,

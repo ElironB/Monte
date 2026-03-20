@@ -11,6 +11,7 @@ import { getScenario } from './decisionGraph.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
 import { EmbeddingService, cosineSimilarity } from '../embeddings/embeddingService.js';
+import { type RateLimiter } from '../utils/rateLimiter.js';
 
 interface LLMUsage {
   standardCalls: number;
@@ -47,12 +48,17 @@ const HEURISTIC_CONCEPT_TEXTS: Record<keyof HeuristicConceptEmbeddings, string> 
   exitPreservation: 'quit, stop, exit, retreat, preserve resources, reduce exposure and protect capital',
 };
 
+interface ForkEvaluatorOptions {
+  rateLimiter?: RateLimiter | null;
+}
+
 export class ForkEvaluator {
   private static heuristicConceptEmbeddings: HeuristicConceptEmbeddings | null = null;
 
   private client: OpenAI | null = null;
   private model: string;
   private reasoningModel: string | null;
+  private rateLimiter: RateLimiter | null;
   private usage: LLMUsage = {
     standardCalls: 0,
     reasoningCalls: 0,
@@ -63,7 +69,9 @@ export class ForkEvaluator {
   private readonly MAX_REASONING_CALLS = 20;
   private readonly COMPLEXITY_THRESHOLD = 0.6;
 
-  constructor() {
+  constructor(options: ForkEvaluatorOptions = {}) {
+    this.rateLimiter = options.rateLimiter ?? null;
+
     if (config.llm?.apiKey) {
       this.client = new OpenAI({
         apiKey: config.llm.apiKey,
@@ -94,6 +102,10 @@ export class ForkEvaluator {
       logger.error({ error, scenario: scenario.id }, 'LLM evaluation failed, using heuristic fallback');
       return await this.heuristicEvaluation(request, complexity);
     }
+  }
+
+  setRateLimiter(rateLimiter: RateLimiter | null): void {
+    this.rateLimiter = rateLimiter;
   }
 
   calculateComplexity(
@@ -146,21 +158,27 @@ export class ForkEvaluator {
 
     const startTime = Date.now();
 
-    const completion = await this.client.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a behavioral simulation engine. Given a persona with specific behavioral traits and a decision context, determine which option they would choose. Respond ONLY with JSON.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      model,
-      temperature: 0.4 + (complexity * 0.3),
-      max_tokens: useReasoning ? 200 : 150,
-      response_format: { type: 'json_object' },
+    const completion = await this.callWithRetry(async () => {
+      if (this.rateLimiter) {
+        await this.rateLimiter.acquire();
+      }
+
+      return this.client!.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a behavioral simulation engine. Given a persona with specific behavioral traits and a decision context, determine which option they would choose. Respond ONLY with JSON.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        model,
+        temperature: 0.4 + (complexity * 0.3),
+        max_tokens: useReasoning ? 200 : 150,
+        response_format: { type: 'json_object' },
+      });
     });
 
     const duration = Date.now() - startTime;
@@ -179,6 +197,95 @@ export class ForkEvaluator {
       request.decisionNode,
       complexity
     );
+  }
+
+  private async callWithRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        if (!this.isRateLimitError(error) || attempt >= maxRetries) {
+          throw error;
+        }
+
+        const delayMs = this.getRetryDelayMs(error, attempt);
+        logger.warn({ attempt: attempt + 1, delayMs }, 'LLM rate limited, retrying');
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    throw new Error('Max retries exceeded');
+  }
+
+  private isRateLimitError(error: unknown): boolean {
+    if (typeof error !== 'object' || error === null) {
+      return false;
+    }
+
+    const candidate = error as {
+      status?: number;
+      code?: string;
+      response?: { status?: number };
+    };
+
+    return candidate.status === 429 || candidate.response?.status === 429 || candidate.code === 'rate_limit_exceeded';
+  }
+
+  private getRetryDelayMs(error: unknown, attempt: number): number {
+    const retryAfterMs = this.parseRetryAfterMs(error);
+    const baseDelayMs = retryAfterMs ?? Math.pow(2, attempt) * 1000;
+    const jitterMultiplier = 0.8 + (Math.random() * 0.4);
+
+    return Math.max(100, Math.round(baseDelayMs * jitterMultiplier));
+  }
+
+  private parseRetryAfterMs(error: unknown): number | null {
+    if (typeof error !== 'object' || error === null) {
+      return null;
+    }
+
+    const candidate = error as {
+      headers?: Record<string, string | undefined> | Headers;
+      response?: {
+        headers?: Record<string, string | undefined> | Headers;
+      };
+    };
+
+    const headerValue =
+      this.readRetryAfterHeader(candidate.headers) ??
+      this.readRetryAfterHeader(candidate.response?.headers);
+
+    if (!headerValue) {
+      return null;
+    }
+
+    const seconds = Number.parseFloat(headerValue);
+    if (Number.isFinite(seconds)) {
+      return Math.max(0, seconds * 1000);
+    }
+
+    const dateMs = Date.parse(headerValue);
+    if (Number.isNaN(dateMs)) {
+      return null;
+    }
+
+    return Math.max(0, dateMs - Date.now());
+  }
+
+  private readRetryAfterHeader(
+    headers: Record<string, string | undefined> | Headers | undefined
+  ): string | null {
+    if (!headers) {
+      return null;
+    }
+
+    if (typeof (headers as Headers).get === 'function') {
+      return (headers as Headers).get('retry-after');
+    }
+
+    const headerMap = headers as Record<string, string | undefined>;
+    const value = headerMap['retry-after'] ?? headerMap['Retry-After'];
+    return value ?? null;
   }
 
   private buildPrompt(request: ForkEvaluationRequest): string {
@@ -502,8 +609,8 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
 
 export const forkEvaluator = new ForkEvaluator();
 
-export function createForkEvaluator(): ForkEvaluator {
-  return new ForkEvaluator();
+export function createForkEvaluator(options: ForkEvaluatorOptions = {}): ForkEvaluator {
+  return new ForkEvaluator(options);
 }
 
 export async function evaluateDecision(
