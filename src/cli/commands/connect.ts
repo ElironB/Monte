@@ -109,8 +109,17 @@ async function listActiveConnections(
 export const connectCommands = new Command('connect')
   .description(chalk.dim('Connect data platforms via Composio'));
 
+function showWipBanner(): void {
+  console.log();
+  console.log(chalk.yellow.bold('⚠  Composio integration is a work in progress'));
+  console.log(dimText('   Platform connections may be unstable. Follow the repo for updates:'));
+  console.log(dimText('   https://github.com/ElironB/Monte'));
+  console.log();
+}
+
 connectCommands
   .action(async () => {
+    showWipBanner();
     requireComposioKey();
 
     let binary: string;
@@ -167,6 +176,7 @@ connectCommands
   .command('confirm')
   .description(chalk.dim('Verify all pending connections are active'))
   .action(async () => {
+    showWipBanner();
     requireComposioKey();
 
     let binary: string;
@@ -215,6 +225,7 @@ connectCommands
   .command('status')
   .description(chalk.dim('Show connected platforms'))
   .action(async () => {
+    showWipBanner();
     requireComposioKey();
 
     let binary: string;
