@@ -2,8 +2,9 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { mkdirSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
-import { SyntheticGenerator, GeneratedPersona } from '../../persona/syntheticGenerator.js';
 import { dimText, icons, infoLabel, sectionHeader, valueText } from '../styles.js';
+
+import type { GeneratedPersona } from '../../persona/syntheticGenerator.js';
 
 function stepLine(label: string): string {
   return `${infoLabel(label)} ${dimText('...')}`;
@@ -41,6 +42,7 @@ export const generateCommands = new Command('generate')
     console.log(stepLine('Generating notes'));
     console.log();
 
+    const { SyntheticGenerator } = await import('../../persona/syntheticGenerator.js');
     const generator = new SyntheticGenerator();
 
     let persona: GeneratedPersona;

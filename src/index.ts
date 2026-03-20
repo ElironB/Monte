@@ -4,6 +4,7 @@ import helmet from '@fastify/helmet';
 
 import { config } from './config/index.js';
 import { initializeSchema } from './config/neo4j-schema.js';
+import { validateStartupConfig } from './config/validator.js';
 import { closeNeo4j, runWriteSingle } from './config/neo4j.js';
 import { closeRedis } from './config/redis.js';
 import { initializeTracing, shutdownTracing } from './config/tracing.js';
@@ -73,6 +74,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 async function start() {
   try {
     await initializeSchema();
+    await validateStartupConfig();
 
     // Ensure local user exists for self-hosted mode
     const LOCAL_USER_ID = 'local-user';
