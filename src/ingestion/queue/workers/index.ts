@@ -19,7 +19,7 @@ import { CloneGenerator, CloneParameters } from '../../../persona/cloneGenerator
 import { BayesianUpdater } from '../../../persona/bayesianUpdater.js';
 import { EmbeddingService } from '../../../embeddings/embeddingService.js';
 import { getDimensionConceptEmbeddings } from '../../../embeddings/dimensionConcepts.js';
-import { BehavioralSignal } from '../../types.js';
+import { BehavioralSignal, SignalContradiction } from '../../types.js';
 
 // Phase 4: Simulation Engine imports
 import { getScenario } from '../../../simulation/decisionGraph.js';
@@ -144,7 +144,14 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
     }
     
     if (allSignals.length > 0) {
-      const detector = new ContradictionDetector(allSignals, signalEmbeddings);
+      let dimensionConceptEmbs = null;
+      try {
+        dimensionConceptEmbs = await getDimensionConceptEmbeddings();
+      } catch {
+        dimensionConceptEmbs = null;
+      }
+
+      const detector = new ContradictionDetector(allSignals, signalEmbeddings, dimensionConceptEmbs);
       const contradictions = await detector.detect();
       
       for (const contradiction of contradictions) {
@@ -154,6 +161,8 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
             type: $type,
             description: $description,
             severity: $severity,
+            magnitude: $magnitude,
+            affectedDimensions: $affectedDimensions,
             createdAt: datetime()
           })
           WITH c
@@ -165,6 +174,8 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
             type: contradiction.type,
             description: contradiction.description,
             severity: contradiction.severity,
+            magnitude: contradiction.magnitude,
+            affectedDimensions: JSON.stringify(contradiction.affectedDimensions),
             signalAId: contradiction.signalAId,
             signalBId: contradiction.signalBId,
           }
@@ -234,10 +245,14 @@ async function processFullBuild(userId: string, personaId: string): Promise<void
   const signalIds = signals.map(signal => signal.id);
   const signalEmbeddings = await fetchSignalEmbeddings(signalIds);
   const conceptEmbeddings = await getDimensionConceptEmbeddings();
+  const contradictions = await fetchContradictions(userId);
 
-  logger.info({ personaId, signalCount: signals.length }, 'Building persona from all signals');
+  logger.info(
+    { personaId, signalCount: signals.length, contradictionCount: contradictions.length },
+    'Building persona from all signals'
+  );
 
-  const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings);
+  const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings, contradictions);
   const dimensions = mapper.mapToDimensions();
 
   const graphBuilder = new GraphBuilder(userId, personaId);
@@ -269,7 +284,8 @@ async function processIncrementalUpdate(
   if (newSignals.length > 0) {
     const signalEmbeddings = await fetchSignalEmbeddings(newSignals.map(signal => signal.id));
     const conceptEmbeddings = await getDimensionConceptEmbeddings();
-    const mapper = new DimensionMapper(newSignals, conceptEmbeddings, signalEmbeddings);
+    const contradictions = await fetchContradictions(userId);
+    const mapper = new DimensionMapper(newSignals, conceptEmbeddings, signalEmbeddings, contradictions);
     const newDimensions = mapper.mapToDimensions();
     const updater = new BayesianUpdater(userId, personaId, conceptEmbeddings, signalEmbeddings);
     const updateResult = await updater.update(newSignals, newDimensions);
@@ -356,6 +372,50 @@ async function fetchSignalEmbeddings(signalIds: string[]): Promise<Map<string, n
   }
 
   return map;
+}
+
+async function fetchContradictions(userId: string): Promise<SignalContradiction[]> {
+  const records = await runQuery<{
+    id: string;
+    type: string;
+    description: string;
+    severity: string;
+    magnitude: number | null;
+    affectedDimensions: string | null;
+    signalAId: string;
+    signalBId: string;
+  }>(
+    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_SIGNAL]->(s1:Signal)-[:CONTRADICTS]->(c:Contradiction)<-[:CONTRADICTS]-(s2:Signal)
+     WHERE s1.id < s2.id
+     RETURN DISTINCT c.id as id,
+            c.type as type,
+            c.description as description,
+            c.severity as severity,
+            c.magnitude as magnitude,
+            c.affectedDimensions as affectedDimensions,
+            s1.id as signalAId,
+            s2.id as signalBId`,
+    { userId }
+  );
+
+  return records.map(record => ({
+    id: record.id,
+    signalAId: record.signalAId,
+    signalBId: record.signalBId,
+    type: record.type as SignalContradiction['type'],
+    description: record.description,
+    severity: record.severity as SignalContradiction['severity'],
+    magnitude: typeof record.magnitude === 'number'
+      ? Math.max(0, Math.min(1, record.magnitude))
+      : record.severity === 'high'
+        ? 0.8
+        : record.severity === 'medium'
+          ? 0.5
+          : 0.3,
+    affectedDimensions: record.affectedDimensions
+      ? JSON.parse(record.affectedDimensions) as string[]
+      : [],
+  }));
 }
 
 function ensureEmbeddingsConfigured(): void {

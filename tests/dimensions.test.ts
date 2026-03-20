@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { DimensionMapper } from '../src/persona/dimensionMapper.js';
 import type { ConceptEmbeddings } from '../src/embeddings/dimensionConcepts.js';
-import { BehavioralSignal } from '../src/ingestion/types.js';
+import { BehavioralSignal, SignalContradiction } from '../src/ingestion/types.js';
 
 function makeSignal(value: string, type: string = 'cognitive_trait', confidence: number = 0.8): BehavioralSignal {
   return {
@@ -98,5 +98,81 @@ describe('DimensionMapper', () => {
       expect(val).toBeGreaterThanOrEqual(0);
       expect(val).toBeLessThanOrEqual(1);
     }
+  });
+
+  describe('with contradictions', () => {
+    it('pulls a contradicted dimension toward 0.5', () => {
+      const signals = [makeSignal('speculative investing appetite')];
+      const signalEmbeddings = new Map([[signals[0].id, [1, 0]]]);
+
+      const mapperClean = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings, []);
+      const dimsClean = mapperClean.mapToDimensions();
+
+      const contradictions: SignalContradiction[] = [{
+        id: 'c1',
+        signalAId: 'stated-risk-aversion',
+        signalBId: signals[0].id,
+        type: 'stated_vs_revealed',
+        description: 'test',
+        severity: 'high',
+        magnitude: 0.8,
+        affectedDimensions: ['riskTolerance'],
+      }];
+
+      const mapperContra = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings, contradictions);
+      const dimsContra = mapperContra.mapToDimensions();
+
+      expect(Math.abs(dimsContra.riskTolerance - 0.5)).toBeLessThan(
+        Math.abs(dimsClean.riskTolerance - 0.5)
+      );
+    });
+
+    it('contradiction on one dimension does not affect other dimensions', () => {
+      const signals = [makeSignal('speculative investing appetite')];
+      const signalEmbeddings = new Map([[signals[0].id, [1, 0]]]);
+
+      const contradictions: SignalContradiction[] = [{
+        id: 'c1',
+        signalAId: 'other',
+        signalBId: signals[0].id,
+        type: 'cross_domain',
+        description: 'test',
+        severity: 'high',
+        magnitude: 0.9,
+        affectedDimensions: ['riskTolerance'],
+      }];
+
+      const mapperClean = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings, []);
+      const mapperContra = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings, contradictions);
+
+      expect(mapperContra.mapToDimensions().learningStyle).toBe(mapperClean.mapToDimensions().learningStyle);
+    });
+
+    it('returns contradiction penalties alongside dimensions', () => {
+      const signals = [makeSignal('speculative investing appetite')];
+      const signalEmbeddings = new Map([[signals[0].id, [1, 0]]]);
+      const contradictions: SignalContradiction[] = [{
+        id: 'c1',
+        signalAId: 'other',
+        signalBId: signals[0].id,
+        type: 'cross_domain',
+        description: 'test',
+        severity: 'medium',
+        magnitude: 0.6,
+        affectedDimensions: ['riskTolerance'],
+      }];
+
+      const result = new DimensionMapper(
+        signals,
+        conceptEmbeddings,
+        signalEmbeddings,
+        contradictions
+      ).mapToDimensionsWithContradictions();
+
+      expect(result.contradictionPenalties.riskTolerance).toBeGreaterThan(0);
+      expect(result.contradictionPenalties.learningStyle).toBe(0);
+      expect(result.dimensions.riskTolerance).toBeGreaterThanOrEqual(0);
+      expect(result.dimensions.riskTolerance).toBeLessThanOrEqual(1);
+    });
   });
 });

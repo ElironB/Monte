@@ -1,6 +1,6 @@
 import { cosineSimilarity } from '../embeddings/embeddingService.js';
 import type { ConceptEmbeddings } from '../embeddings/dimensionConcepts.js';
-import { BehavioralSignal } from '../ingestion/types.js';
+import { BehavioralSignal, SignalContradiction } from '../ingestion/types.js';
 
 export interface BehavioralDimensions {
   riskTolerance: number;
@@ -11,49 +11,81 @@ export interface BehavioralDimensions {
   emotionalVolatility: number;
 }
 
+export interface DimensionMapResult {
+  dimensions: BehavioralDimensions;
+  contradictionPenalties: Record<keyof BehavioralDimensions, number>;
+}
+
 const SIMILARITY_THRESHOLD = 0.25;
+const DIMENSION_KEYS = [
+  'riskTolerance',
+  'timePreference',
+  'socialDependency',
+  'learningStyle',
+  'decisionSpeed',
+  'emotionalVolatility',
+] as const;
 
 export class DimensionMapper {
   private signals: BehavioralSignal[];
   private conceptEmbeddings: ConceptEmbeddings | null;
   private signalEmbeddings: Map<string, number[]>;
+  private contradictions: SignalContradiction[];
 
   constructor(
     signals: BehavioralSignal[],
     conceptEmbeddings?: ConceptEmbeddings | null,
-    signalEmbeddings?: Map<string, number[]>
+    signalEmbeddings?: Map<string, number[]>,
+    contradictions?: SignalContradiction[]
   ) {
     this.signals = signals;
     this.conceptEmbeddings = conceptEmbeddings ?? null;
     this.signalEmbeddings = signalEmbeddings ?? new Map();
+    this.contradictions = contradictions ?? [];
   }
 
   mapToDimensions(): BehavioralDimensions {
-    return {
-      riskTolerance: this.calculateDimension('riskTolerance'),
-      timePreference: this.calculateDimension('timePreference'),
-      socialDependency: this.calculateDimension('socialDependency'),
-      learningStyle: this.calculateDimension('learningStyle'),
-      decisionSpeed: this.calculateDimension('decisionSpeed'),
-      emotionalVolatility: this.calculateDimension('emotionalVolatility'),
-    };
+    return this.mapToDimensionsWithContradictions().dimensions;
+  }
+
+  mapToDimensionsWithContradictions(): DimensionMapResult {
+    const dimensions = {} as BehavioralDimensions;
+    const contradictionPenalties = {} as Record<keyof BehavioralDimensions, number>;
+
+    for (const dimension of DIMENSION_KEYS) {
+      if (this.conceptEmbeddings && this.conceptEmbeddings[dimension] && this.signalEmbeddings.size > 0) {
+        const result = this.calculateDimensionSemantic(dimension);
+        dimensions[dimension] = result.value;
+        contradictionPenalties[dimension] = result.contradictionPenalty;
+      } else {
+        dimensions[dimension] = 0.5;
+        contradictionPenalties[dimension] = 0;
+      }
+    }
+
+    return { dimensions, contradictionPenalties };
   }
 
   private calculateDimension(dimension: keyof BehavioralDimensions): number {
     if (this.conceptEmbeddings && this.conceptEmbeddings[dimension] && this.signalEmbeddings.size > 0) {
-      return this.calculateDimensionSemantic(dimension);
+      return this.calculateDimensionSemantic(dimension).value;
     }
     return 0.5;
   }
 
-  private calculateDimensionSemantic(dimension: keyof BehavioralDimensions): number {
+  private calculateDimensionSemantic(
+    dimension: keyof BehavioralDimensions
+  ): { value: number; contradictionPenalty: number } {
     const concepts = this.conceptEmbeddings?.[dimension];
     if (!concepts) {
-      return 0.5;
+      return { value: 0.5, contradictionPenalty: 0 };
     }
 
     let weightedSum = 0;
     let totalWeight = 0;
+    const relevantContradictions = this.contradictions.filter(
+      contradiction => contradiction.affectedDimensions.includes(dimension)
+    );
 
     for (const signal of this.signals) {
       const embedding = this.signalEmbeddings.get(signal.id);
@@ -73,17 +105,55 @@ export class DimensionMapper {
       const strength = this.getSignalStrength(signal);
       const recency = this.getRecencyBoost(signal.timestamp);
       const relevance = maxSim;
+      const contradictionBias = this.getContradictionSignalBias(signal.id, relevantContradictions);
+      const effectiveWeight = strength * recency * relevance * contradictionBias;
 
-      weightedSum += direction * strength * recency * relevance;
-      totalWeight += relevance * recency;
+      weightedSum += direction * effectiveWeight;
+      totalWeight += relevance * recency * contradictionBias;
     }
 
     if (totalWeight === 0) {
-      return 0.5;
+      return { value: 0.5, contradictionPenalty: 0 };
     }
 
     const rawScore = weightedSum / totalWeight;
-    return this.sigmoidNormalize(rawScore);
+    const baseValue = this.sigmoidNormalize(rawScore);
+
+    if (relevantContradictions.length === 0) {
+      return { value: baseValue, contradictionPenalty: 0 };
+    }
+
+    const avgMagnitude = relevantContradictions.reduce((sum, contradiction) => sum + contradiction.magnitude, 0)
+      / relevantContradictions.length;
+    const contradictionPenalty = Math.max(0, Math.min(1, avgMagnitude * 0.5));
+    const adjustedValue = baseValue + (0.5 - baseValue) * contradictionPenalty;
+
+    return { value: adjustedValue, contradictionPenalty };
+  }
+
+  private getContradictionSignalBias(
+    signalId: string,
+    contradictions: SignalContradiction[]
+  ): number {
+    if (contradictions.length === 0) {
+      return 1;
+    }
+
+    const statedPenalties = contradictions
+      .filter(contradiction => contradiction.signalAId === signalId)
+      .map(contradiction => contradiction.magnitude * 0.35);
+    const revealedBoosts = contradictions
+      .filter(contradiction => contradiction.signalBId === signalId)
+      .map(contradiction => contradiction.magnitude * 0.5);
+
+    const statedPenalty = statedPenalties.length > 0
+      ? statedPenalties.reduce((sum, penalty) => sum + penalty, 0) / statedPenalties.length
+      : 0;
+    const revealedBoost = revealedBoosts.length > 0
+      ? revealedBoosts.reduce((sum, boost) => sum + boost, 0) / revealedBoosts.length
+      : 0;
+
+    return Math.max(0.5, Math.min(1.75, 1 - statedPenalty + revealedBoost));
   }
 
   private getSignalStrength(signal: BehavioralSignal): number {

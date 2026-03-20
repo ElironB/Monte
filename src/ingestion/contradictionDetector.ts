@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { EmbeddingService, cosineSimilarity } from '../embeddings/embeddingService.js';
+import type { ConceptEmbeddings } from '../embeddings/dimensionConcepts.js';
+import type { BehavioralDimensions } from '../persona/dimensionMapper.js';
 import { BehavioralSignal, SignalContradiction } from './types.js';
 
 interface DetectorConceptEmbeddings {
@@ -26,11 +28,17 @@ export class ContradictionDetector {
 
   private signals: BehavioralSignal[];
   private signalEmbeddings: Map<string, number[]>;
+  private dimensionConceptEmbeddings: ConceptEmbeddings | null;
   private contradictions: SignalContradiction[] = [];
 
-  constructor(signals: BehavioralSignal[], signalEmbeddings?: Map<string, number[]>) {
+  constructor(
+    signals: BehavioralSignal[],
+    signalEmbeddings?: Map<string, number[]>,
+    dimensionConceptEmbeddings?: ConceptEmbeddings | null
+  ) {
     this.signals = signals;
     this.signalEmbeddings = signalEmbeddings ?? new Map();
+    this.dimensionConceptEmbeddings = dimensionConceptEmbeddings ?? null;
   }
 
   async detect(): Promise<SignalContradiction[]> {
@@ -97,6 +105,13 @@ export class ContradictionDetector {
           type: 'stated_vs_revealed',
           description: 'Claims patience but shows urgent behavior patterns',
           severity: 'medium',
+          magnitude: this.calculateMagnitudeForDimensions(
+            stated.id,
+            revealed.id,
+            ['timePreference', 'decisionSpeed'],
+            'medium'
+          ),
+          affectedDimensions: ['timePreference', 'decisionSpeed'],
         });
       }
     }
@@ -113,6 +128,13 @@ export class ContradictionDetector {
         type: 'temporal',
         description: 'Goal-oriented mindset but repeated execution failures',
         severity: 'high',
+        magnitude: this.calculateMagnitudeForDimensions(
+          goalSignals[0].id,
+          struggleSignals[0].id,
+          ['emotionalVolatility', 'decisionSpeed'],
+          'high'
+        ),
+        affectedDimensions: ['emotionalVolatility', 'decisionSpeed'],
       });
     }
   }
@@ -131,6 +153,13 @@ export class ContradictionDetector {
         type: 'cross_domain',
         description: 'High risk tolerance socially but financially conservative/stressed',
         severity: 'medium',
+        magnitude: this.calculateMagnitudeForDimensions(
+          socialRisk[0].id,
+          financialConservative[0].id,
+          ['riskTolerance'],
+          'medium'
+        ),
+        affectedDimensions: ['riskTolerance'],
       });
     }
   }
@@ -170,6 +199,8 @@ export class ContradictionDetector {
           type: 'stated_vs_revealed',
           description: 'Claims patience but shows urgent behavior patterns',
           severity: 'medium',
+          magnitude: this.getFallbackMagnitude('medium'),
+          affectedDimensions: ['timePreference', 'decisionSpeed'],
         });
       }
     }
@@ -188,6 +219,8 @@ export class ContradictionDetector {
         type: 'temporal',
         description: 'Goal-oriented mindset but repeated execution failures',
         severity: 'high',
+        magnitude: this.getFallbackMagnitude('high'),
+        affectedDimensions: ['emotionalVolatility', 'decisionSpeed'],
       });
     }
   }
@@ -208,7 +241,60 @@ export class ContradictionDetector {
         type: 'cross_domain',
         description: 'High risk tolerance socially but financially conservative/stressed',
         severity: 'medium',
+        magnitude: this.getFallbackMagnitude('medium'),
+        affectedDimensions: ['riskTolerance'],
       });
+    }
+  }
+
+  private calculateMagnitude(
+    signalAId: string,
+    signalBId: string,
+    conceptHigh: number[],
+    conceptLow: number[]
+  ): number {
+    const embA = this.signalEmbeddings.get(signalAId);
+    const embB = this.signalEmbeddings.get(signalBId);
+    if (!embA || !embB) {
+      return 0.5;
+    }
+
+    const scoreA = cosineSimilarity(embA, conceptHigh) - cosineSimilarity(embA, conceptLow);
+    const scoreB = cosineSimilarity(embB, conceptHigh) - cosineSimilarity(embB, conceptLow);
+    return Math.max(0, Math.min(1, Math.abs(scoreA - scoreB)));
+  }
+
+  private calculateMagnitudeForDimensions(
+    signalAId: string,
+    signalBId: string,
+    affectedDimensions: Array<keyof BehavioralDimensions>,
+    fallbackSeverity: SignalContradiction['severity']
+  ): number {
+    if (!this.dimensionConceptEmbeddings) {
+      return this.getFallbackMagnitude(fallbackSeverity);
+    }
+
+    const magnitudes = affectedDimensions
+      .map(dimension => this.dimensionConceptEmbeddings?.[dimension])
+      .filter((concepts): concepts is NonNullable<ConceptEmbeddings[keyof BehavioralDimensions]> => Boolean(concepts))
+      .map(concepts => this.calculateMagnitude(signalAId, signalBId, concepts.high, concepts.low));
+
+    if (magnitudes.length === 0) {
+      return this.getFallbackMagnitude(fallbackSeverity);
+    }
+
+    const averageMagnitude = magnitudes.reduce((sum, magnitude) => sum + magnitude, 0) / magnitudes.length;
+    return Math.max(0, Math.min(1, averageMagnitude));
+  }
+
+  private getFallbackMagnitude(severity: SignalContradiction['severity']): number {
+    switch (severity) {
+      case 'low':
+        return 0.3;
+      case 'high':
+        return 0.8;
+      default:
+        return 0.5;
     }
   }
 
