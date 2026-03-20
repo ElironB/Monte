@@ -145,6 +145,19 @@ export function getInitialState(scenarioType: string): SimulationState {
           supportSystem: 0.5,
         },
       };
+
+    case ScenarioType.CUSTOM:
+      return {
+        ...baseState,
+        capital: 25000,
+        metrics: {
+          commitmentLevel: 0,
+          progressRate: 0,
+          setbackCount: 0,
+          adaptationScore: 0,
+          optionalityPreserved: 1.0,
+        },
+      };
     
     default:
       return baseState;
@@ -1630,24 +1643,120 @@ function buildHealthFitnessGraph(): GraphNode[] {
   ];
 }
 
-// Custom Scenario (minimal template)
+// Custom Scenario (general-purpose template)
 function buildCustomGraph(): GraphNode[] {
   return [
     {
       id: 'start',
       type: 'decision',
-      prompt: 'Custom scenario: Define your starting situation',
+      prompt: 'Initial commitment: How fully do you commit to this path?',
       options: [
-        { id: 'option_a', label: 'Option A', value: 'option_a', nextNodeId: 'outcome_custom' },
-        { id: 'option_b', label: 'Option B', value: 'option_b', nextNodeId: 'outcome_custom' },
+        { id: 'full_commit', label: 'Full commitment — go all in', value: 'full_commit', nextNodeId: 'early_signal' },
+        { id: 'partial_commit', label: 'Partial commitment — hedge with backup plan', value: 'partial_commit', nextNodeId: 'early_signal' },
+        { id: 'minimal_commit', label: 'Minimal commitment — test the waters first', value: 'minimal_commit', nextNodeId: 'early_signal' },
       ],
     } as DecisionNode,
     {
-      id: 'outcome_custom',
+      id: 'early_signal',
+      type: 'event',
+      name: 'Early Feedback Signals',
+      description: 'Early feedback signals arrive — results are ambiguous',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'mixed_signal',
+          label: 'Results are mixed and conviction is tested',
+          effects: [
+            { target: 'happiness', delta: -0.05, type: 'absolute' },
+            { target: 'capital', delta: -0.1, type: 'percentage' },
+            { target: 'metrics.progressRate', delta: 0.2, type: 'absolute' },
+          ],
+          nextNodeId: 'pivot_decision',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'pivot_decision',
+      type: 'decision',
+      prompt: 'Early results are mixed. Do you double down, adapt, or exit?',
+      options: [
+        { id: 'double_down', label: 'Double down — increase investment', value: 'double_down', nextNodeId: 'mid_challenge', requiresEvaluation: true },
+        { id: 'adapt', label: 'Adapt — change approach based on feedback', value: 'adapt', nextNodeId: 'mid_challenge', requiresEvaluation: true },
+        { id: 'exit_early', label: 'Cut losses and exit', value: 'exit_early', nextNodeId: 'outcome_early_exit' },
+      ],
+    } as DecisionNode,
+    {
+      id: 'mid_challenge',
+      type: 'event',
+      name: 'Major Setback',
+      description: 'A significant setback or unexpected obstacle appears',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'major_setback',
+          label: 'A major setback forces a hard response',
+          effects: [
+            { target: 'happiness', delta: -0.15, type: 'absolute' },
+            { target: 'health', delta: -0.05, type: 'absolute' },
+            { target: 'capital', delta: -0.15, type: 'percentage' },
+            { target: 'metrics.setbackCount', delta: 1, type: 'absolute' },
+          ],
+          nextNodeId: 'resilience_decision',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'resilience_decision',
+      type: 'decision',
+      prompt: 'Major setback hit. How do you respond under pressure?',
+      options: [
+        { id: 'persist', label: 'Push through — absorb the cost and keep going', value: 'persist', nextNodeId: 'outcome_persist', requiresEvaluation: true },
+        { id: 'strategic_retreat', label: 'Strategic retreat — preserve resources, regroup', value: 'strategic_retreat', nextNodeId: 'outcome_retreat', requiresEvaluation: true },
+        { id: 'abandon', label: 'Abandon — this is not working', value: 'abandon', nextNodeId: 'outcome_abandon' },
+      ],
+    } as DecisionNode,
+    {
+      id: 'outcome_persist',
       type: 'outcome',
       results: {
-        outcome: 'custom_result',
-        message: 'Custom scenario outcome',
+        outcome: 'persistence_result',
+        happinessImpact: 0.1,
+        adaptationScore: 0.4,
+        commitmentLevel: 1.0,
+        optionalityPreserved: 0.3,
+      },
+    } as OutcomeNode,
+    {
+      id: 'outcome_retreat',
+      type: 'outcome',
+      results: {
+        outcome: 'strategic_retreat',
+        happinessImpact: 0.05,
+        adaptationScore: 0.8,
+        commitmentLevel: 0.6,
+        optionalityPreserved: 1.0,
+      },
+    } as OutcomeNode,
+    {
+      id: 'outcome_abandon',
+      type: 'outcome',
+      results: {
+        outcome: 'abandoned',
+        happinessImpact: -0.1,
+        adaptationScore: 0.1,
+        commitmentLevel: 0.2,
+        optionalityPreserved: 0.8,
+      },
+    } as OutcomeNode,
+    {
+      id: 'outcome_early_exit',
+      type: 'outcome',
+      results: {
+        outcome: 'early_exit',
+        happinessImpact: -0.02,
+        adaptationScore: 0.5,
+        commitmentLevel: 0.3,
+        optionalityPreserved: 1.0,
       },
     } as OutcomeNode,
   ];
