@@ -452,7 +452,7 @@ async function fetchSignals(userId: string, onlyNewSignals: boolean = false): Pr
     `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)-[:HAS_SIGNAL]->(s:Signal)
      WHERE ${filters.join(' AND ')}
      RETURN s.id as id,
-            d.type as sourceType,
+            coalesce(d.sourceType, d.type) as sourceType,
             s.type as type,
             s.value as value,
             s.confidence as confidence,

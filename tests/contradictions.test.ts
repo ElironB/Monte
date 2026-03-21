@@ -123,4 +123,35 @@ describe('ContradictionDetector', () => {
     expect(contradictions[0].severity).toBe('high');
     expect(contradictions[0].magnitude).toBe(0.8);
   });
+
+  it('reuses history only for the same signal pair and dimensions', async () => {
+    const signalA = makeSignal({ id: 'signal-a', value: 'patient planner' });
+    const signalB = makeSignal({ id: 'signal-b', value: 'urgent follow-up', dimensions: { urgency: 0.9 } });
+    const signalC = makeSignal({ id: 'signal-c', value: 'urgent escalation', dimensions: { urgency: 0.95 } });
+
+    const existing = [{
+      id: 'existing-contradiction',
+      signalAId: signalA.id,
+      signalBId: signalB.id,
+      type: 'stated_vs_revealed' as const,
+      description: 'Claims patience but shows urgent behavior patterns',
+      severity: 'medium' as const,
+      magnitude: 0.4,
+      affectedDimensions: ['timePreference', 'decisionSpeed'],
+      convergenceRate: 0,
+      isPermanentTrait: false,
+      firstSeen: '2025-01-01T00:00:00.000Z',
+      lastSeen: '2025-01-10T00:00:00.000Z',
+    }];
+
+    const detector = new ContradictionDetector([signalA, signalB, signalC], new Map(), null, existing);
+    const contradictions = await detector.detect();
+
+    const reused = contradictions.find(c => c.signalAId === signalA.id && c.signalBId === signalB.id);
+    const distinct = contradictions.find(c => c.signalAId === signalA.id && c.signalBId === signalC.id);
+
+    expect(reused?.id).toBe('existing-contradiction');
+    expect(distinct).toBeDefined();
+    expect(distinct?.id).not.toBe('existing-contradiction');
+  });
 });

@@ -8,6 +8,7 @@ function makeSignal(
   type: string = 'cognitive_trait',
   confidence: number = 0.8,
   timestamp: string = new Date().toISOString(),
+  sourceType?: string,
 ): BehavioralSignal {
   return {
     id: `sig-${Math.random().toString(36).slice(2, 8)}`,
@@ -16,6 +17,7 @@ function makeSignal(
     confidence,
     evidence: 'test',
     sourceDataId: 'test',
+    sourceType,
     timestamp,
     dimensions: {},
   };
@@ -78,6 +80,34 @@ describe('DimensionMapper', () => {
     expect(dims.emotionalVolatility).toBe(0.5);
   });
 
+  it('applies source-specific half-lives when sourceType is present', () => {
+    const oldTimestamp = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const recentTimestamp = new Date().toISOString();
+    const financialSignal = makeSignal('speculative investing appetite', 'cognitive_trait', 0.8, oldTimestamp, 'financial');
+    const searchSignal = makeSignal('speculative investing appetite', 'cognitive_trait', 0.8, oldTimestamp, 'search_history');
+    const counterweightSignal = makeSignal('risk averse capital preservation', 'financial_behavior', 0.8, recentTimestamp, 'financial');
+
+    const embeddings = new Map<string, number[]>([
+      [financialSignal.id, [1, 0]],
+      [searchSignal.id, [1, 0]],
+      [counterweightSignal.id, [-1, 0]],
+    ]);
+
+    const financialDims = new DimensionMapper(
+      [financialSignal, counterweightSignal],
+      conceptEmbeddings,
+      embeddings,
+    ).mapToDimensions();
+
+    const searchDims = new DimensionMapper(
+      [searchSignal, counterweightSignal],
+      conceptEmbeddings,
+      embeddings,
+    ).mapToDimensions();
+
+    expect(financialDims.riskTolerance).toBeGreaterThan(searchDims.riskTolerance);
+  });
+
   it('applies recency decay — older signals contribute less', () => {
     const recentSignal = makeSignal(
       'speculative investing appetite',
@@ -91,24 +121,32 @@ describe('DimensionMapper', () => {
       0.8,
       new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
     );
+    const counterweightSignal = makeSignal(
+      'risk averse capital preservation',
+      'financial_behavior',
+      0.8,
+      new Date().toISOString(),
+    );
 
-    const oldMapper = new DimensionMapper(
-      [oldSignal],
+    const embeddings = new Map<string, number[]>([
+      [recentSignal.id, [1, 0]],
+      [oldSignal.id, [1, 0]],
+      [counterweightSignal.id, [-1, 0]],
+    ]);
+
+    const oldDims = new DimensionMapper(
+      [oldSignal, counterweightSignal],
       conceptEmbeddings,
-      new Map([[oldSignal.id, [1, 0]]]),
-    );
-    const oldDims = oldMapper.mapToDimensions();
+      embeddings,
+    ).mapToDimensions();
 
-    const recentMapper = new DimensionMapper(
-      [recentSignal],
+    const recentDims = new DimensionMapper(
+      [recentSignal, counterweightSignal],
       conceptEmbeddings,
-      new Map([[recentSignal.id, [1, 0]]]),
-    );
-    const recentDims = recentMapper.mapToDimensions();
+      embeddings,
+    ).mapToDimensions();
 
-    expect(Math.abs(recentDims.riskTolerance - 0.5)).toBeGreaterThan(
-      Math.abs(oldDims.riskTolerance - 0.5),
-    );
+    expect(recentDims.riskTolerance).toBeGreaterThan(oldDims.riskTolerance);
   });
 
   it('all dimensions are bounded 0-1', () => {

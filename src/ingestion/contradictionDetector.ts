@@ -301,12 +301,14 @@ export class ContradictionDetector {
     }
   }
 
+  private buildContradictionKey(contradiction: Pick<SignalContradiction, 'type' | 'signalAId' | 'signalBId' | 'affectedDimensions'>): string {
+    const affectedDimensions = [...contradiction.affectedDimensions].sort().join('|');
+    return [contradiction.type, contradiction.signalAId, contradiction.signalBId, affectedDimensions].join('::');
+  }
+
   private addContradiction(partial: Omit<SignalContradiction, 'id' | 'convergenceRate' | 'isPermanentTrait' | 'firstSeen' | 'lastSeen'>): void {
-    const match = this.existingContradictions.find(c =>
-      c.type === partial.type &&
-      c.affectedDimensions.length === partial.affectedDimensions.length &&
-      c.affectedDimensions.every(d => partial.affectedDimensions.includes(d))
-    );
+    const contradictionKey = this.buildContradictionKey(partial);
+    const match = this.existingContradictions.find(c => this.buildContradictionKey(c) === contradictionKey);
 
     const signalA = this.signals.find(s => s.id === partial.signalAId);
     const signalB = this.signals.find(s => s.id === partial.signalBId);
