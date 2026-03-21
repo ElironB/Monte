@@ -124,6 +124,67 @@ describe('ContradictionDetector', () => {
     expect(contradictions[0].magnitude).toBe(0.8);
   });
 
+
+  it('reuses history across re-imported signals with fresh ids when the behavioral identities match', async () => {
+    const existing = [{
+      id: 'existing-contradiction',
+      signalAId: 'old-signal-a',
+      signalBId: 'old-signal-b',
+      type: 'stated_vs_revealed' as const,
+      description: 'Claims patience but shows urgent behavior patterns',
+      severity: 'medium' as const,
+      magnitude: 0.4,
+      affectedDimensions: ['timePreference', 'decisionSpeed'],
+      convergenceRate: 0,
+      isPermanentTrait: false,
+      firstSeen: '2025-01-01T00:00:00.000Z',
+      lastSeen: '2025-01-10T00:00:00.000Z',
+    }];
+
+    const reimportedSignals = [
+      makeSignal({
+        id: 'new-signal-a',
+        type: 'cognitive_trait',
+        value: 'patient planner',
+        sourceType: 'notes',
+        dimensions: { category: 'psychology' },
+        timestamp: '2025-02-01T00:00:00.000Z',
+      }),
+      makeSignal({
+        id: 'new-signal-b',
+        type: 'cognitive_trait',
+        value: 'urgent follow-up',
+        sourceType: 'notes',
+        dimensions: { urgency: 0.9, category: 'psychology' },
+        timestamp: '2025-02-15T00:00:00.000Z',
+      }),
+      makeSignal({
+        id: 'old-signal-a',
+        type: 'cognitive_trait',
+        value: 'patient planner',
+        sourceType: 'notes',
+        dimensions: { category: 'psychology' },
+        timestamp: '2025-01-01T00:00:00.000Z',
+      }),
+      makeSignal({
+        id: 'old-signal-b',
+        type: 'cognitive_trait',
+        value: 'urgent follow-up',
+        sourceType: 'notes',
+        dimensions: { urgency: 0.8, category: 'psychology' },
+        timestamp: '2025-01-10T00:00:00.000Z',
+      }),
+    ];
+
+    const contradictions = await new ContradictionDetector(reimportedSignals, new Map(), null, existing).detect();
+    const reused = contradictions.find(c => c.signalAId === 'new-signal-a' && c.signalBId === 'new-signal-b');
+
+    expect(reused?.id).toBe('existing-contradiction');
+    expect(reused?.firstSeen).toBe('2025-01-01T00:00:00.000Z');
+    expect(reused?.lastSeen).toBe('2025-02-15T00:00:00.000Z');
+    expect(reused?.convergenceRate).not.toBe(0);
+  });
+
   it('reuses history only for the same signal pair and dimensions', async () => {
     const signalA = makeSignal({ id: 'signal-a', value: 'patient planner' });
     const signalB = makeSignal({ id: 'signal-b', value: 'urgent follow-up', dimensions: { urgency: 0.9 } });

@@ -301,9 +301,31 @@ export class ContradictionDetector {
     }
   }
 
+  private normalizeKeyPart(value: string | undefined): string {
+    return (value ?? '').trim().toLowerCase();
+  }
+
+  private buildSignalIdentity(signalId: string): string {
+    const signal = this.signals.find(candidate => candidate.id === signalId);
+    if (!signal) {
+      return `id:${signalId}`;
+    }
+
+    const category = this.normalizeKeyPart(signal.dimensions.category);
+    const sourceType = this.normalizeKeyPart(signal.sourceType);
+    const value = this.normalizeKeyPart(signal.value);
+
+    return [signal.type, value, sourceType, category].join('|');
+  }
+
   private buildContradictionKey(contradiction: Pick<SignalContradiction, 'type' | 'signalAId' | 'signalBId' | 'affectedDimensions'>): string {
     const affectedDimensions = [...contradiction.affectedDimensions].sort().join('|');
-    return [contradiction.type, contradiction.signalAId, contradiction.signalBId, affectedDimensions].join('::');
+    return [
+      contradiction.type,
+      this.buildSignalIdentity(contradiction.signalAId),
+      this.buildSignalIdentity(contradiction.signalBId),
+      affectedDimensions,
+    ].join('::');
   }
 
   private addContradiction(partial: Omit<SignalContradiction, 'id' | 'convergenceRate' | 'isPermanentTrait' | 'firstSeen' | 'lastSeen'>): void {
