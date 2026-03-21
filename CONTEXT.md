@@ -264,6 +264,80 @@ GROQ_API_KEY=gsk_...
 - Neo4j creates a native `signal_embedding` vector index on `Signal.embedding`
 - OpenRouter is the default embeddings provider; Groq-only LLM setups must also supply `OPENROUTER_API_KEY` or `EMBEDDING_API_KEY`
 
+### 14. P0 Fix: Timestamp Propagation (PR #28)
+
+**Why**: `createSignal()` in `base.ts` defaulted to `new Date().toISOString()` — extraction time, not event time. This meant batch-ingested data from 6 months ago got today's timestamp, completely breaking recency decay in `DimensionMapper`.
+
+**What changed**:
+- `base.ts` `createSignal()` now accepts an optional `timestamp` parameter as the 7th argument
+- All 5 extractors updated to pass original event timestamps through to `createSignal()`
+- `SearchHistoryExtractor`: passes parsed `entry.timestamp` via `getLatestTimestamp()`
+- `SocialBehaviorExtractor`: passes `post.timestamp` from parsed social posts
+- `FinancialBehaviorExtractor`: passes `transaction.date` from CSV rows
+- `CognitiveStructureExtractor`: passes `data.metadata.timestamp` from file metadata
+- `MediaConsumptionExtractor`: passes `entry.date` from watch history entries
+- Neo4j signal write in workers/index.ts uses `signal.timestamp` instead of server time
+
+### 15. P0 Fix: Contradictions Feed Into DimensionMapper (PR #27)
+
+**Why**: `ContradictionDetector` found contradictions and stored them in Neo4j, but `DimensionMapper` never read them. The most predictive signals in Monte's thesis ("the contradiction IS the signal") had zero influence on persona dimensions.
+
+**What changed**:
+- `SignalContradiction` type now includes `magnitude` (0-1, computed from cosine distance) and `affectedDimensions` (which dimensions the contradiction impacts)
+- `ContradictionDetector.detect()` now computes magnitude from embedding cosine distance and identifies affected dimensions via concept similarity
+- `DimensionMapper` constructor accepts optional `contradictions` array
+- New `mapToDimensionsWithContradictions()` method returns both dimension values and per-dimension contradiction penalties
+- Contradiction effect: pulls affected dimensions toward 0.5 proportional to magnitude (high contradiction = less certain)
+- Signal bias: revealed-side signals get weight boost (up to 1.75x), stated-side signals get penalty (down to 0.5x)
+- Neo4j Contradiction nodes store explicit `statedSignalId` and `revealedSignalId` (fixes a bug where lexical ID ordering destroyed role assignment)
+- Worker pipeline: fetches contradictions from Neo4j and passes them to DimensionMapper
+
+### 16. AI Chat History Extractor (SCO-034 — In Progress)
+
+**Why**: Past conversations with ChatGPT, Claude, Gemini, and Grok are a rich "Revealed Cognition" data source. What someone privately asks an AI at 2am reveals more about their decision-making than any survey.
+
+**What's being added**:
+- New source type `ai_chat` added to types.ts, API Zod schema, CLI auto-detection, and worker registration
+- New `AIChatHistoryExtractor` in `src/ingestion/extractors/aiChatHistory.ts`
+- Parses 4 export formats: ChatGPT (`conversations.json` with mapping tree), Claude (`conversations.json` with `chat_messages`), Gemini (Google Takeout `MyActivity.json`), Grok (xAI data portal export)
+- Extracts user messages only (ignores AI responses)
+- 5 signal categories: topic classification (8 domains), emotional tone, decision delegation patterns, repetition/revisiting detection, prompting style analysis
+- Source reliability tier: ~0.75-0.80 (between Revealed Preference and Semi-Curated — it's private but the user knows they're talking to AI)
+
+---
+
+## Persona Pipeline: Audit Roadmap
+
+A deep technical audit identified 6 fatal flaws in the persona construction pipeline. P0 items are fixed. Remaining work is prioritized below.
+
+### ✅ P0 — COMPLETED
+- **Timestamp propagation** (PR #28): Extractors now pass original event timestamps, not extraction time
+- **Contradictions → DimensionMapper** (PR #27): Contradictions now influence persona dimensions with magnitude-weighted bias
+
+### P1 — High Priority (Next)
+| Change | Effort | Description |
+|--------|--------|-------------|
+| Add 3 new dimensions | Large | `executionGap` (plan vs action gap), `informationSeeking` (over-research vs minimal-info action), `stressResponse` (panic vs steady) |
+| Source reliability weighting | Medium | Tier system: Plaid (0.95) > YouTube completion (0.80) > Search (0.75) > Reddit posts (0.60) > Twitter (0.40) |
+| Multi-anchor concept descriptions | Medium | Replace keyword lists with 3-5 contextual sentences per pole + negative anchors as relevance gate |
+| Per-dimension confidence intervals | Medium | Track signal count, source diversity, and communicate uncertainty to simulation engine |
+
+### P2 — Medium Priority
+| Change | Effort | Description |
+|--------|--------|-------------|
+| Temporal-aware embeddings | Small | Prepend `[late_night, weekend]` context before embedding — same content at 3am vs 2pm produces different vectors |
+| Adaptive recency decay | Small | Different half-lives per source: Plaid 180d, search 30d, social 45d, notes 120d, watch 21d |
+| Sequential pattern detection | Large | Sliding windows (24h/72h/7d/30d), research cluster detection, decision trajectory mapping |
+| Contradiction magnitude + convergence | Medium | Track whether contradictions are resolving or deepening; persistent contradictions are stable personality features |
+
+### P3 — Lower Priority
+| Change | Effort | Description |
+|--------|--------|-------------|
+| Cycle detection | Medium | Autocorrelation at 7/14/30/90 day periods to detect recurring behavioral patterns |
+| Drift detection | Large | Sliding window comparison (90-day vs full history), automatic strategy selection (incremental vs full rebuild) |
+| Benchmark suite | Large | Split-half reliability (r > 0.7), cross-source coherence, discriminability index (d' > 1.5) |
+| Behavioral epoch detection | Large | Changepoint detection to partition signal history into behavioral eras |
+
 ---
 
 ## Implementation Status
@@ -346,6 +420,11 @@ GROQ_API_KEY=gsk_...
 - **Kelly Criterion**: Position sizing from actual simulation data, fractional Kelly adjusted by behavioral risk tolerance
 - **Bayesian Updates**: Incremental persona refinement — evidence accumulates across ingestions instead of full rebuild
 
+### 🔄 PHASE 9 - Persona Pipeline Hardening (IN PROGRESS)
+- **P0 fixes complete**: Timestamp propagation (PR #28), contradictions feeding into DimensionMapper (PR #27)
+- **AI chat history extractor** (SCO-034): New `ai_chat` source type for ChatGPT/Claude/Gemini/Grok exports
+- **Pending**: P1 items (new dimensions, source reliability, multi-anchor concepts, confidence intervals)
+
 ---
 
 ## File Structure
@@ -381,11 +460,13 @@ Monte/
 │   │   │   └── client.ts          # Placeholder (not functional)
 │   │   ├── extractors/
 │   │   │   ├── base.ts            # Abstract extractor
+│   │   │   ├── aiChatHistory.ts   # AI chat exports (ChatGPT, Claude, Gemini, Grok)
 │   │   │   ├── searchHistory.ts
 │   │   │   ├── socialBehavior.ts
 │   │   │   ├── financialBehavior.ts
 │   │   │   ├── cognitiveStructure.ts
 │   │   │   ├── mediaConsumption.ts
+│   │   │   ├── semanticExtractor.ts  # LLM-based fallback extraction
 │   │   │   └── temporalUtils.ts   # Shared temporal analysis utilities
 │   │   └── queue/
 │   │       ├── ingestionQueue.ts  # BullMQ queues
@@ -482,6 +563,9 @@ Simulation results are interpreted by `NarrativeGenerator` into 6-section narrat
 
 ### 11. Synthetic Personas for Testing
 `monte generate` creates realistic behavioral data from a text description. No real data needed to demo or test. Generated files match exact ingestion formats.
+
+### 12. AI Chat History is "Revealed Cognition"
+What someone asks an AI privately at 2am is categorically different from what they post publicly. The `ai_chat` source type handles exports from ChatGPT, Claude, Gemini, and Grok — extracting topic interests, emotional tone, decision delegation patterns, and repetition/revisiting behavior from user messages only. AI responses are ignored.
 
 ---
 
@@ -614,9 +698,11 @@ npm run dev
 7. **LLM is provider-aware but SDK-agnostic** — OpenAI SDK with provider-specific env vars (`OPENROUTER_API_KEY` / `GROQ_API_KEY`). Never import provider-specific SDKs.
 8. **TypeScript errors** — use `// @ts-nocheck` sparingly if ioredis types cause issues (already used in redis.ts).
 9. **Composio is optional** — `monte connect` enhances data but isn't required. File-based ingestion works standalone.
+10. **AI chat data is user-messages-only** — never analyze AI responses. The behavioral signal is what the human asked, not what the AI said.
+11. **Contradictions now have magnitude** — `SignalContradiction.magnitude` (0-1) computed from embedding cosine distance. Stored on Neo4j Contradiction nodes with explicit `statedSignalId`/`revealedSignalId`.
 
 ---
 
-**Last Updated**: March 2026 — Decision theory features complete (PRs #13-#15)
-**Status**: Phases 1-8 complete.
-**Next**: End-to-end integration testing, Docker quick-start validation, v0.1.0 release.
+**Last Updated**: March 2026 — Persona pipeline P0 fixes complete, AI chat extractor added
+**Status**: Phases 1-8 complete. Phase 9 (persona hardening) in progress.
+**Next**: P1 pipeline improvements (new dimensions, source reliability, multi-anchor concepts).
