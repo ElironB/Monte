@@ -2,7 +2,7 @@
 export interface RawSourceData {
   sourceId: string;
   userId: string;
-  sourceType: 'search_history' | 'watch_history' | 'social_media' | 'financial' | 'notes' | 'files' | 'composio';
+  sourceType: 'search_history' | 'watch_history' | 'social_media' | 'financial' | 'notes' | 'files' | 'composio' | 'ai_chat';
   rawContent: string;
   metadata: {
     timestamp?: string;

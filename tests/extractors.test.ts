@@ -4,6 +4,7 @@ import { SocialBehaviorExtractor } from '../src/ingestion/extractors/socialBehav
 import { FinancialBehaviorExtractor } from '../src/ingestion/extractors/financialBehavior.js';
 import { CognitiveStructureExtractor } from '../src/ingestion/extractors/cognitiveStructure.js';
 import { MediaConsumptionExtractor } from '../src/ingestion/extractors/mediaConsumption.js';
+import { AIChatHistoryExtractor } from '../src/ingestion/extractors/aiChatHistory.js';
 import { RawSourceData } from '../src/ingestion/types.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -230,6 +231,70 @@ describe('SocialBehaviorExtractor', () => {
 
     expect(riskSignal).toBeDefined();
     expect(riskSignal!.timestamp).toBe('2025-05-10T16:45:00Z');
+  });
+});
+
+
+// =============================================================================
+// AIChatHistoryExtractor
+// =============================================================================
+describe('AIChatHistoryExtractor', () => {
+  const extractor = new AIChatHistoryExtractor();
+
+  it('parses ChatGPT structured content parts before Grok fallback', async () => {
+    const data = makeRaw('ai_chat', JSON.stringify([
+      {
+        id: 'conv-1',
+        title: 'Structured prompt',
+        mapping: {
+          'node-1': {
+            message: {
+              author: { role: 'user' },
+              create_time: 1710000000,
+              content: {
+                parts: [
+                  {
+                    content: [
+                      { text: 'Help me decide whether to invest in index funds' },
+                      { text: ' versus paying down debt first.' },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    ]));
+
+    const signals = await extractor.extract(data);
+
+    expect(signals.some(s => s.value === 'financial_concern')).toBe(true);
+    expect(signals.some(s => s.value === 'collaborative_thinker')).toBe(true);
+  });
+
+  it('does not misclassify ChatGPT exports with empty structured messages as Grok data', async () => {
+    const data = makeRaw('ai_chat', JSON.stringify([
+      {
+        id: 'conv-2',
+        title: 'Empty structured prompt',
+        mapping: {
+          'node-1': {
+            message: {
+              author: { role: 'user' },
+              create_time: 1710001000,
+              content: {
+                parts: [{ content: [] }],
+              },
+            },
+          },
+        },
+      },
+    ]));
+
+    const signals = await extractor.extract(data);
+
+    expect(signals).toHaveLength(0);
   });
 });
 

@@ -73,6 +73,10 @@ function detectSourceType(filePath: string, ext: string): string {
   if (ext === '.json') {
     try {
       const content = readFileSync(filePath, 'utf-8').slice(0, 2000).toLowerCase();
+      if (content.includes('mapping') && content.includes('message') && content.includes('author')) return 'ai_chat'; // ChatGPT
+      if (content.includes('chat_messages') && content.includes('sender') && content.includes('human')) return 'ai_chat'; // Claude
+      if (content.includes('gemini') && content.includes('activitycontrols')) return 'ai_chat'; // Gemini Takeout
+      if (content.includes('grok') && (content.includes('conversation') || content.includes('messages'))) return 'ai_chat'; // Grok
       if (content.includes('search') || content.includes('query')) return 'search_history';
       if (content.includes('watch') || content.includes('video') || content.includes('youtube')) return 'watch_history';
       if (content.includes('transaction') || content.includes('amount') || content.includes('balance')) return 'financial';

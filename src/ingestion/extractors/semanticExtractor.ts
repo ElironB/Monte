@@ -15,7 +15,7 @@ interface SemanticSignalCandidate {
 }
 
 export class SemanticExtractor extends SignalExtractor {
-  readonly sourceTypes = ['search_history', 'watch_history', 'social_media', 'financial', 'notes', 'files'];
+  readonly sourceTypes = ['search_history', 'watch_history', 'social_media', 'financial', 'notes', 'files', 'ai_chat'];
   private client: OpenAI | null = null;
   private model: string;
 
