@@ -14,8 +14,17 @@ export interface DimensionMapResult {
   dimensions: BehavioralDimensions;
   contradictionPenalties: Record<keyof BehavioralDimensions, number>;
 }
-
 const SIMILARITY_THRESHOLD = 0.25;
+
+const DEFAULT_HALF_LIFE = 60;
+const SOURCE_HALF_LIVES: Record<string, number> = {
+  financial: 180,
+  search_history: 30,
+  social_media: 45,
+  notes: 120,
+  watch_history: 21,
+  ai_chat: 45,
+};
 const DIMENSION_KEYS = [
   'riskTolerance',
   'timePreference',
@@ -121,7 +130,7 @@ export class DimensionMapper {
 
       const direction = simHigh - simLow;
       const strength = this.getSignalStrength(signal);
-      const recency = this.getRecencyBoost(signal.timestamp);
+      const recency = this.getRecencyBoost(signal.timestamp, signal.sourceType);
       const relevance = maxSim;
       const contradictionBias = this.getContradictionSignalBias(signal.id, relevantContradictions);
       const effectiveWeight = strength * recency * relevance * contradictionBias;
@@ -183,11 +192,12 @@ export class DimensionMapper {
     return Math.min(1, base + frequencyBoost + recurrenceBoost + trendBoost);
   }
 
-  private getRecencyBoost(timestamp: string): number {
+  private getRecencyBoost(timestamp: string, sourceType?: string): number {
     const signalDate = new Date(timestamp);
     const now = new Date();
     const daysDiff = (now.getTime() - signalDate.getTime()) / (1000 * 60 * 60 * 24);
-    return Math.max(0.3, Math.exp(-daysDiff / 60));
+    const halfLife = sourceType ? (SOURCE_HALF_LIVES[sourceType] || DEFAULT_HALF_LIFE) : DEFAULT_HALF_LIFE;
+    return Math.max(0.3, Math.exp(-daysDiff / halfLife));
   }
 
   private sigmoidNormalize(x: number): number {

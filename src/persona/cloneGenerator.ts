@@ -1,5 +1,6 @@
 import { MasterPersona } from './personaCompressor.js';
 import { v4 as uuidv4 } from 'uuid';
+import { SignalContradiction } from '../ingestion/types.js';
 
 export interface Clone {
   id: string;
@@ -25,11 +26,13 @@ export class CloneGenerator {
   private masterPersona: MasterPersona;
   private personaId: string;
   private baseFingerprint: Record<string, number>;
+  private contradictions: SignalContradiction[];
 
-  constructor(masterPersona: MasterPersona, personaId: string) {
+  constructor(masterPersona: MasterPersona, personaId: string, contradictions?: SignalContradiction[]) {
     this.masterPersona = masterPersona;
     this.personaId = personaId;
     this.baseFingerprint = masterPersona.behavioralFingerprint;
+    this.contradictions = contradictions ?? [];
   }
 
   generateClones(count: number = 1000): Clone[] {
@@ -109,9 +112,19 @@ export class CloneGenerator {
   ): number {
     const baseValue = this.baseFingerprint[dimension] ?? 0.5;
     
+    // Lock variance if this dimension is part of a permanent trait contradiction
+    const isPermanent = this.contradictions.some(c => c.isPermanentTrait && c.affectedDimensions.includes(dimension));
+    if (isPermanent) {
+      return baseValue;
+    }
+
+    // Increase variance if there's a negative convergenceRate (gap shrinking or user specified)
+    const hasNegativeConvergence = this.contradictions.some(c => (c.convergenceRate ?? 0) < 0 && c.affectedDimensions.includes(dimension));
+    const adjustedVariance = hasNegativeConvergence ? variance * 1.5 : variance;
+
     // Apply z-score scaled by variance
     // Ensure we don't go outside 0-1 bounds
-    const adjusted = baseValue + (zScore * variance);
+    const adjusted = baseValue + (zScore * adjustedVariance);
     return Math.max(0, Math.min(1, adjusted));
   }
 

@@ -1,4 +1,5 @@
 import { Job } from 'bullmq';
+import { v4 as uuidv4 } from 'uuid';
 import type { Worker } from 'bullmq';
 import { createWorker, IngestionJobData, PersonaJobData, SimulationJobData } from '../ingestionQueue.js';
 import { logger } from '../../../utils/logger.js';
@@ -21,6 +22,7 @@ import { BayesianUpdater } from '../../../persona/bayesianUpdater.js';
 import { EmbeddingService } from '../../../embeddings/embeddingService.js';
 import { getDimensionConceptEmbeddings } from '../../../embeddings/dimensionConcepts.js';
 import { BehavioralSignal, SignalContradiction } from '../../types.js';
+import { parseTimestamp, detectSequences } from '../../extractors/temporalUtils.js';
 
 // Phase 4: Simulation Engine imports
 import { getScenario } from '../../../simulation/decisionGraph.js';
@@ -125,7 +127,21 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
     if (allSignals.length > 0 && EmbeddingService.isAvailable()) {
       try {
         const service = EmbeddingService.getInstance();
-        const signalTexts = allSignals.map(signal => `${signal.type}: ${signal.value} — ${signal.evidence}`);
+        const signalTexts = allSignals.map(signal => {
+          const d = parseTimestamp(signal.timestamp);
+          let temporalPrefix = '';
+          if (d) {
+            const h = d.getUTCHours();
+            let timeOfDay = 'late_night';
+            if (h >= 5 && h < 12) timeOfDay = 'morning';
+            else if (h >= 12 && h < 17) timeOfDay = 'afternoon';
+            else if (h >= 17 && h < 22) timeOfDay = 'evening';
+            const day = d.getUTCDay();
+            const dayOfWeek = (day === 0 || day === 6) ? 'weekend' : 'weekday';
+            temporalPrefix = `[${timeOfDay}, ${dayOfWeek}] `;
+          }
+          return `${temporalPrefix}${signal.type}: ${signal.value} — ${signal.evidence}`;
+        });
         const embeddings = await service.embedBatch(signalTexts);
 
         for (let i = 0; i < allSignals.length; i++) {
@@ -139,7 +155,88 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
           );
         }
 
-        logger.info({ sourceId, embeddedCount: allSignals.length }, 'Signal embeddings stored');
+        const sequences = detectSequences(allSignals, signalEmbeddings);
+        const compositeSignals: BehavioralSignal[] = [];
+
+        for (const seq of sequences) {
+          const capped = seq.signals.slice(-5);
+          const compositeValue = capped.map(s => s.value).join(' -> ');
+          const progressionMultiplier = seq.progressionScore > 0.6 ? 1.5 : 0.8;
+          const avgBaseConfidence = capped.reduce((sum, s) => sum + s.confidence, 0) / capped.length;
+
+          const compositeSignal: BehavioralSignal = {
+            id: uuidv4(),
+            type: 'cognitive_trait',
+            value: `Sequence: ${compositeValue}`,
+            confidence: Math.min(1, avgBaseConfidence * progressionMultiplier),
+            evidence: `Composite sequence of ${capped.length} temporally clustered signals forming a tracked pattern.`,
+            sourceDataId: sourceId,
+            timestamp: capped[capped.length - 1].timestamp,
+            dimensions: {
+              temporalCluster: 'sequence',
+              recurrence: capped.length,
+            }
+          };
+          compositeSignals.push(compositeSignal);
+        }
+
+        if (compositeSignals.length > 0) {
+          const compositeTexts = compositeSignals.map(signal => {
+            const d = parseTimestamp(signal.timestamp);
+            let temporalPrefix = '';
+            if (d) {
+              const h = d.getUTCHours();
+              let timeOfDay = 'late_night';
+              if (h >= 5 && h < 12) timeOfDay = 'morning';
+              else if (h >= 12 && h < 17) timeOfDay = 'afternoon';
+              else if (h >= 17 && h < 22) timeOfDay = 'evening';
+              const day = d.getUTCDay();
+              const dayOfWeek = (day === 0 || day === 6) ? 'weekend' : 'weekday';
+              temporalPrefix = `[${timeOfDay}, ${dayOfWeek}] `;
+            }
+            return `${temporalPrefix}${signal.type}: ${signal.value} — ${signal.evidence}`;
+          });
+
+          const compositeEmbs = await service.embedBatch(compositeTexts);
+
+          for (let i = 0; i < compositeSignals.length; i++) {
+            const sig = compositeSignals[i];
+            const emb = compositeEmbs[i];
+
+            await runWriteSingle(
+              `CREATE (s:Signal {
+                 id: $signalId,
+                 type: $type,
+                 value: $value,
+                 confidence: $confidence,
+                 evidence: $evidence,
+                 timestamp: datetime($signalTimestamp),
+                 dimensions: $dimensions
+               })
+               WITH s
+               MATCH (d:DataSource {id: $sourceId})
+               CREATE (d)-[:HAS_SIGNAL]->(s)
+               SET s.embedding = $embedding
+               RETURN s.id as id`,
+              {
+                sourceId,
+                signalId: sig.id,
+                type: sig.type,
+                value: sig.value,
+                confidence: sig.confidence,
+                evidence: sig.evidence,
+                signalTimestamp: sig.timestamp,
+                dimensions: JSON.stringify(sig.dimensions),
+                embedding: emb
+              }
+            );
+
+            allSignals.push(sig);
+            signalEmbeddings.set(sig.id, emb);
+          }
+        }
+
+        logger.info({ sourceId, embeddedCount: allSignals.length, sequencesFound: compositeSignals.length }, 'Signal embeddings stored');
       } catch (err) {
         signalEmbeddings = new Map();
         logger.warn({ err, sourceId }, 'Failed to embed signals — dimension mapping will use fallback');
@@ -154,27 +251,37 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
         dimensionConceptEmbs = null;
       }
 
-      const detector = new ContradictionDetector(allSignals, signalEmbeddings, dimensionConceptEmbs);
+      let existingContradictions: SignalContradiction[] = [];
+      try {
+        existingContradictions = await fetchContradictions(userId);
+      } catch (err) {
+        logger.warn({ err, userId }, 'Failed to fetch existing contradictions');
+      }
+
+      const detector = new ContradictionDetector(allSignals, signalEmbeddings, dimensionConceptEmbs, existingContradictions);
       const contradictions = await detector.detect();
       
       for (const contradiction of contradictions) {
         const { statedSignalId, revealedSignalId } = getContradictionRoleAssignment(contradiction);
 
         await runWriteSingle(
-          `CREATE (c:Contradiction {
-            id: $id,
-            type: $type,
-            description: $description,
-            severity: $severity,
-            magnitude: $magnitude,
-            affectedDimensions: $affectedDimensions,
-            statedSignalId: $statedSignalId,
-            revealedSignalId: $revealedSignalId,
-            createdAt: datetime()
-          })
+          `MERGE (c:Contradiction {id: $id})
+           ON CREATE SET c.createdAt = datetime()
+           SET c.type = $type,
+               c.description = $description,
+               c.severity = $severity,
+               c.magnitude = $magnitude,
+               c.affectedDimensions = $affectedDimensions,
+               c.statedSignalId = $statedSignalId,
+               c.revealedSignalId = $revealedSignalId,
+               c.convergenceRate = $convergenceRate,
+               c.isPermanentTrait = $isPermanentTrait,
+               c.firstSeen = datetime($firstSeen),
+               c.lastSeen = datetime($lastSeen),
+               c.updatedAt = datetime()
           WITH c
           MATCH (s1:Signal {id: $signalAId}), (s2:Signal {id: $signalBId})
-          CREATE (s1)-[:CONTRADICTS]->(c)<-[:CONTRADICTS]-(s2)
+          MERGE (s1)-[:CONTRADICTS]->(c)<-[:CONTRADICTS]-(s2)
           RETURN c.id as id`,
           {
             id: contradiction.id,
@@ -187,6 +294,10 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
             revealedSignalId,
             signalAId: contradiction.signalAId,
             signalBId: contradiction.signalBId,
+            convergenceRate: contradiction.convergenceRate ?? 0,
+            isPermanentTrait: contradiction.isPermanentTrait ?? false,
+            firstSeen: contradiction.firstSeen,
+            lastSeen: contradiction.lastSeen,
           }
         );
       }
@@ -244,6 +355,7 @@ interface StoredSignalRecord {
   confidence: number;
   evidence: string;
   timestamp: string;
+  sourceType?: string;
   dimensions: string | BehavioralSignal['dimensions'] | null;
 }
 
@@ -272,7 +384,7 @@ async function processFullBuild(userId: string, personaId: string): Promise<void
   const masterPersona = compressor.compress();
 
   await storeMasterPersona(personaId, masterPersona, signals.length);
-  await regenerateClones(personaId, masterPersona);
+  await regenerateClones(personaId, masterPersona, contradictions);
 
   logger.info({ personaId, signalCount: signals.length }, 'Persona full build complete');
 }
@@ -324,7 +436,8 @@ async function processIncrementalUpdate(
   const totalSignalCount = await countPersonaSignals(personaId);
 
   await storeMasterPersona(personaId, masterPersona, totalSignalCount);
-  await regenerateClones(personaId, masterPersona);
+  const contradictions = await fetchContradictions(userId);
+  await regenerateClones(personaId, masterPersona, contradictions);
 
   logger.info({ personaId, previousPersonaId, signalCount: totalSignalCount }, 'Persona incremental update complete');
 }
@@ -339,6 +452,7 @@ async function fetchSignals(userId: string, onlyNewSignals: boolean = false): Pr
     `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)-[:HAS_SIGNAL]->(s:Signal)
      WHERE ${filters.join(' AND ')}
      RETURN s.id as id,
+            d.type as sourceType,
             s.type as type,
             s.value as value,
             s.confidence as confidence,
@@ -355,6 +469,7 @@ async function fetchSignals(userId: string, onlyNewSignals: boolean = false): Pr
     confidence: record.confidence,
     evidence: record.evidence,
     sourceDataId: '',
+    sourceType: record.sourceType,
     timestamp: record.timestamp,
     dimensions: parseSignalDimensions(record.dimensions),
   }));
@@ -393,6 +508,10 @@ async function fetchContradictions(userId: string): Promise<SignalContradiction[
     affectedDimensions: string | null;
     statedSignalId: string | null;
     revealedSignalId: string | null;
+    convergenceRate: number | null;
+    isPermanentTrait: boolean | null;
+    firstSeen: string | null;
+    lastSeen: string | null;
     connectedSignalIds: string[] | null;
   }>(
     `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_SIGNAL]->(:Signal)-[:CONTRADICTS]->(c:Contradiction)
@@ -406,6 +525,10 @@ async function fetchContradictions(userId: string): Promise<SignalContradiction[
             c.affectedDimensions as affectedDimensions,
             c.statedSignalId as statedSignalId,
             c.revealedSignalId as revealedSignalId,
+            c.convergenceRate as convergenceRate,
+            c.isPermanentTrait as isPermanentTrait,
+            toString(c.firstSeen) as firstSeen,
+            toString(c.lastSeen) as lastSeen,
             collect(DISTINCT s.id) as connectedSignalIds`,
     { userId }
   );
@@ -426,6 +549,10 @@ async function fetchContradictions(userId: string): Promise<SignalContradiction[
     affectedDimensions: record.affectedDimensions
       ? JSON.parse(record.affectedDimensions) as string[]
       : [],
+    convergenceRate: record.convergenceRate ?? 0,
+    isPermanentTrait: record.isPermanentTrait ?? false,
+    firstSeen: record.firstSeen || undefined,
+    lastSeen: record.lastSeen || undefined,
   }));
 }
 
@@ -598,7 +725,8 @@ async function storeMasterPersona(
 
 async function regenerateClones(
   personaId: string,
-  masterPersona: ReturnType<PersonaCompressor['compress']>
+  masterPersona: ReturnType<PersonaCompressor['compress']>,
+  contradictions: SignalContradiction[]
 ): Promise<void> {
   await runWriteSingle(
     `MATCH (p:Persona {id: $personaId})-[:HAS_CLONE]->(c:Clone)
@@ -608,7 +736,7 @@ async function regenerateClones(
     { personaId }
   );
 
-  const cloneGen = new CloneGenerator(masterPersona, personaId);
+  const cloneGen = new CloneGenerator(masterPersona, personaId, contradictions);
   const clones = cloneGen.generateClones(1000);
   const batchSize = 100;
 

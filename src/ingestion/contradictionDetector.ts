@@ -29,16 +29,19 @@ export class ContradictionDetector {
   private signals: BehavioralSignal[];
   private signalEmbeddings: Map<string, number[]>;
   private dimensionConceptEmbeddings: ConceptEmbeddings | null;
+  private existingContradictions: SignalContradiction[];
   private contradictions: SignalContradiction[] = [];
 
   constructor(
     signals: BehavioralSignal[],
     signalEmbeddings?: Map<string, number[]>,
-    dimensionConceptEmbeddings?: ConceptEmbeddings | null
+    dimensionConceptEmbeddings?: ConceptEmbeddings | null,
+    existingContradictions?: SignalContradiction[]
   ) {
     this.signals = signals;
     this.signalEmbeddings = signalEmbeddings ?? new Map();
     this.dimensionConceptEmbeddings = dimensionConceptEmbeddings ?? null;
+    this.existingContradictions = existingContradictions ?? [];
   }
 
   async detect(): Promise<SignalContradiction[]> {
@@ -298,10 +301,47 @@ export class ContradictionDetector {
     }
   }
 
-  private addContradiction(partial: Omit<SignalContradiction, 'id'>): void {
-    this.contradictions.push({
-      id: uuidv4(),
-      ...partial,
-    });
+  private addContradiction(partial: Omit<SignalContradiction, 'id' | 'convergenceRate' | 'isPermanentTrait' | 'firstSeen' | 'lastSeen'>): void {
+    const match = this.existingContradictions.find(c =>
+      c.type === partial.type &&
+      c.affectedDimensions.length === partial.affectedDimensions.length &&
+      c.affectedDimensions.every(d => partial.affectedDimensions.includes(d))
+    );
+
+    const signalA = this.signals.find(s => s.id === partial.signalAId);
+    const signalB = this.signals.find(s => s.id === partial.signalBId);
+    const tA = signalA ? new Date(signalA.timestamp).getTime() : Date.now();
+    const tB = signalB ? new Date(signalB.timestamp).getTime() : Date.now();
+    const latestTimestamp = Math.max(tA, tB);
+    const earliestTimestamp = Math.min(tA, tB);
+
+    if (match) {
+      const oldFirstSeen = match.firstSeen ? new Date(match.firstSeen).getTime() : earliestTimestamp;
+      const oldLastSeen = match.lastSeen ? new Date(match.lastSeen).getTime() : oldFirstSeen;
+      
+      const newLastSeen = Math.max(oldLastSeen, latestTimestamp);
+      const daysElapsed = Math.max(1, (newLastSeen - oldFirstSeen) / (1000 * 60 * 60 * 24));
+      const convergenceRate = (partial.magnitude - match.magnitude) / daysElapsed;
+      const isPermanentTrait = daysElapsed >= 365;
+
+      this.contradictions.push({
+        ...match,
+        ...partial,
+        id: match.id,
+        convergenceRate,
+        isPermanentTrait,
+        firstSeen: new Date(oldFirstSeen).toISOString(),
+        lastSeen: new Date(newLastSeen).toISOString(),
+      });
+    } else {
+      this.contradictions.push({
+        id: uuidv4(),
+        ...partial,
+        convergenceRate: 0,
+        isPermanentTrait: false,
+        firstSeen: new Date(earliestTimestamp).toISOString(),
+        lastSeen: new Date(latestTimestamp).toISOString(),
+      });
+    }
   }
 }

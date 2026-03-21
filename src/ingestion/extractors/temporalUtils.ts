@@ -1,8 +1,16 @@
+import { BehavioralSignal } from '../types.js';
+import { cosineSimilarity } from '../../embeddings/embeddingService.js';
+
 export interface TemporalProfile {
   timeOfDay: { morning: number; afternoon: number; evening: number; lateNight: number };
   dayOfWeek: { weekday: number; weekend: number };
   dominantCluster: string;
   burstiness: number;
+}
+
+export interface SequentialPattern {
+  signals: BehavioralSignal[];
+  progressionScore: number;
 }
 
 export function parseTimestamp(raw: string): Date | null {
@@ -137,4 +145,88 @@ export function scaleConfidence(
   const ratio = matchCount / totalEntries;
   const volumeBoost = Math.min(1, Math.log2(totalEntries + 1) / 6);
   return Math.min(cap, baseConfidence * (0.4 + 0.6 * ratio) * (0.6 + 0.4 * volumeBoost));
+}
+
+export function detectSequences(
+  signals: BehavioralSignal[],
+  embeddings: Map<string, number[]>
+): SequentialPattern[] {
+  const sortedSignals = [...signals]
+    .filter(s => parseTimestamp(s.timestamp))
+    .sort((a, b) => parseTimestamp(a.timestamp)!.getTime() - parseTimestamp(b.timestamp)!.getTime());
+
+  const sequences: SequentialPattern[] = [];
+  const MAX_WINDOW_MS = 72 * 60 * 60 * 1000;
+  const SIM_THRESHOLD = 0.4;
+
+  let currentSeq: BehavioralSignal[] = [];
+
+  for (const signal of sortedSignals) {
+    if (currentSeq.length === 0) {
+      currentSeq.push(signal);
+      continue;
+    }
+
+    const lastSignal = currentSeq[currentSeq.length - 1];
+    const tLast = parseTimestamp(lastSignal.timestamp)!.getTime();
+    const tCurrent = parseTimestamp(signal.timestamp)!.getTime();
+
+    const eLast = embeddings.get(lastSignal.id);
+    const eCurrent = embeddings.get(signal.id);
+
+    // Time window constraint
+    if (tCurrent - tLast <= MAX_WINDOW_MS && eLast && eCurrent) {
+      const sim = cosineSimilarity(eLast, eCurrent);
+      if (sim > SIM_THRESHOLD) {
+        currentSeq.push(signal);
+        continue;
+      }
+    }
+
+    // Window broken or constraint not met, process current sequence
+    if (currentSeq.length > 1) {
+      sequences.push({ signals: [...currentSeq], progressionScore: calculateProgressionScore(currentSeq, embeddings) });
+    }
+    currentSeq = [signal];
+  }
+
+  if (currentSeq.length > 1) {
+    sequences.push({ signals: [...currentSeq], progressionScore: calculateProgressionScore(currentSeq, embeddings) });
+  }
+
+  return sequences;
+}
+
+function calculateProgressionScore(sequence: BehavioralSignal[], embeddings: Map<string, number[]>): number {
+  if (sequence.length < 3) {
+    return 0.5; // Neutral progression for brief sequences
+  }
+
+  function getMeanPairwiseDistance(signals: BehavioralSignal[]): number {
+    let sumDist = 0;
+    let pairs = 0;
+    for (let i = 0; i < signals.length; i++) {
+      for (let j = i + 1; j < signals.length; j++) {
+        const ea = embeddings.get(signals[i].id);
+        const eb = embeddings.get(signals[j].id);
+        if (ea && eb) {
+          sumDist += (1 - cosineSimilarity(ea, eb));
+          pairs++;
+        }
+      }
+    }
+    return pairs > 0 ? sumDist / pairs : 0;
+  }
+
+  const firstHalf = sequence.slice(0, Math.ceil(sequence.length / 2));
+  const lastHalf = sequence.slice(Math.floor(sequence.length / 2));
+
+  // The formula specifies first 3 and last 3, but sequence can be shorter, so we use halves.
+  const distFirst = getMeanPairwiseDistance(firstHalf);
+  const distLast = getMeanPairwiseDistance(lastHalf);
+
+  if (distFirst === 0) return 0.5;
+
+  // progressionScore = 1 - (meanPairwiseDistance_last / meanPairwiseDistance_first)
+  return 1 - (distLast / distFirst);
 }
