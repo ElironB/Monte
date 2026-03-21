@@ -8,7 +8,7 @@ import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const dataSourceSchema = z.object({
-  sourceType: z.enum(['search_history', 'watch_history', 'social_media', 'financial', 'notes', 'files', 'composio']),
+  sourceType: z.enum(['search_history', 'watch_history', 'social_media', 'financial', 'notes', 'files', 'composio', 'ai_chat']),
   name: z.string().min(1).max(100),
   metadata: z.record(z.unknown()).optional(),
 });

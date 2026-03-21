@@ -10,6 +10,7 @@ import { SocialBehaviorExtractor } from '../../extractors/socialBehavior.js';
 import { FinancialBehaviorExtractor } from '../../extractors/financialBehavior.js';
 import { CognitiveStructureExtractor } from '../../extractors/cognitiveStructure.js';
 import { MediaConsumptionExtractor } from '../../extractors/mediaConsumption.js';
+import { AIChatHistoryExtractor } from '../../extractors/aiChatHistory.js';
 import { SemanticExtractor } from '../../extractors/semanticExtractor.js';
 import { ContradictionDetector } from '../../contradictionDetector.js';
 import { DimensionMapper } from '../../../persona/dimensionMapper.js';
@@ -35,6 +36,7 @@ const extractors = [
   new FinancialBehaviorExtractor(),
   new CognitiveStructureExtractor(),
   new MediaConsumptionExtractor(),
+  new AIChatHistoryExtractor(),
 ];
 
 const semanticExtractor = new SemanticExtractor();
@@ -71,7 +73,7 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
     const allSignals: BehavioralSignal[] = [];
     for (const extractor of extractors) {
       if (extractor.sourceTypes.includes(sourceType) || 
-          extractor.sourceTypes.some(st => sourceType.includes(st))) {
+          extractor.sourceTypes.some((st: string) => sourceType.includes(st))) {
         const signals = await extractor.extract(rawData);
         allSignals.push(...signals);
       }
