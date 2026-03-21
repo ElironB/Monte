@@ -7,6 +7,8 @@ import {
   scaleConfidence,
 } from './temporalUtils.js';
 
+type ChatContentPart = string | number | boolean | null | undefined | Record<string, any> | ChatContentPart[];
+
 interface ParsedMessage {
   text: string;           // User message content
   timestamp: string;      // ISO 8601 timestamp
@@ -287,6 +289,55 @@ export class AIChatHistoryExtractor extends SignalExtractor {
     return signals;
   }
 
+  private extractChatGPTText(content: any): string {
+    if (!content) return '';
+
+    const parts = Array.isArray(content?.parts)
+      ? content.parts
+      : content?.parts != null
+        ? [content.parts]
+        : [];
+
+    if (parts.length === 0 && typeof content?.text === 'string') {
+      return content.text;
+    }
+
+    return parts
+      .map((part: ChatContentPart) => this.flattenChatGPTPart(part))
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private flattenChatGPTPart(part: ChatContentPart): string {
+    if (typeof part === 'string') return part;
+    if (typeof part === 'number' || typeof part === 'boolean') return String(part);
+    if (part == null) return '';
+    if (Array.isArray(part)) {
+      return part
+        .map(item => this.flattenChatGPTPart(item))
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    if (typeof part !== 'object') return '';
+
+    const candidateKeys = ['text', 'content', 'value'];
+    for (const key of candidateKeys) {
+      const value = part[key];
+      const flattened = this.flattenChatGPTPart(value);
+      if (flattened) return flattened;
+    }
+
+    if (Array.isArray(part.parts)) {
+      return part.parts
+        .map((item: ChatContentPart) => this.flattenChatGPTPart(item))
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    return '';
+  }
+
   private parseConversations(raw: string): ParsedMessage[] {
     const messages: ParsedMessage[] = [];
     let parsed: any;
@@ -304,8 +355,7 @@ export class AIChatHistoryExtractor extends SignalExtractor {
         for (const node of Object.values(conv.mapping)) {
           const msg = (node as any).message;
           if (!msg || msg.author?.role !== 'user') continue;
-          const parts = msg.content?.parts || [];
-          const text = parts.filter((p: any) => typeof p === 'string').join('\n').trim();
+          const text = this.extractChatGPTText(msg.content).trim();
           if (!text) continue;
           messages.push({
             text,
@@ -316,7 +366,7 @@ export class AIChatHistoryExtractor extends SignalExtractor {
           });
         }
       }
-      if (messages.length > 0) return messages;
+      return messages;
     }
 
     // Claude detection
