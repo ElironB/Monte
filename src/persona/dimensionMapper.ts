@@ -110,8 +110,11 @@ export class DimensionMapper {
 
     let weightedSum = 0;
     let totalWeight = 0;
+    const relevantSignalIds = new Set(this.signals.map(signal => signal.id));
     const relevantContradictions = this.contradictions.filter(
-      contradiction => contradiction.affectedDimensions.includes(dimension)
+      contradiction =>
+        contradiction.affectedDimensions.includes(dimension)
+        && (relevantSignalIds.has(contradiction.signalAId) || relevantSignalIds.has(contradiction.signalBId))
     );
 
     for (const signal of this.signals) {

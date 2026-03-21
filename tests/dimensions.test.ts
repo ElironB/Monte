@@ -251,6 +251,34 @@ describe('DimensionMapper', () => {
       expect(result.dimensions.riskTolerance).toBeLessThanOrEqual(1);
     });
 
+    it('ignores historical contradictions that are unrelated to the current signal batch', () => {
+      const freshSignal = makeSignal('keeps taking speculative bets');
+      const signalEmbeddings = new Map<string, number[]>([
+        [freshSignal.id, [1, 0]],
+        ['historical-signal', [-1, 0]],
+      ]);
+      const contradictions: SignalContradiction[] = [{
+        id: 'c1',
+        signalAId: 'historical-signal',
+        signalBId: 'another-historical-signal',
+        type: 'cross_domain',
+        description: 'old contradiction unrelated to this incremental batch',
+        severity: 'high',
+        magnitude: 1,
+        affectedDimensions: ['riskTolerance'],
+      }];
+
+      const result = new DimensionMapper(
+        [freshSignal],
+        conceptEmbeddings,
+        signalEmbeddings,
+        contradictions
+      ).mapToDimensionsWithContradictions();
+
+      expect(result.dimensions.riskTolerance).toBe(1);
+      expect(result.contradictionPenalties.riskTolerance).toBe(0);
+    });
+
     it('weights revealed-side signals higher than stated-side signals', () => {
       const stated = makeSignal('claims extreme caution');
       const revealed = makeSignal('keeps taking speculative bets');
