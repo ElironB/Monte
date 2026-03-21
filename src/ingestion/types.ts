@@ -23,6 +23,7 @@ export interface BehavioralSignal {
   confidence: number; // 0-1
   evidence: string;
   sourceDataId: string;
+  sourceType?: string;
   timestamp: string;
   dimensions: {
     category?: string;
@@ -46,5 +47,9 @@ export interface SignalContradiction {
   severity: 'low' | 'medium' | 'high';
   magnitude: number;
   affectedDimensions: string[];
+  convergenceRate?: number;
+  isPermanentTrait?: boolean;
+  firstSeen?: string;
+  lastSeen?: string;
   resolution?: string;
 }
