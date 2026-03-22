@@ -207,8 +207,14 @@ export class BayesianUpdater {
       if (!embedding) {
         return false;
       }
-      const simHigh = cosineSimilarity(embedding, concepts.high);
-      const simLow = cosineSimilarity(embedding, concepts.low);
+      const getSim = (emb: number[], anchors: number[][]) => {
+        if (!anchors || anchors.length === 0) return 0;
+        const sims = anchors.map(a => cosineSimilarity(emb, a)).sort((a,b) => b - a);
+        return sims.slice(0, 2).reduce((sum, s) => sum + s, 0) / Math.min(2, sims.length);
+      };
+      
+      const simHigh = getSim(embedding, concepts.high);
+      const simLow = getSim(embedding, concepts.low);
       return Math.max(simHigh, simLow) >= SIMILARITY_THRESHOLD;
     });
   }

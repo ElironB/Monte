@@ -24,12 +24,12 @@ function makeSignal(
 }
 
 const conceptEmbeddings: ConceptEmbeddings = {
-  riskTolerance: { high: [1, 0], low: [-1, 0] },
-  timePreference: { high: [0.9, 0.1], low: [-0.9, -0.1] },
-  socialDependency: { high: [0.7, 0.7], low: [-0.7, -0.7] },
-  learningStyle: { high: [0, 1], low: [0, -1] },
-  decisionSpeed: { high: [0.8, 0.2], low: [-0.8, -0.2] },
-  emotionalVolatility: { high: [0.6, 0.8], low: [-0.6, -0.8] },
+  riskTolerance: { high: [[1, 0]], low: [[-1, 0]], negative: [] },
+  timePreference: { high: [[0.9, 0.1]], low: [[-0.9, -0.1]], negative: [] },
+  socialDependency: { high: [[0.7, 0.7]], low: [[-0.7, -0.7]], negative: [] },
+  learningStyle: { high: [[0, 1]], low: [[0, -1]], negative: [] },
+  decisionSpeed: { high: [[0.8, 0.2]], low: [[-0.8, -0.2]], negative: [] },
+  emotionalVolatility: { high: [[0.6, 0.8]], low: [[-0.6, -0.8]], negative: [] },
 };
 
 describe('DimensionMapper', () => {

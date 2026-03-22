@@ -253,8 +253,8 @@ export class ContradictionDetector {
   private calculateMagnitude(
     signalAId: string,
     signalBId: string,
-    conceptHigh: number[],
-    conceptLow: number[]
+    conceptHigh: number[][],
+    conceptLow: number[][]
   ): number {
     const embA = this.signalEmbeddings.get(signalAId);
     const embB = this.signalEmbeddings.get(signalBId);
@@ -262,9 +262,31 @@ export class ContradictionDetector {
       return 0.5;
     }
 
-    const scoreA = cosineSimilarity(embA, conceptHigh) - cosineSimilarity(embA, conceptLow);
-    const scoreB = cosineSimilarity(embB, conceptHigh) - cosineSimilarity(embB, conceptLow);
-    return Math.max(0, Math.min(1, Math.abs(scoreA - scoreB)));
+    const getSim = (emb: number[], anchors: number[][]) => {
+      if (anchors.length === 0) return 0;
+      const sims = anchors.map(a => cosineSimilarity(emb, a)).sort((a,b) => b - a);
+      return sims.slice(0, 2).reduce((sum, s) => sum + s, 0) / Math.min(2, sims.length);
+    };
+
+    const scoreA = getSim(embA, conceptHigh) - getSim(embA, conceptLow);
+    const scoreB = getSim(embB, conceptHigh) - getSim(embB, conceptLow);
+
+    // Calculate source reliability gap if available
+    const sigA = this.signals.find(s => s.id === signalAId);
+    const sigB = this.signals.find(s => s.id === signalBId);
+    let sourceReliabilityGap = 1;
+    if (sigA?.sourceReliability !== undefined && sigB?.sourceReliability !== undefined) {
+      sourceReliabilityGap = Math.abs(sigA.sourceReliability - sigB.sourceReliability) + 0.5;
+    }
+
+    // Temporal overlap
+    const tA = sigA ? new Date(sigA.timestamp).getTime() : Date.now();
+    const tB = sigB ? new Date(sigB.timestamp).getTime() : Date.now();
+    const daysApart = Math.abs(tA - tB) / (1000 * 60 * 60 * 24);
+    const temporalOverlap = Math.max(0.2, 1 - (daysApart / 365));
+
+    const rawMagnitude = Math.abs(scoreA - scoreB);
+    return Math.max(0, Math.min(1, rawMagnitude * sourceReliabilityGap * temporalOverlap));
   }
 
   private calculateMagnitudeForDimensions(

@@ -32,6 +32,12 @@ interface HeuristicConceptEmbeddings {
   theoreticalLearning: number[];
   experientialLearning: number[];
   exitPreservation: number[];
+  flawlessExecution: number[];
+  abandonedExecution: number[];
+  exhaustiveResearch: number[];
+  superficialAcceptance: number[];
+  stressResilience: number[];
+  stressCollapse: number[];
 }
 
 const HEURISTIC_CONCEPT_TEXTS: Record<keyof HeuristicConceptEmbeddings, string> = {
@@ -46,6 +52,12 @@ const HEURISTIC_CONCEPT_TEXTS: Record<keyof HeuristicConceptEmbeddings, string> 
   theoreticalLearning: 'study, learn, degree, research, theoretical understanding before acting',
   experientialLearning: 'practice, experiment, hands-on trial, learn by doing, direct experience',
   exitPreservation: 'quit, stop, exit, retreat, preserve resources, reduce exposure and protect capital',
+  flawlessExecution: 'follow through, complete tasks, keep commitments, execute flawlessly, finish projects',
+  abandonedExecution: 'procrastinate, abandon plans, fail to execute, drop tasks, miss deadlines',
+  exhaustiveResearch: 'deep research, gather all facts, verify sources, seek maximum information',
+  superficialAcceptance: 'accept without checking, act on limited info, ignore research, superficial understanding',
+  stressResilience: 'thrive under pressure, focus in crisis, resilient handling of stress, perform well when things go wrong',
+  stressCollapse: 'panic under pressure, freeze in crisis, collapse from stress, shut down when overwhelmed',
 };
 
 interface ForkEvaluatorOptions {
@@ -325,40 +337,67 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
   private describeTraits(params: CloneParameters): string {
     const descriptions: string[] = [];
 
+    const getSuffix = (dim: string) => {
+      if (!params.confidenceScores) return '';
+      const conf = params.confidenceScores[dim];
+      if (conf === undefined) return '';
+      if (conf < 0.4) return ' (Low Confidence: Based on sparse/estimated data, this might be inaccurate)';
+      if (conf > 0.8) return ' (High Confidence: Verified across multiple reliable sources)';
+      return '';
+    };
+
     if (params.riskTolerance > 0.7) {
-      descriptions.push('- High risk tolerance: willing to take bold chances');
+      descriptions.push(`- High risk tolerance: willing to take bold chances${getSuffix('riskTolerance')}`);
     } else if (params.riskTolerance < 0.3) {
-      descriptions.push('- Risk averse: prefers safe, proven options');
+      descriptions.push(`- Risk averse: prefers safe, proven options${getSuffix('riskTolerance')}`);
     }
 
     if (params.decisionSpeed > 0.7) {
-      descriptions.push('- Fast decision maker: acts quickly, sometimes impulsively');
+      descriptions.push(`- Fast decision maker: acts quickly, sometimes impulsively${getSuffix('decisionSpeed')}`);
     } else if (params.decisionSpeed < 0.3) {
-      descriptions.push('- Deliberate: analyzes carefully before acting');
+      descriptions.push(`- Deliberate: analyzes carefully before acting${getSuffix('decisionSpeed')}`);
     }
 
     if (params.timePreference > 0.7) {
-      descriptions.push('- Impatient: prefers immediate gratification');
+      descriptions.push(`- Impatient: prefers immediate gratification${getSuffix('timePreference')}`);
     } else if (params.timePreference < 0.3) {
-      descriptions.push('- Patient: willing to delay rewards for better outcomes');
+      descriptions.push(`- Patient: willing to delay rewards for better outcomes${getSuffix('timePreference')}`);
     }
 
     if (params.emotionalVolatility > 0.7) {
-      descriptions.push('- Emotionally volatile: feelings strongly influence decisions');
+      descriptions.push(`- Emotionally volatile: feelings strongly influence decisions${getSuffix('emotionalVolatility')}`);
     } else if (params.emotionalVolatility < 0.3) {
-      descriptions.push('- Emotionally stable: keeps feelings separate from decisions');
+      descriptions.push(`- Emotionally stable: keeps feelings separate from decisions${getSuffix('emotionalVolatility')}`);
     }
 
     if (params.socialDependency > 0.7) {
-      descriptions.push('- Socially dependent: considers others\' opinions heavily');
+      descriptions.push(`- Socially dependent: considers others' opinions heavily${getSuffix('socialDependency')}`);
     } else if (params.socialDependency < 0.3) {
-      descriptions.push('- Independent: makes decisions without social input');
+      descriptions.push(`- Independent: makes decisions without social input${getSuffix('socialDependency')}`);
     }
 
     if (params.learningStyle > 0.7) {
-      descriptions.push('- Theoretical learner: prefers understanding before doing');
+      descriptions.push(`- Theoretical learner: prefers understanding before doing${getSuffix('learningStyle')}`);
     } else if (params.learningStyle < 0.3) {
-      descriptions.push('- Experiential learner: learns by doing');
+      descriptions.push(`- Experiential learner: learns by doing${getSuffix('learningStyle')}`);
+    }
+
+    if (params.executionGap > 0.7) {
+      descriptions.push(`- High execution gap: struggles to follow through on plans${getSuffix('executionGap')}`);
+    } else if (params.executionGap < 0.3) {
+      descriptions.push(`- Low execution gap: consistently follows through on commitments${getSuffix('executionGap')}`);
+    }
+
+    if (params.informationSeeking > 0.7) {
+      descriptions.push(`- High information seeking: obsessively researches before deciding${getSuffix('informationSeeking')}`);
+    } else if (params.informationSeeking < 0.3) {
+      descriptions.push(`- Low information seeking: accepts info at face value${getSuffix('informationSeeking')}`);
+    }
+
+    if (params.stressResponse > 0.7) {
+      descriptions.push(`- Poor stress response: shuts down or freezes under pressure${getSuffix('stressResponse')}`);
+    } else if (params.stressResponse < 0.3) {
+      descriptions.push(`- Resilient stress response: thrives and focuses sharply under pressure${getSuffix('stressResponse')}`);
     }
 
     return descriptions.join('\n') || '- Moderate on all behavioral dimensions';
@@ -476,6 +515,36 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
         }
       }
 
+      if (cloneParams.executionGap > 0.7) {
+        if (label.includes('abandon') || label.includes('procrastinate') || label.includes('skip') || label.includes('drop')) {
+          score += 1;
+        }
+      } else if (cloneParams.executionGap < 0.3) {
+        if (label.includes('finish') || label.includes('complete') || label.includes('execute') || label.includes('commit')) {
+          score += 1;
+        }
+      }
+
+      if (cloneParams.informationSeeking > 0.7) {
+        if (label.includes('research') || label.includes('investigate') || label.includes('verify') || label.includes('gather')) {
+          score += 1;
+        }
+      } else if (cloneParams.informationSeeking < 0.3) {
+        if (label.includes('accept') || label.includes('ignore') || label.includes('trust') || label.includes('skip research')) {
+          score += 1;
+        }
+      }
+
+      if (cloneParams.stressResponse > 0.7) {
+        if (label.includes('panic') || label.includes('freeze') || label.includes('quit') || label.includes('collapse')) {
+          score += 1;
+        }
+      } else if (cloneParams.stressResponse < 0.3) {
+        if (label.includes('focus') || label.includes('persist') || label.includes('handle') || label.includes('thrive')) {
+          score += 1;
+        }
+      }
+
       if ((state.capital < 10000 && label.includes('quit')) || label.includes('stop')) {
         score += 1;
       }
@@ -548,6 +617,9 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
       score += this.scorePole(cloneParams.timePreference, embedding, concepts.longTermPatience, concepts.immediateAction, 1.3);
       score += this.scorePole(cloneParams.learningStyle, embedding, concepts.experientialLearning, concepts.theoreticalLearning, 1.0);
       score += this.scorePole(cloneParams.emotionalVolatility, embedding, concepts.cautiousPreservation, concepts.emotionalImpulse, 0.9);
+      score += this.scorePole(cloneParams.executionGap, embedding, concepts.flawlessExecution, concepts.abandonedExecution, 1.2);
+      score += this.scorePole(cloneParams.informationSeeking, embedding, concepts.superficialAcceptance, concepts.exhaustiveResearch, 1.0);
+      score += this.scorePole(cloneParams.stressResponse, embedding, concepts.stressResilience, concepts.stressCollapse, 1.5);
 
       if (state.capital < 10000) {
         score += cosineSimilarity(embedding, concepts.exitPreservation) * 0.9;

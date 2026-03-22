@@ -314,7 +314,7 @@ A deep technical audit identified 6 fatal flaws in the persona construction pipe
 - **Timestamp propagation** (PR #28): Extractors now pass original event timestamps, not extraction time
 - **Contradictions → DimensionMapper** (PR #27): Contradictions now influence persona dimensions with magnitude-weighted bias
 
-### P1 — High Priority (Next)
+### ✅ P1 — High Priority (COMPLETED)
 | Change | Effort | Description |
 |--------|--------|-------------|
 | Add 3 new dimensions | Large | `executionGap` (plan vs action gap), `informationSeeking` (over-research vs minimal-info action), `stressResponse` (panic vs steady) |
@@ -322,7 +322,7 @@ A deep technical audit identified 6 fatal flaws in the persona construction pipe
 | Multi-anchor concept descriptions | Medium | Replace keyword lists with 3-5 contextual sentences per pole + negative anchors as relevance gate |
 | Per-dimension confidence intervals | Medium | Track signal count, source diversity, and communicate uncertainty to simulation engine |
 
-### P2 — Medium Priority
+### ✅ P2 — Medium Priority (COMPLETED)
 | Change | Effort | Description |
 |--------|--------|-------------|
 | Temporal-aware embeddings | Small | Prepend `[late_night, weekend]` context before embedding — same content at 3am vs 2pm produces different vectors |
@@ -420,10 +420,11 @@ A deep technical audit identified 6 fatal flaws in the persona construction pipe
 - **Kelly Criterion**: Position sizing from actual simulation data, fractional Kelly adjusted by behavioral risk tolerance
 - **Bayesian Updates**: Incremental persona refinement — evidence accumulates across ingestions instead of full rebuild
 
-### 🔄 PHASE 9 - Persona Pipeline Hardening (IN PROGRESS)
+### ✅ PHASE 9 - Persona Pipeline Hardening (COMPLETE)
 - **P0 fixes complete**: Timestamp propagation (PR #28), contradictions feeding into DimensionMapper (PR #27)
 - **AI chat history extractor** (SCO-034): New `ai_chat` source type for ChatGPT/Claude/Gemini/Grok exports
-- **Pending**: P1 items (new dimensions, source reliability, multi-anchor concepts, confidence intervals)
+- **P1 Pipeline Items Complete**: Added 3 new dimensions (`executionGap`, `informationSeeking`, `stressResponse`), multi-anchor concept embeddings, source reliability weighting, and per-dimension confidence intervals.
+- **P2 Flow Enhancements Complete**: Added temporal-aware embeddings prefixing, adaptive recency decay by source type, sequential pattern detection (sliding windows), and contradiction magnitude/convergence tracking.
 
 ---
 
@@ -703,6 +704,6 @@ npm run dev
 
 ---
 
-**Last Updated**: March 2026 — Persona pipeline P0 fixes complete, AI chat extractor added
-**Status**: Phases 1-8 complete. Phase 9 (persona hardening) in progress.
-**Next**: P1 pipeline improvements (new dimensions, source reliability, multi-anchor concepts).
+**Last Updated**: March 2026 — Persona pipeline P0, P1, and P2 upgrades complete
+**Status**: Phases 1-9 complete.
+**Next**: P3 pipeline improvements (Cycle detection, Drift detection, Benchmarks).

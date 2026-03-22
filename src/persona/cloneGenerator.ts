@@ -1,4 +1,4 @@
-import { MasterPersona } from './personaCompressor.js';
+import { MasterPersona, DimensionScore } from './personaCompressor.js';
 import { v4 as uuidv4 } from 'uuid';
 import { SignalContradiction } from '../ingestion/types.js';
 
@@ -19,19 +19,25 @@ export interface CloneParameters {
   learningStyle: number;
   decisionSpeed: number;
   emotionalVolatility: number;
+  executionGap: number;
+  informationSeeking: number;
+  stressResponse: number;
   // Derived from master persona but with variance
+  confidenceScores?: Record<string, number>;
 }
 
 export class CloneGenerator {
   private masterPersona: MasterPersona;
   private personaId: string;
   private baseFingerprint: Record<string, number>;
+  private dimensionScores: Record<string, DimensionScore>;
   private contradictions: SignalContradiction[];
 
   constructor(masterPersona: MasterPersona, personaId: string, contradictions?: SignalContradiction[]) {
     this.masterPersona = masterPersona;
     this.personaId = personaId;
     this.baseFingerprint = masterPersona.behavioralFingerprint;
+    this.dimensionScores = masterPersona.dimensionScores || {};
     this.contradictions = contradictions ?? [];
   }
 
@@ -79,16 +85,20 @@ export class CloneGenerator {
     // 50th = 0, 5th = -1.645, 95th = 1.645
     const zScore = this.percentileToZScore(percentile / 100);
     
-    // Apply variance to each dimension based on master persona
-    const variance = 0.15; // 15% standard deviation
-    
+    // Apply variance to each dimension based on master persona's DimensionScore
     const parameters: CloneParameters = {
-      riskTolerance: this.sampleDimension('riskTolerance', zScore, variance),
-      timePreference: this.sampleDimension('timePreference', zScore, variance),
-      socialDependency: this.sampleDimension('socialDependency', zScore, variance),
-      learningStyle: this.sampleDimension('learningStyle', zScore, variance),
-      decisionSpeed: this.sampleDimension('decisionSpeed', zScore, variance),
-      emotionalVolatility: this.sampleDimension('emotionalVolatility', zScore, variance),
+      riskTolerance: this.sampleDimension('riskTolerance', zScore),
+      timePreference: this.sampleDimension('timePreference', zScore),
+      socialDependency: this.sampleDimension('socialDependency', zScore),
+      learningStyle: this.sampleDimension('learningStyle', zScore),
+      decisionSpeed: this.sampleDimension('decisionSpeed', zScore),
+      emotionalVolatility: this.sampleDimension('emotionalVolatility', zScore),
+      executionGap: this.sampleDimension('executionGap', zScore),
+      informationSeeking: this.sampleDimension('informationSeeking', zScore),
+      stressResponse: this.sampleDimension('stressResponse', zScore),
+      confidenceScores: Object.fromEntries(
+        Object.entries(this.dimensionScores).map(([k, v]) => [k, v.confidence])
+      )
     };
     
     // Apply internal consistency checks
@@ -107,10 +117,19 @@ export class CloneGenerator {
 
   private sampleDimension(
     dimension: keyof CloneParameters,
-    zScore: number,
-    variance: number
+    zScore: number
   ): number {
     const baseValue = this.baseFingerprint[dimension] ?? 0.5;
+    const score = this.dimensionScores[dimension as string];
+    
+    let variance = 0.15;
+    if (score) {
+      if (score.isEstimated) {
+        variance = 0.30;
+      } else {
+        variance = 0.15 * (1 - score.confidence + 0.5);
+      }
+    }
     
     // Lock variance if this dimension is part of a permanent trait contradiction
     const isPermanent = this.contradictions.some(c => c.isPermanentTrait && c.affectedDimensions.includes(dimension));

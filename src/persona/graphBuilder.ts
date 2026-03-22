@@ -10,6 +10,11 @@ export interface TraitNode {
   confidence: number;
   evidence: string;
   dimension: keyof BehavioralDimensions;
+  signalCount?: number;
+  sourceCount?: number;
+  sourceTypes?: string[];
+  isEstimated?: boolean;
+  confidenceInterval?: [number, number];
 }
 
 export interface MemoryNode {
