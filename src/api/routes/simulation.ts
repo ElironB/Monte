@@ -19,13 +19,13 @@ const createSchema = z.object({
   scenarioType: z.enum(SCENARIOS),
   name: z.string().min(1).max(100),
   parameters: z.record(z.unknown()).optional(),
-  cloneCount: z.number().min(10).max(10000).default(1000),
+  cloneCount: z.number().int().min(10).max(10000).default(1000),
   capitalAtRisk: z.number().positive().optional(),
 });
 
 const listQuerySchema = z.object({
-  page: z.coerce.number().min(1).default(1),
-  limit: z.coerce.number().min(1).max(100).default(20),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(['pending', 'running', 'completed', 'failed']).optional(),
   scenarioType: z.enum(SCENARIOS).optional(),
   sortBy: z.enum(['createdAt', 'name', 'status']).default('createdAt'),

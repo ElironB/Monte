@@ -101,9 +101,10 @@ async function streamRoutes(fastify: FastifyInstance) {
         progress: number;
         completedBatches: number;
         cloneCount: number;
+        error?: string;
       }>(
         `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
-         RETURN s.id as id, s.status as status, s.progress as progress, s.completedBatches as completedBatches, s.cloneCount as cloneCount`,
+         RETURN s.id as id, s.status as status, s.progress as progress, s.completedBatches as completedBatches, s.cloneCount as cloneCount, s.error as error`,
         { userId, simId: id }
       );
 
@@ -124,6 +125,7 @@ async function streamRoutes(fastify: FastifyInstance) {
           completedBatches: parsed.completedBatches ?? simulation.completedBatches ?? 0,
           totalBatches: Math.ceil(simulation.cloneCount / 100),
           cloneCount: simulation.cloneCount,
+          error: parsed.error ?? simulation.error,
           currentBatch: parsed.currentBatch,
           estimatedTimeRemaining: parsed.estimatedTimeRemaining,
           lastUpdated: parsed.lastUpdated,
@@ -137,6 +139,7 @@ async function streamRoutes(fastify: FastifyInstance) {
         completedBatches: simulation.completedBatches ?? 0,
         totalBatches: Math.ceil(simulation.cloneCount / 100),
         cloneCount: simulation.cloneCount,
+        error: simulation.error,
       };
     },
   });

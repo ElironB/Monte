@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import OpenAI from 'openai';
+import { parseJsonResponse } from '../utils/json.js';
 
 export interface ParsedSimulation {
   scenarioType: string;
@@ -50,12 +51,7 @@ export async function parseSimulationQuery(query: string): Promise<ParsedSimulat
   const { apiKey, baseUrl, model } = loadLLMConfig();
   const client = new OpenAI({ apiKey, baseURL: baseUrl });
 
-  const completion = await client.chat.completions.create({
-    model,
-    messages: [
-      {
-        role: 'system',
-        content: `You parse natural language decision questions into structured simulation parameters.
+  const systemPrompt = `You parse natural language decision questions into structured simulation parameters.
 
 Available scenario types: ${SCENARIO_TYPES.join(', ')}
 
@@ -72,35 +68,61 @@ Examples:
 "is it worth getting an MBA at $120k tuition?" -> {"scenarioType":"advanced_degree","name":"MBA decision","capitalAtRisk":120000,"timeframe":24,"context":{"degreeType":"MBA","tuitionCost":120000}}
 "should I move to Berlin from NYC?" -> {"scenarioType":"geographic_relocation","name":"Move to Berlin","context":{"origin":"NYC","destination":"Berlin"}}
 
-Return valid JSON only with these keys: scenarioType, name, capitalAtRisk, timeframe, context.`,
-      },
-      { role: 'user', content: query },
-    ],
-    temperature: 0.1,
-    max_tokens: 500,
-    response_format: { type: 'json_object' },
-  });
+Return valid JSON only with these keys: scenarioType, name, capitalAtRisk, timeframe, context.`;
 
-  const raw = completion.choices[0]?.message?.content || '{}';
-  const parsed = JSON.parse(raw) as {
-    scenarioType?: unknown;
-    name?: unknown;
-    capitalAtRisk?: unknown;
-    timeframe?: unknown;
-    context?: unknown;
-  };
+  let lastError: Error | undefined;
+  let raw = '{}';
 
-  return {
-    scenarioType: isScenarioType(parsed.scenarioType) ? parsed.scenarioType : 'custom',
-    name: typeof parsed.name === 'string' && parsed.name.trim().length > 0 ? parsed.name.trim() : query.slice(0, 40),
-    capitalAtRisk: typeof parsed.capitalAtRisk === 'number' && Number.isFinite(parsed.capitalAtRisk)
-      ? parsed.capitalAtRisk
-      : undefined,
-    timeframe: typeof parsed.timeframe === 'number' && Number.isFinite(parsed.timeframe)
-      ? parsed.timeframe
-      : undefined,
-    context: parsed.context && typeof parsed.context === 'object' && !Array.isArray(parsed.context)
-      ? parsed.context as Record<string, unknown>
-      : {},
-  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
+        {
+          role: 'user',
+          content: attempt === 0
+            ? query
+            : `${query}\n\nYour previous response was malformed. Return valid JSON only.`,
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 500,
+      response_format: { type: 'json_object' },
+    });
+
+    raw = completion.choices[0]?.message?.content || '{}';
+
+    try {
+      const parsed = parseJsonResponse<{
+        scenarioType?: unknown;
+        name?: unknown;
+        capitalAtRisk?: unknown;
+        timeframe?: unknown;
+        context?: unknown;
+      }>(raw);
+
+      return {
+        scenarioType: isScenarioType(parsed.scenarioType) ? parsed.scenarioType : 'custom',
+        name: typeof parsed.name === 'string' && parsed.name.trim().length > 0 ? parsed.name.trim() : query.slice(0, 40),
+        capitalAtRisk: typeof parsed.capitalAtRisk === 'number' && Number.isFinite(parsed.capitalAtRisk)
+          ? parsed.capitalAtRisk
+          : undefined,
+        timeframe: typeof parsed.timeframe === 'number' && Number.isFinite(parsed.timeframe)
+          ? parsed.timeframe
+          : undefined,
+        context: parsed.context && typeof parsed.context === 'object' && !Array.isArray(parsed.context)
+          ? parsed.context as Record<string, unknown>
+          : {},
+      };
+    } catch (err) {
+      lastError = err as Error;
+    }
+  }
+
+  throw new Error(
+    `Simulation query parsing failed; retry your prompt or use \`monte simulate run -s <scenario>\`. ${lastError?.message || `Raw response: ${raw.slice(0, 200)}`}`
+  );
 }

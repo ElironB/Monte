@@ -99,10 +99,37 @@ function mapRecord<T>(record: neo4j.Record): T {
   return obj as T;
 }
 
+const INTEGER_PARAM_NAMES = new Set([
+  'skip',
+  'limit',
+  'page',
+  'cloneCount',
+  'cloneBatchIndex',
+  'totalBatches',
+  'completedBatches',
+  'batchSize',
+  'startIndex',
+  'endIndex',
+  'version',
+]);
+
+function normalizeParams(params?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!params) return params;
+
+  return Object.fromEntries(
+    Object.entries(params).map(([key, value]) => {
+      if (INTEGER_PARAM_NAMES.has(key) && typeof value === 'number' && Number.isFinite(value)) {
+        return [key, neo4j.int(Math.trunc(value))];
+      }
+      return [key, value];
+    })
+  );
+}
+
 export async function runQuery<T>(cypher: string, params?: Record<string, unknown>): Promise<T[]> {
   const session = await getSession();
   try {
-    const result = await session.run(cypher, params);
+    const result = await session.run(cypher, normalizeParams(params));
     return result.records.map(record => mapRecord<T>(record));
   } finally {
     await session.close();
@@ -118,7 +145,7 @@ export async function runWrite<T>(cypher: string, params?: Record<string, unknow
   const session = await getSession();
   try {
     const result = await session.executeWrite(async (tx) => {
-      const queryResult = await tx.run(cypher, params);
+      const queryResult = await tx.run(cypher, normalizeParams(params));
       return queryResult.records.map(record => mapRecord<T>(record));
     });
     return result;

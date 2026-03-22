@@ -856,8 +856,9 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     
     // Calculate batch size (100 clones per batch by default)
     const batchSize = 100;
-    const startIndex = cloneBatchIndex * batchSize;
-    const endIndex = Math.min(startIndex + batchSize, simulation.cloneCount);
+    const startIndex = Math.trunc(cloneBatchIndex * batchSize);
+    const endIndex = Math.trunc(Math.min(startIndex + batchSize, simulation.cloneCount));
+    const cloneLimit = Math.max(0, Math.trunc(endIndex - startIndex));
     
     // Fetch clones for this batch
     const cloneData = await runQuery<CloneData>(
@@ -867,7 +868,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
        SKIP $skip
        LIMIT $limit
        RETURN c.id as id, c.parameters as parameters, c.percentile as percentile, c.category as category`,
-      { personaId, skip: startIndex, limit: endIndex - startIndex }
+      { personaId, skip: startIndex, limit: cloneLimit }
     );
     
     // Parse clone parameters
