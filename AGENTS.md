@@ -1,104 +1,113 @@
-# AGENTS.md
+# AGENTS
 
-This file provides guidance to WARP (warp.dev) when working with code in this repository.
+This repository is a self-hosted Monte backend. Treat the current product as a Fastify API plus local CLI for persona-driven decision simulation, evidence-adjusted reruns, and deterministic benchmark validation.
 
-## Commands
+## Read first
 
-### Development
+1. `README.md`
+2. `CONTEXT.md`
+3. `docs/architecture.md`
+4. `SKILL.md`
+
+## Repo facts you should not get wrong
+
+- The API framework is Fastify, not Express.
+- Open-source mode uses injected local auth via `src/api/plugins/auth.ts`.
+- The persona model is 9-dimensional:
+  - `riskTolerance`
+  - `timePreference`
+  - `socialDependency`
+  - `learningStyle`
+  - `decisionSpeed`
+  - `emotionalVolatility`
+  - `executionGap`
+  - `informationSeeking`
+  - `stressResponse`
+- There are 8 built-in scenarios plus `custom`.
+- The simulation stack includes a causal state model, belief state model, experiment recommendations, evidence capture, and evidence-adjusted reruns.
+- The benchmark harness is a first-class regression surface and must stay deterministic.
+
+## High-leverage files
+
+- `src/index.ts` — runtime bootstrap
+- `src/api/routes/persona.ts` — persona API
+- `src/api/routes/simulation.ts` — simulation/evidence/rerun API
+- `src/cli/commands/simulation.ts` — simulation CLI
+- `src/persona/dimensionMapper.ts` — source of truth for dimensions
+- `src/persona/psychologyLayer.ts` — derived psychology model
+- `src/persona/cloneGenerator.ts` — stratified clone generation
+- `src/simulation/decisionGraph.ts` — scenario graphs and shared outcome semantics
+- `src/simulation/engine.ts` — clone execution
+- `src/simulation/resultAggregator.ts` — aggregate results
+- `src/simulation/evidenceLoop.ts` — evidence adjustments and rerun comparison
+- `src/benchmarks/fixtures.ts` — seeded fixture corpus
+- `src/benchmarks/harness.ts` — benchmark metrics and execution
+- `tests/benchmarks/harness.test.ts` — benchmark assertions
+
+## Guardrails
+
+- Keep signal extraction rule-based.
+- Use the `openai` SDK for model providers; do not add provider-specific SDKs.
+- Use `pino` and repo logging conventions in server code; avoid `console.log` in `src/` outside the CLI.
+- If you change outcome semantics, keep the scenario/engine/aggregation/benchmark path aligned.
+- If you change the benchmark harness, preserve seeded per-run randomness.
+- Treat `src/persona/dimensionMapper.ts` as the authoritative dimension list. Some display/reporting code still contains legacy hardcoded subsets.
+- `connect` / Composio support is experimental. Do not document it as a fully supported ingestion path.
+- When architecture or user-facing commands change, update `README.md`, `CONTEXT.md`, `AGENTS.md`, `docs/architecture.md`, and `SKILL.md` together.
+
+## Validation checklist
+
+For code changes that touch behavior:
+
 ```bash
-npm install                              # Install dependencies
-cp .env.example .env                     # Configure environment
-docker-compose up -d neo4j redis minio  # Start infrastructure only
-docker-compose up -d                     # Start everything (includes API container)
-npm run dev                              # Run API with hot-reload (tsx watch)
-npm run build                            # Compile TypeScript → dist/
-npm start                                # Run compiled server
-npm run cli:dev                          # Run CLI without building
-npm link                                 # Install `monte` CLI globally (dev)
-monte doctor                             # Validate all services + API keys
+npm run build
+npm test -- --run
+npm run test:benchmarks
+npm run benchmark:pretty
 ```
 
-### Testing
+For CLI/API setup checks:
+
 ```bash
-npm test                                                        # Run all tests (vitest)
-npx vitest run tests/dimensions.test.ts                        # Run a single test file
-npx vitest run tests/persona tests/clones.test.ts tests/dimensions.test.ts tests/benchmarks  # Pure-logic tests (no infra required)
-npm run test:e2e                                               # E2E smoke test (requires running stack)
+npm run cli:dev -- doctor
 ```
 
-Tests live in `tests/`. The vitest config (`vitest.config.ts`) picks up `tests/**/*.test.ts`. Infrastructure-dependent tests (those hitting Neo4j/MinIO) will fail without a running stack — run pure-logic tests when infra isn't available.
+For docs-only changes, at minimum review the working tree and make sure the major docs stay internally consistent.
 
-### Logging
-Set `LOG_LEVEL=debug` in `.env` to get verbose output from the Pino logger.
+## Common workflows
 
----
+### Persona workflow
 
-## Architecture
-
-Monte Engine is a 5-layer pipeline:
-
-```
-Data Files / Composio
-        ↓
-1. Ingestion Layer        — BullMQ workers receive uploads, route to extractors
-        ↓
-2. Signal Extraction      — Rule-based extractors (no LLM) + ContradictionDetector
-        ↓
-3. Persona Construction   — DimensionMapper → PsychologyLayer → PersonaCompressor → CloneGenerator (Neo4j)
-        ↓
-4. Simulation Engine      — DecisionGraph + WorldAgents + ForkEvaluator (LLM) + ChaosInjector
-        ↓
-5. Results + Narrative    — ResultAggregator → NarrativeGenerator (LLM)
+```bash
+npm run cli:dev -- ingest ./path/to/data
+npm run cli:dev -- persona build
+npm run cli:dev -- persona status
+npm run cli:dev -- persona psychology
 ```
 
-### Ingestion & Signal Extraction (`src/ingestion/`)
-- `monte ingest <dir>` recursively scans a directory, auto-detects file types, and uploads in batches to the API, which queues them via BullMQ.
-- Six extractors (`searchHistory`, `socialBehavior`, `financialBehavior`, `cognitiveStructure`, `mediaConsumption`, `aiChatHistory`) are all **rule-based** (regex/pattern + quantitative analysis). No LLM used here.
-- `temporalUtils.ts` is a shared module for frequency counting, recurrence scoring, temporal pattern detection, and trend analysis across extractors.
-- `ContradictionDetector` finds stated-vs-revealed, temporal, and cross-domain contradictions. Contradictions have a `magnitude` (0–1 from embedding cosine distance) and directly influence persona dimension scores via `DimensionMapper`.
-- Each signal is embedded with `openai/text-embedding-3-small` during ingestion and stored on the Neo4j `Signal` node. Redis caches embeddings (signal vectors 7 days, concept vectors 30 days).
+### Simulation workflow
 
-### Persona Construction (`src/persona/`)
-The pipeline runs in this order:
-1. **`DimensionMapper`** — Compares signal embeddings to rich concept descriptions for 9 behavioral dimensions using cosine similarity. Applies contradiction penalties and source reliability weighting. Produces per-dimension scores with confidence intervals.
-2. **`PsychologyLayer`** — Pure synchronous post-processor (no LLM, no async, no DB). Maps dimension scores → Big Five (OCEAN), Attachment Style, Locus of Control, Temporal Discounting, and 5 risk flags (`execution_overconfidence`, `social_financial_contamination`, `planning_paralysis`, `stress_capitulation`, `autonomous_drift`).
-3. **`PersonaCompressor`** — Builds the `MasterPersona` object, now including `psychologicalProfile` and `llmContextSummary`.
-4. **`CloneGenerator`** — Produces 1,000 stratified clones: 10% edge (5th/95th percentile), 20% outlier (10th/90th), 70% typical (20th–80th). Psychology modifiers applied to 20–30% of the clone pool.
-5. **`BayesianUpdater`** — First persona build runs the full pipeline; subsequent builds are incremental (only new signals processed), using Bayes' theorem per dimension. Confidence capped at 0.05–0.95; new evidence caps at 40% influence per update.
-- Everything is stored in **Neo4j** as a graph (User, Persona, Trait, Signal, Contradiction, Memory nodes).
+```bash
+npm run cli:dev -- simulate "should I quit my job and start a business?" --wait
+npm run cli:dev -- simulate evidence <simulation-id> --recommendation 1 --result positive --signal "Observed a strong signal"
+npm run cli:dev -- simulate rerun <simulation-id> --wait
+```
 
-### Simulation Engine (`src/simulation/`)
-- `DecisionGraph` defines 8 scenario types (day_trading, startup_founding, career_change, etc.) as branching decision trees.
-- Four `WorldAgents` (financial, career, education, social) inject empirically-cited base rates from `BaseRateRegistry` (sourced from ESMA, BLS, NCES, Case-Shiller). **Never use made-up numbers.**
-- `ForkEvaluator` uses the OpenAI SDK (configurable `baseURL`) to evaluate clone decisions at forks. Injects PsychologyLayer risk flags and clone-specific modifiers into the prompt. Uses the standard model for simple forks and the reasoning model for complex forks (>0.6 complexity score).
-- `ChaosInjector` adds black swan events.
-- `BatchOrchestrator` runs 1,000 clones in parallel batches of 100 (concurrency configurable via `SIMULATION_CONCURRENCY`).
-- `KellyCalculator` computes fractional position sizing from actual simulation outcome distributions when `capitalAtRisk` is provided.
+### Benchmark workflow
 
-### API & CLI (`src/api/`, `src/cli/`)
-- Fastify 5.x with Swagger docs at `http://localhost:3000/docs`.
-- Auth is a passthrough — no login required. `request.user.userId` is always `"local-user"`. This pattern is intentionally preserved for future cloud multi-user support.
-- The CLI uses `commander` and communicates with the API via `src/cli/api.ts`. Config stored in `~/.monte/config.json`.
-- `monte config set-api <url>` switches the CLI between local dev and a future hosted endpoint.
-- SSE streaming for simulation progress at `GET /stream/simulation/:id/progress`.
+```bash
+npm run benchmark:pretty
+npm run benchmark -- --output benchmark-suite.json
+npm run test:benchmarks
+```
 
-### LLM Integration
-All LLM calls go through the `openai` npm package with a configurable `baseURL`. **Never import provider-specific SDKs** (`groq-sdk`, `@anthropic-ai/sdk`, etc.). Provider is determined at startup:
-- `OPENROUTER_API_KEY` → OpenRouter (recommended; covers both LLM + embeddings)
-- `GROQ_API_KEY` → Groq (fast inference; requires separate `EMBEDDING_API_KEY` since Groq has no embeddings)
-- Default models: `openai/gpt-oss-20b` (standard), `openai/gpt-oss-120b` (reasoning)
-- Model overrides: `LLM_MODEL`, `LLM_REASONING_MODEL`
+## If you are touching specific areas
 
----
+- Scenario graph changes: update `src/simulation/decisionGraph.ts`, then rerun benchmarks.
+- Evidence-loop changes: audit `src/simulation/evidenceLoop.ts`, `src/api/routes/simulation.ts`, `src/cli/commands/simulation.ts`, and benchmark expectations.
+- Dimension changes: audit `src/persona/dimensionMapper.ts`, persona graph/compression, CLI/report surfaces, and docs.
+- Benchmark changes: update both the harness and its tests.
 
-## Key Rules (from CONTRIBUTING.md)
+## Default stance
 
-- **TypeScript only** — all source files must be `.ts`
-- **LLM via OpenAI SDK only** — `import OpenAI from 'openai'` with `baseURL` override; never use provider SDKs directly
-- **Signal extraction is rule-based** — regex/pattern matching + quantitative analysis; never use LLM in extractors (cost constraint)
-- **No new npm dependencies** without discussion — the project keeps deps intentionally minimal
-- **Pino for server logging** — never `console.log` in `src/` outside of `src/cli/`
-- **All new dimensions are optional** — backward compatibility required; existing personas must remain valid
-- **World agents must use empirical data** — cite sources when adding base rates to `baseRateRegistry.ts`
-- **No auth in open source** — `request.user.userId` is always `"local-user"`; do not add auth back unless building the cloud version
-- **Read `CONTEXT.md` before making architectural changes** — it documents every design decision and recent PRs
+Prefer small, verifiable changes. When in doubt, align docs with the shipped code rather than older roadmap language.
