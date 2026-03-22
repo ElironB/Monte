@@ -16,28 +16,85 @@ export interface GeneratedPersona {
   notes: string;
 }
 
-function parseJsonResponse(raw: string): object {
+function stripCodeFence(raw: string): string {
   let cleaned = raw.trim();
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```\w*\n?/, '').replace(/\n?```$/, '');
   }
-  return JSON.parse(cleaned);
+  return cleaned.trim();
+}
+
+function extractFirstJsonObject(raw: string): string | null {
+  const start = raw.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < raw.length; i += 1) {
+    const char = raw[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+
+    if (depth === 0) {
+      return raw.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
+
+export function parseJsonResponse(raw: string): object {
+  const cleaned = stripCodeFence(raw);
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const extracted = extractFirstJsonObject(cleaned);
+    if (extracted) {
+      return JSON.parse(extracted);
+    }
+  }
+
+  const preview = cleaned.slice(0, 200) || '[empty response]';
+  throw new Error(`LLM returned invalid or incomplete JSON: ${preview}`);
 }
 
 function parseCsvResponse(raw: string): string {
-  let cleaned = raw.trim();
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```\w*\n?/, '').replace(/\n?```$/, '');
-  }
-  return cleaned;
+  return stripCodeFence(raw);
 }
 
 function parseMarkdownResponse(raw: string): string {
-  let cleaned = raw.trim();
+  let cleaned = stripCodeFence(raw);
   if (cleaned.startsWith('```markdown') || cleaned.startsWith('```md')) {
     cleaned = cleaned.replace(/^```\w*\n?/, '').replace(/\n?```$/, '');
   }
   return cleaned;
+}
+
+interface LLMCallOptions {
+  maxTokens?: number;
+  temperature?: number;
+  responseFormat?: { type: 'json_object' };
 }
 
 export class SyntheticGenerator {
@@ -76,15 +133,16 @@ export class SyntheticGenerator {
     return { searchHistory, redditPosts, transactions, watchHistory, notes };
   }
 
-  private async callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
+  private async callLLM(systemPrompt: string, userPrompt: string, options: LLMCallOptions = {}): Promise<string> {
     const completion = await this.client!.chat.completions.create({
       model: this.model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      temperature: 0.8,
-      max_tokens: 4000,
+      temperature: options.temperature ?? 0.8,
+      max_tokens: options.maxTokens ?? 4000,
+      ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
     });
     return completion.choices[0]?.message?.content || '';
   }
@@ -94,13 +152,21 @@ export class SyntheticGenerator {
     userPrompt: string,
     parser: (raw: string) => unknown,
     retryHint: string,
+    options: LLMCallOptions = {},
   ): Promise<unknown> {
-    let raw = await this.callLLM(systemPrompt, userPrompt);
+    let raw = await this.callLLM(systemPrompt, userPrompt, options);
     try {
       return parser(raw);
-    } catch {
-      raw = await this.callLLM(systemPrompt, userPrompt + `\n\n${retryHint}`);
-      return parser(raw);
+    } catch (initialError) {
+      raw = await this.callLLM(systemPrompt, userPrompt + `\n\n${retryHint}`, {
+        ...options,
+        maxTokens: Math.max(options.maxTokens ?? 4000, 6000),
+      });
+      try {
+        return parser(raw);
+      } catch {
+        throw initialError;
+      }
     }
   }
 
@@ -119,7 +185,13 @@ Requirements:
 
 Output ONLY valid JSON, no markdown code blocks.`;
 
-    return this.callLLMWithRetry(system, user, parseJsonResponse, 'IMPORTANT: Output ONLY valid JSON. No markdown, no code blocks, no explanation.') as Promise<object>;
+    return this.callLLMWithRetry(
+      system,
+      user,
+      parseJsonResponse,
+      'IMPORTANT: Return exactly one complete JSON object that matches the requested format. No markdown, no prose, no truncation.',
+      { responseFormat: { type: 'json_object' }, temperature: 0.4, maxTokens: 6000 },
+    ) as Promise<object>;
   }
 
   private async generateRedditPosts(options: GenerationOptions, startDate: string): Promise<object> {
@@ -138,7 +210,13 @@ Requirements:
 
 Output ONLY valid JSON, no markdown code blocks.`;
 
-    return this.callLLMWithRetry(system, user, parseJsonResponse, 'IMPORTANT: Output ONLY valid JSON. No markdown, no code blocks, no explanation.') as Promise<object>;
+    return this.callLLMWithRetry(
+      system,
+      user,
+      parseJsonResponse,
+      'IMPORTANT: Return exactly one complete JSON object that matches the requested format. No markdown, no prose, no truncation.',
+      { responseFormat: { type: 'json_object' }, temperature: 0.4, maxTokens: 6000 },
+    ) as Promise<object>;
   }
 
   private async generateTransactions(options: GenerationOptions, startDate: string): Promise<string> {
@@ -157,7 +235,13 @@ Requirements:
 
 Output ONLY valid CSV with headers, no markdown code blocks.`;
 
-    return this.callLLMWithRetry(system, user, parseCsvResponse, 'IMPORTANT: Output ONLY valid CSV with headers. No markdown, no code blocks, no explanation.') as Promise<string>;
+    return this.callLLMWithRetry(
+      system,
+      user,
+      parseCsvResponse,
+      'IMPORTANT: Output ONLY valid CSV with headers. No markdown, no code blocks, no explanation.',
+      { temperature: 0.5, maxTokens: 6000 },
+    ) as Promise<string>;
   }
 
   private async generateWatchHistory(options: GenerationOptions, startDate: string): Promise<object> {
@@ -176,7 +260,13 @@ Requirements:
 
 Output ONLY valid JSON, no markdown code blocks.`;
 
-    return this.callLLMWithRetry(system, user, parseJsonResponse, 'IMPORTANT: Output ONLY valid JSON. No markdown, no code blocks, no explanation.') as Promise<object>;
+    return this.callLLMWithRetry(
+      system,
+      user,
+      parseJsonResponse,
+      'IMPORTANT: Return exactly one complete JSON object that matches the requested format. No markdown, no prose, no truncation.',
+      { responseFormat: { type: 'json_object' }, temperature: 0.4, maxTokens: 6000 },
+    ) as Promise<object>;
   }
 
   private async generateNotes(options: GenerationOptions): Promise<string> {
@@ -196,6 +286,12 @@ Requirements:
 
 Output ONLY valid markdown, no code blocks wrapping.`;
 
-    return this.callLLMWithRetry(system, user, parseMarkdownResponse, 'IMPORTANT: Output ONLY valid markdown. Do not wrap in code blocks.') as Promise<string>;
+    return this.callLLMWithRetry(
+      system,
+      user,
+      parseMarkdownResponse,
+      'IMPORTANT: Output ONLY valid markdown. Do not wrap in code blocks.',
+      { temperature: 0.7, maxTokens: 6000 },
+    ) as Promise<string>;
   }
 }
