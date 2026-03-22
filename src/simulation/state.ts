@@ -4,6 +4,10 @@ import {
   SimulationState,
   type OutcomeNode,
 } from './types.js';
+import {
+  createDefaultCausalState,
+  syncMetricsFromCausalState,
+} from './causalModel.js';
 
 const clampUnitInterval = (value: number): number => {
   return Math.max(0, Math.min(1, value));
@@ -188,6 +192,7 @@ export function cloneSimulationState(state: SimulationState): SimulationState {
     events: state.events.map((event) => ({ ...event })),
     metrics: { ...state.metrics },
     beliefState: { ...state.beliefState },
+    causalState: { ...(state.causalState ?? createDefaultCausalState()) },
   };
 }
 
@@ -224,6 +229,20 @@ export function applyEffectToState(state: SimulationState, effect: OutcomeEffect
     if (typeof rawValue === 'number') {
       ((state.beliefState as unknown) as Record<string, number | string>)[beliefKey] = applyNumericDelta(rawValue, delta, type);
     }
+
+    return;
+  }
+
+  if (target.startsWith('causal.') || target.startsWith('causalState.')) {
+    const causalKey = target.replace('causalState.', '').replace('causal.', '');
+    const causalState = (state.causalState as unknown) as Record<string, number | undefined>;
+    const rawValue = causalState[causalKey];
+
+    if (typeof rawValue === 'number') {
+      ((state.causalState as unknown) as Record<string, number>)[causalKey] = clampUnitInterval(
+        applyNumericDelta(rawValue, delta, type),
+      );
+    }
   }
 }
 
@@ -243,6 +262,7 @@ export function applyEffectsToState(
 
 export function refreshBeliefState(state: SimulationState): SimulationState {
   const nextState = cloneSimulationState(state);
+  syncMetricsFromCausalState(nextState);
   nextState.beliefState = deriveBeliefState(nextState);
   return nextState;
 }
