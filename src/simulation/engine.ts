@@ -244,7 +244,7 @@ export class SimulationEngine {
         // Optimistically reserve a reasoning call before the await so concurrent
         // clones see an up-to-date budget (avoids race on llmCallsUsed).
         this.llmCallsUsed++;
-        const availableLLMCalls = this.config.maxLLMCalls - this.llmCallsUsed;
+        const availableLLMCalls = this.config.maxLLMCalls - this.llmCallsUsed + 1;
         
         const evaluation: LLMEvaluation = await this.evaluator.evaluateFork(
           request,
