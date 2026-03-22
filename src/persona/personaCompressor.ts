@@ -1,4 +1,5 @@
 import { TraitNode, MemoryNode } from './graphBuilder.js';
+import { PsychologyLayer, PsychologicalProfile } from './psychologyLayer.js';
 
 export interface DimensionScore {
   value: number;
@@ -19,6 +20,10 @@ export interface MasterPersona {
   riskProfile: 'conservative' | 'moderate' | 'aggressive' | 'unknown';
   timeHorizon: 'immediate' | 'short' | 'medium' | 'long';
   narrativeSummary: string;
+  /** Derived psychological profile — added by PsychologyLayer post-processing */
+  psychologicalProfile?: PsychologicalProfile;
+  /** Enriched context string passed to ForkEvaluator at simulation time */
+  llmContextSummary?: string;
 }
 
 export class PersonaCompressor {
@@ -34,16 +39,33 @@ export class PersonaCompressor {
     const dimensions = this.extractDimensions();
     const dominantTraits = this.identifyDominantTraits();
     const contradictions = this.findInternalContradictions();
-    
+    const dimensionScores = this.extractDimensionScores();
+    const existingNarrative = this.generateNarrative(dimensions, dominantTraits, contradictions);
+
+    // --- PsychologyLayer: post-process dimension scores into psychological profile ---
+    const psychLayer = new PsychologyLayer();
+    const psychologicalProfile = psychLayer.analyze(dimensionScores);
+
+    const llmContextSummary = [
+      existingNarrative,
+      '',
+      '## Behavioral Psychology Profile',
+      psychologicalProfile.narrativeSummary,
+      '',
+      psychologicalProfile.technicalSummary,
+    ].join('\n');
+
     return {
       summary: this.generateSummary(dimensions, dominantTraits),
       behavioralFingerprint: dimensions,
-      dimensionScores: this.extractDimensionScores(),
+      dimensionScores,
       keyContradictions: contradictions,
       dominantTraits: dominantTraits.map(t => t.name),
       riskProfile: this.calculateRiskProfile(dimensions.riskTolerance),
       timeHorizon: this.calculateTimeHorizon(dimensions.timePreference),
-      narrativeSummary: this.generateNarrative(dimensions, dominantTraits, contradictions),
+      narrativeSummary: existingNarrative,
+      psychologicalProfile,
+      llmContextSummary,
     };
   }
 

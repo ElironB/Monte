@@ -148,6 +148,8 @@ export interface ForkEvaluationRequest {
   decisionNode: DecisionNode;
   state: SimulationState;
   scenario: Scenario;
+  /** Optional — used by ForkEvaluator to inject psychology risk flags into the LLM prompt */
+  masterPersona?: import('../persona/personaCompressor.js').MasterPersona;
 }
 
 // Chaos event

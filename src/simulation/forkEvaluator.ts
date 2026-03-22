@@ -301,10 +301,11 @@ export class ForkEvaluator {
   }
 
   private buildPrompt(request: ForkEvaluationRequest): string {
-    const { cloneParams, decisionNode, state } = request;
+    const { cloneParams, decisionNode, state, scenario } = request;
 
     const traitDescriptions = this.describeTraits(cloneParams);
     const stateDescription = this.describeState(state);
+    const psychologyBlock = this.describePsychologyModifiers(cloneParams, scenario.id, request.masterPersona);
 
     const optionsList = decisionNode.options.map((opt, i) =>
       `${i + 1}. ${opt.label} (ID: ${opt.id})`
@@ -313,7 +314,7 @@ export class ForkEvaluator {
     return `
 You are simulating a behavioral clone with the following traits:
 ${traitDescriptions}
-
+${psychologyBlock}
 Current State:
 ${stateDescription}
 
@@ -332,6 +333,47 @@ Respond with JSON in this format:
 }
 
 The confidence should be 0.7-0.95 based on how clear the choice is given the traits.`;
+  }
+
+  private describePsychologyModifiers(
+    params: CloneParameters,
+    scenarioId: string,
+    masterPersona?: import('../persona/personaCompressor.js').MasterPersona
+  ): string {
+    const lines: string[] = [];
+
+    if (params.psychologyModifiers) {
+      const m = params.psychologyModifiers;
+      const hasModifications =
+        (m.stressDiscountingAmplifier !== undefined && m.stressDiscountingAmplifier !== 1.0) ||
+        (m.socialPressureSensitivity !== undefined && m.socialPressureSensitivity !== 1.0) ||
+        (m.capitulationThreshold !== undefined && m.capitulationThreshold !== 0.5);
+
+      if (hasModifications) {
+        lines.push('\nBehavioral psychology modifiers for this clone:');
+        if (m.stressDiscountingAmplifier !== undefined && m.stressDiscountingAmplifier !== 1.0) {
+          lines.push(`- Stress discounting amplifier: ${m.stressDiscountingAmplifier}x (this clone makes more present-biased choices under pressure)`);
+        }
+        if (m.socialPressureSensitivity !== undefined && m.socialPressureSensitivity !== 1.0) {
+          lines.push(`- Social pressure sensitivity: ${m.socialPressureSensitivity}x (social context shifts this clone's choices more than average)`);
+        }
+        if (m.capitulationThreshold !== undefined) {
+          lines.push(`- Capitulation threshold: ${m.capitulationThreshold} (below 0.5 = more likely to exit positions early under adversity)`);
+        }
+      }
+    }
+
+    if (masterPersona?.psychologicalProfile) {
+      const relevantFlags = masterPersona.psychologicalProfile.riskFlags
+        .filter(f => f.affectedScenarios.includes(scenarioId))
+        .map(f => `WARNING — ${f.flag} [${f.severity}]: ${f.description}`);
+      if (relevantFlags.length > 0) {
+        lines.push('\nRelevant risk flags for this scenario:');
+        lines.push(...relevantFlags);
+      }
+    }
+
+    return lines.length > 0 ? lines.join('\n') : '';
   }
 
   private describeTraits(params: CloneParameters): string {

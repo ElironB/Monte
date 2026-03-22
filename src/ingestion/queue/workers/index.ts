@@ -721,6 +721,8 @@ async function storeMasterPersona(
          p.behavioralFingerprint = $fingerprint,
          p.dominantTraits = $dominantTraits,
          p.keyContradictions = $contradictions,
+         p.psychologicalProfile = $psychologicalProfile,
+         p.llmContextSummary = $llmContextSummary,
          p.signalCount = $signalCount,
          p.updatedAt = datetime()
      RETURN p.id as id`,
@@ -733,6 +735,10 @@ async function storeMasterPersona(
       fingerprint: JSON.stringify(masterPersona.behavioralFingerprint),
       dominantTraits: JSON.stringify(masterPersona.dominantTraits),
       contradictions: JSON.stringify(masterPersona.keyContradictions),
+      psychologicalProfile: masterPersona.psychologicalProfile
+        ? JSON.stringify(masterPersona.psychologicalProfile)
+        : null,
+      llmContextSummary: masterPersona.llmContextSummary ?? null,
       signalCount,
     }
   );
