@@ -27,6 +27,7 @@ import { EducationWorldAgent } from './worldAgents/education.js';
 import { SocialWorldAgent } from './worldAgents/social.js';
 import { logger } from '../utils/logger.js';
 import { type RateLimiter } from '../utils/rateLimiter.js';
+import { type MasterPersona } from '../persona/personaCompressor.js';
 
 interface WorldAgents {
   financial: FinancialWorldAgent;
@@ -41,6 +42,8 @@ interface SimulationConfig {
   maxLLMCalls: number;
   logDecisions: boolean;
   rateLimiter?: RateLimiter;
+  /** Persona master data — supplies psychology risk flags and llmContextSummary to ForkEvaluator */
+  masterPersona?: MasterPersona;
 }
 
 export class SimulationEngine {
@@ -48,6 +51,7 @@ export class SimulationEngine {
   private config: SimulationConfig;
   private llmCallsUsed: number = 0;
   private evaluator: ForkEvaluator;
+  private masterPersona?: MasterPersona;
 
   constructor(scenario: Scenario, config: Partial<SimulationConfig> = {}) {
     this.scenario = scenario;
@@ -59,6 +63,7 @@ export class SimulationEngine {
       ...config,
     };
     this.evaluator = createForkEvaluator({ rateLimiter: this.config.rateLimiter ?? null });
+    this.masterPersona = config.masterPersona;
   }
 
   // Execute a single clone through the simulation
@@ -195,6 +200,7 @@ export class SimulationEngine {
             decisionNode: node,
             state: context.state,
             scenario: this.scenario,
+            masterPersona: this.masterPersona,
           },
           availableLLMCalls
         );

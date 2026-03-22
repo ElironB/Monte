@@ -879,12 +879,40 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     const concurrency = configuredConcurrency > 0 ? configuredConcurrency : 10;
     const rateLimiter = new RateLimiter(rpm);
 
+    // Fetch MasterPersona so psychology context flows into the LLM prompt
+    const personaRow = await runQuerySingle<{
+      psychologicalProfile: string | null;
+      llmContextSummary: string | null;
+    }>(
+      `MATCH (p:Persona {id: $personaId})
+       RETURN p.psychologicalProfile as psychologicalProfile,
+              p.llmContextSummary as llmContextSummary`,
+      { personaId }
+    );
+    const masterPersona = personaRow?.psychologicalProfile
+      ? {
+          psychologicalProfile: JSON.parse(personaRow.psychologicalProfile),
+          llmContextSummary: personaRow.llmContextSummary ?? undefined,
+          // Required MasterPersona fields — populated minimally since
+          // ForkEvaluator only reads psychologicalProfile and llmContextSummary
+          summary: '',
+          behavioralFingerprint: {},
+          dimensionScores: {},
+          keyContradictions: [],
+          dominantTraits: [],
+          riskProfile: 'unknown' as const,
+          timeHorizon: 'medium' as const,
+          narrativeSummary: personaRow.llmContextSummary ?? '',
+        }
+      : undefined;
+
     const engine = new SimulationEngine(scenario, {
       useLLM: true,
       useChaos: true,
       maxLLMCalls: 20,
       logDecisions: false,
       rateLimiter,
+      masterPersona,
     });
 
     const results: CloneResult[] = [];
