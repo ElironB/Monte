@@ -42,6 +42,7 @@ export const api = {
     }),
   getPersonaHistory: () => makeRequest('/persona/history'),
   getPersonaTraits: () => makeRequest('/persona/traits'),
+  getPersonaPsychology: () => makeRequest('/persona/psychology'),
 
   // Simulations
   listSimulations: () => makeRequest('/simulation'),

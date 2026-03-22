@@ -1,6 +1,7 @@
 import { MasterPersona, DimensionScore } from './personaCompressor.js';
 import { v4 as uuidv4 } from 'uuid';
 import { SignalContradiction } from '../ingestion/types.js';
+import { PsychologicalProfile } from './psychologyLayer.js';
 
 export interface Clone {
   id: string;
@@ -24,6 +25,15 @@ export interface CloneParameters {
   stressResponse: number;
   // Derived from master persona but with variance
   confidenceScores?: Record<string, number>;
+  /** Psychology-derived modifiers applied to this clone variant */
+  psychologyModifiers?: {
+    /** Multiplier on discounting rate under stress events (1.0 = no modification) */
+    stressDiscountingAmplifier?: number;
+    /** How much social context shifts this clone's fork choices vs average (1.0 = baseline) */
+    socialPressureSensitivity?: number;
+    /** Adversity level at which this clone capitulates (0=exits immediately, 1=holds through anything) */
+    capitulationThreshold?: number;
+  };
 }
 
 export class CloneGenerator {
@@ -32,13 +42,20 @@ export class CloneGenerator {
   private baseFingerprint: Record<string, number>;
   private dimensionScores: Record<string, DimensionScore>;
   private contradictions: SignalContradiction[];
+  private psychProfile: PsychologicalProfile | null;
 
-  constructor(masterPersona: MasterPersona, personaId: string, contradictions?: SignalContradiction[]) {
+  constructor(
+    masterPersona: MasterPersona,
+    personaId: string,
+    contradictions?: SignalContradiction[],
+    psychProfile?: PsychologicalProfile
+  ) {
     this.masterPersona = masterPersona;
     this.personaId = personaId;
     this.baseFingerprint = masterPersona.behavioralFingerprint;
     this.dimensionScores = masterPersona.dimensionScores || {};
     this.contradictions = contradictions ?? [];
+    this.psychProfile = psychProfile ?? masterPersona.psychologicalProfile ?? null;
   }
 
   generateClones(count: number = 1000): Clone[] {
@@ -77,7 +94,14 @@ export class CloneGenerator {
     }
     
     // Shuffle to avoid bias in simulation order
-    return this.shuffleArray(clones);
+    const shuffled = this.shuffleArray(clones);
+
+    // Apply psychology-aware modifiers BEFORE returning
+    if (this.psychProfile) {
+      this.applyPsychologyModifiers(shuffled, this.psychProfile);
+    }
+
+    return shuffled;
   }
 
   private createClone(percentile: number, category: Clone['stratification']['category']): Clone {
@@ -193,5 +217,52 @@ export class CloneGenerator {
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     return shuffled;
+  }
+
+  /**
+   * Applies psychology-derived modifiers across targeted clone subsets.
+   * - execution_overconfidence flag → 20% of clones get amplified executionGap
+   * - hyperbolic_severe discounting → 20% of clones get stressDiscountingAmplifier=1.4
+   * - anxious attachment → 30% of clones get socialDependency += 0.15 + sensitivity boost
+   */
+  private applyPsychologyModifiers(clones: Clone[], psych: PsychologicalProfile): void {
+    const { riskFlags, attachment, temporalDiscounting } = psych;
+
+    const hasOverconfidence = riskFlags.some(f => f.flag === 'execution_overconfidence');
+    const hasHyperbolicSevere = temporalDiscounting.discountingRate === 'hyperbolic_severe';
+    const hasAnxiousAttachment = attachment.style === 'anxious';
+
+    const pool20 = Math.floor(clones.length * 0.20);
+    const pool30 = Math.floor(clones.length * 0.30);
+
+    let overconfidenceApplied = 0;
+    let stressApplied = 0;
+    let anxiousApplied = 0;
+
+    for (const clone of clones) {
+      // Initialise modifiers object with baseline values
+      clone.parameters.psychologyModifiers = {
+        stressDiscountingAmplifier: 1.0,
+        socialPressureSensitivity: 1.0,
+        capitulationThreshold: 0.5,
+      };
+
+      if (hasOverconfidence && overconfidenceApplied < pool20) {
+        clone.parameters.executionGap = Math.min(1, clone.parameters.executionGap + 0.2);
+        overconfidenceApplied++;
+      }
+
+      if (hasHyperbolicSevere && stressApplied < pool20) {
+        clone.parameters.psychologyModifiers.stressDiscountingAmplifier = 1.4;
+        clone.parameters.psychologyModifiers.capitulationThreshold = 0.35;
+        stressApplied++;
+      }
+
+      if (hasAnxiousAttachment && anxiousApplied < pool30) {
+        clone.parameters.socialDependency = Math.min(1, clone.parameters.socialDependency + 0.15);
+        clone.parameters.psychologyModifiers.socialPressureSensitivity = 1.25;
+        anxiousApplied++;
+      }
+    }
   }
 }

@@ -127,6 +127,28 @@ async function personaRoutes(fastify: FastifyInstance) {
       );
     },
   });
+  fastify.get('/psychology', {
+    preHandler: [fastify.authenticate],
+    schema: { description: 'Get psychological profile', tags: ['persona'], security: [{ bearerAuth: [] }] },
+    handler: async (request) => {
+      const result = await runQuerySingle<{ psychologicalProfile: string | null }>(
+        `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)
+         WHERE p.buildStatus = 'ready' AND p.psychologicalProfile IS NOT NULL
+         RETURN p.psychologicalProfile as psychologicalProfile
+         ORDER BY p.version DESC LIMIT 1`,
+        { userId: request.user.userId }
+      );
+
+      if (!result?.psychologicalProfile) {
+        return {
+          status: 'none',
+          message: 'No psychological profile available. Rebuild your persona to generate one.',
+        };
+      }
+
+      return JSON.parse(result.psychologicalProfile);
+    },
+  });
 }
 
 export default personaRoutes;

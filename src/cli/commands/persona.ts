@@ -179,3 +179,105 @@ personaCommands
       process.exit(1);
     }
   });
+
+personaCommands
+  .command('psychology')
+  .description(chalk.dim('View psychological profile derived from behavioral data'))
+  .option('--format <format>', 'Output format: json or human (default: human)')
+  .action(async (options) => {
+    try {
+      const profile = await api.getPersonaPsychology() as {
+        status?: string;
+        message?: string;
+        bigFive?: {
+          openness: number;
+          conscientiousness: number;
+          extraversion: number;
+          agreeableness: number;
+          neuroticism: number;
+          dominantTrait: string;
+          deficitTrait: string;
+        };
+        attachment?: { style: string; anxietyAxis: number; avoidanceAxis: number };
+        locusOfControl?: { type: string; score: number };
+        temporalDiscounting?: { discountingRate: string; score: number };
+        riskFlags?: Array<{ flag: string; severity: 'low' | 'medium' | 'high'; description: string }>;
+        narrativeSummary?: string;
+        technicalSummary?: string;
+      };
+
+      if (profile.status === 'none') {
+        console.log(dimText(profile.message || 'No psychological profile available.'));
+        return;
+      }
+
+      if (options.format === 'json') {
+        console.log(JSON.stringify({
+          bigFive: {
+            O: profile.bigFive?.openness,
+            C: profile.bigFive?.conscientiousness,
+            E: profile.bigFive?.extraversion,
+            A: profile.bigFive?.agreeableness,
+            N: profile.bigFive?.neuroticism,
+            dominant: profile.bigFive?.dominantTrait,
+            deficit: profile.bigFive?.deficitTrait,
+          },
+          attachment: profile.attachment?.style,
+          locusOfControl: { type: profile.locusOfControl?.type, score: profile.locusOfControl?.score },
+          temporalDiscounting: { rate: profile.temporalDiscounting?.discountingRate, score: profile.temporalDiscounting?.score },
+          riskFlags: profile.riskFlags,
+          narrative: profile.narrativeSummary,
+        }, null, 2));
+        return;
+      }
+
+      // Human-readable output
+      console.log(`\n${sectionHeader('Behavioral Psychology Profile')}`);
+
+      if (profile.narrativeSummary) {
+        console.log(`\n${dimText(profile.narrativeSummary)}`);
+      }
+
+      if (profile.bigFive) {
+        const bf = profile.bigFive;
+        console.log(`\n${sectionHeader('Big Five (OCEAN)')}`);
+        const fmt = (v: number) => `${(v * 100).toFixed(0)}%`;
+        console.log(`  ${infoLabel('Openness:         ')} ${dimensionColor(bf.openness)}  ${dimText(fmt(bf.openness))}`);
+        console.log(`  ${infoLabel('Conscientiousness:')} ${dimensionColor(bf.conscientiousness)}  ${dimText(fmt(bf.conscientiousness))}`);
+        console.log(`  ${infoLabel('Extraversion:     ')} ${dimensionColor(bf.extraversion)}  ${dimText(fmt(bf.extraversion))}`);
+        console.log(`  ${infoLabel('Agreeableness:    ')} ${dimensionColor(bf.agreeableness)}  ${dimText(fmt(bf.agreeableness))}`);
+        console.log(`  ${infoLabel('Neuroticism:      ')} ${dimensionColor(bf.neuroticism)}  ${dimText(fmt(bf.neuroticism))}`);
+        console.log(`  ${infoLabel('Dominant trait:   ')} ${valueText(bf.dominantTrait)}   ${infoLabel('Deficit:')} ${valueText(bf.deficitTrait)}`);
+      }
+
+      if (profile.attachment) {
+        console.log(`\n  ${infoLabel('Attachment style:')} ${valueText(profile.attachment.style)}`);
+      }
+      if (profile.locusOfControl) {
+        console.log(`  ${infoLabel('Locus of control:')} ${valueText(profile.locusOfControl.type)} ${dimText(`(${(profile.locusOfControl.score * 100).toFixed(0)}% internal)`)}`);
+      }
+      if (profile.temporalDiscounting) {
+        console.log(`  ${infoLabel('Time discounting: ')} ${valueText(profile.temporalDiscounting.discountingRate)}`);
+      }
+
+      if (profile.riskFlags && profile.riskFlags.length > 0) {
+        console.log(`\n${sectionHeader('Risk Flags')}`);
+        const SEVERITY_ICON: Record<string, string> = { high: '⚠️ ', medium: 'ℹ️ ', low: '✓  ' };
+        for (const flag of profile.riskFlags) {
+          const icon = SEVERITY_ICON[flag.severity] || '  ';
+          const label = flag.severity === 'high'
+            ? chalk.red.bold(flag.flag)
+            : flag.severity === 'medium'
+              ? chalk.yellow(flag.flag)
+              : chalk.green(flag.flag);
+          console.log(`  ${icon}${label} ${dimText(`[${flag.severity}]`)}`);
+          console.log(`     ${dimText(flag.description.slice(0, 90))}${flag.description.length > 90 ? '...' : ''}`);
+        }
+      } else if (profile.riskFlags) {
+        console.log(`\n  ${icons.success} ${dimText('No risk flags detected.')}`);
+      }
+    } catch (err) {
+      console.error(`${icons.error} ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
