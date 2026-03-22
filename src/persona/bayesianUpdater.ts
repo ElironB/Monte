@@ -294,3 +294,121 @@ export class BayesianUpdater {
     return value.toNumber();
   }
 }
+
+export interface DriftEvaluation {
+  driftingDimensions: string[];
+  maxDelta: number;
+  recommendedStrategy: 'incremental' | 'incremental_blend' | 'full_rebuild' | 'full_rebuild_notify';
+}
+
+const DRIFT_DIMENSION_KEYWORDS: Record<string, { positive: string[]; negative: string[] }> = {
+  riskTolerance: {
+    positive: ['speculative', 'aggressive', 'bold', 'risk', 'volatile', 'venture', 'bet', 'leverage', 'swing'],
+    negative: ['conservative', 'cautious', 'safe', 'preserve', 'stable', 'hedge', 'guaranteed', 'insured'],
+  },
+  timePreference: {
+    positive: ['immediate', 'instant', 'urgent', 'quick', 'now', 'short-term', 'today', 'fast'],
+    negative: ['patient', 'delayed', 'future', 'long-term', 'later', 'gradual', 'compound', 'plan'],
+  },
+  socialDependency: {
+    positive: ['team', 'social', 'community', 'validation', 'collaborate', 'together', 'peer', 'network'],
+    negative: ['independent', 'solo', 'private', 'self-directed', 'autonomous', 'alone', 'individual'],
+  },
+};
+
+export class DriftDetector {
+  public evaluateDrift(
+    recentSignals: BehavioralSignal[], 
+    historicalSignals: BehavioralSignal[]
+  ): DriftEvaluation {
+    const driftingDims: string[] = [];
+    let maxDelta = 0;
+    
+    const dims = ['riskTolerance', 'timePreference', 'socialDependency'];
+    
+    for (const dim of dims) {
+        const recentScore = this.getDimensionDriftScore(recentSignals, dim);
+        const histScore = this.getDimensionDriftScore(historicalSignals, dim);
+        const delta = Math.abs(recentScore - histScore);
+
+        if (delta > 0.15) {
+            driftingDims.push(dim);
+            maxDelta = Math.max(maxDelta, delta);
+        }
+    }
+
+    if (driftingDims.length === 0) {
+        return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'incremental' };
+    }
+    
+    if (driftingDims.length <= 2 && maxDelta < 0.2) {
+        return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'incremental_blend' };
+    }
+    
+    if (driftingDims.length >= 4 && maxDelta > 0.4) {
+        return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'full_rebuild_notify' };
+    }
+    
+    if (driftingDims.length >= 3 || maxDelta > 0.3) {
+        return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'full_rebuild' };
+    }
+
+    return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'incremental' };
+  }
+
+  private getDimensionDriftScore(signals: BehavioralSignal[], dimension: string): number {
+    const keywords = DRIFT_DIMENSION_KEYWORDS[dimension];
+    if (!keywords || signals.length === 0) {
+      return 0.5;
+    }
+
+    let weightedDelta = 0;
+    let totalWeight = 0;
+
+    for (const signal of signals) {
+      const text = [signal.value, signal.evidence, signal.type, signal.dimensions.category]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      const positiveMatches = keywords.positive.reduce((count, keyword) => count + Number(text.includes(keyword)), 0);
+      const negativeMatches = keywords.negative.reduce((count, keyword) => count + Number(text.includes(keyword)), 0);
+      const orientation = positiveMatches - negativeMatches;
+
+      if (orientation === 0) {
+        continue;
+      }
+
+      const strength = this.getDriftSignalWeight(signal, Math.abs(orientation));
+      weightedDelta += Math.sign(orientation) * strength;
+      totalWeight += strength;
+    }
+
+    if (totalWeight === 0) {
+      return 0.5;
+    }
+
+    const normalizedScore = weightedDelta / totalWeight;
+    return Math.min(1, Math.max(0, 0.5 + normalizedScore * 0.5));
+  }
+
+  private getDriftSignalWeight(signal: BehavioralSignal, matchCount: number): number {
+    const recurrence = signal.dimensions.recurrence ?? 0;
+    const frequency = signal.dimensions.frequency ?? 0;
+    const urgency = signal.dimensions.urgency ?? 0;
+    const trendBoost = signal.dimensions.intensityTrend === 'increasing'
+      ? 0.1
+      : signal.dimensions.intensityTrend === 'decreasing'
+        ? -0.05
+        : 0;
+
+    const weight = signal.confidence
+      + recurrence * 0.2
+      + Math.min(frequency, 5) * 0.05
+      + urgency * 0.1
+      + trendBoost
+      + Math.min(matchCount, 3) * 0.05;
+
+    return Math.max(0.1, Math.min(1.5, weight));
+  }
+}

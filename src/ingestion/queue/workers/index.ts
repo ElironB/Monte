@@ -18,7 +18,7 @@ import { DimensionMapper } from '../../../persona/dimensionMapper.js';
 import { GraphBuilder } from '../../../persona/graphBuilder.js';
 import { PersonaCompressor } from '../../../persona/personaCompressor.js';
 import { CloneGenerator, CloneParameters } from '../../../persona/cloneGenerator.js';
-import { BayesianUpdater } from '../../../persona/bayesianUpdater.js';
+import { BayesianUpdater, DriftDetector } from '../../../persona/bayesianUpdater.js';
 import { EmbeddingService } from '../../../embeddings/embeddingService.js';
 import { getDimensionConceptEmbeddings } from '../../../embeddings/dimensionConcepts.js';
 import { BehavioralSignal, SignalContradiction } from '../../types.js';
@@ -341,6 +341,21 @@ async function processPersona(job: Job<PersonaJobData>): Promise<void> {
   );
 
   if (previousPersona) {
+    const historicalSignals = await fetchSignals(userId, false);
+    const nowMs = Date.now();
+    const recentSignals = historicalSignals.filter(s => {
+      const d = parseTimestamp(s.timestamp);
+      return d && (nowMs - d.getTime() <= 90 * 24 * 60 * 60 * 1000);
+    });
+    
+    const driftEval = new DriftDetector().evaluateDrift(recentSignals, historicalSignals);
+    
+    if (driftEval.recommendedStrategy.includes('full_rebuild')) {
+      logger.info({ userId, strategy: driftEval.recommendedStrategy }, 'Drift detected, initiating full rebuild');
+      await processFullBuild(userId, personaId);
+      return;
+    }
+
     await processIncrementalUpdate(userId, personaId, previousPersona.id);
     return;
   }

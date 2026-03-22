@@ -21,7 +21,7 @@ vi.mock('../src/utils/logger.js', () => ({
   },
 }));
 
-import { BayesianUpdater } from '../src/persona/bayesianUpdater.js';
+import { BayesianUpdater, DriftDetector } from '../src/persona/bayesianUpdater.js';
 
 function makeSignal(value: string, type: BehavioralSignal['type'], confidence: number = 0.9): BehavioralSignal {
   return {
@@ -126,5 +126,57 @@ describe('BayesianUpdater', () => {
         evidenceCount: 3,
       })
     );
+  });
+});
+
+
+describe('DriftDetector', () => {
+  const detector = new DriftDetector();
+
+  it('flags only the dimension whose semantic evidence changes', () => {
+    const historicalSignals: BehavioralSignal[] = [
+      {
+        ...makeSignal('patient long-term planning', 'cognitive_trait'),
+        evidence: 'future-oriented and gradual investing plan',
+      },
+    ];
+    const recentSignals: BehavioralSignal[] = [
+      {
+        ...makeSignal('needs immediate results now', 'cognitive_trait'),
+        evidence: 'urgent short-term decisions and quick wins',
+        dimensions: { urgency: 1, intensityTrend: 'increasing' },
+      },
+    ];
+
+    const result = detector.evaluateDrift(recentSignals, historicalSignals);
+
+    expect(result.driftingDimensions).toEqual(['timePreference']);
+    expect(result.maxDelta).toBeGreaterThan(0.3);
+    expect(result.recommendedStrategy).toBe('full_rebuild');
+  });
+
+  it('does not infer drift from count changes alone when semantics stay aligned', () => {
+    const historicalSignals: BehavioralSignal[] = [
+      {
+        ...makeSignal('speculative conviction', 'cognitive_trait'),
+        evidence: 'comfortable with bold volatile bets',
+      },
+      {
+        ...makeSignal('aggressive venture appetite', 'interest'),
+        evidence: 'likes leveraged upside',
+      },
+    ];
+    const recentSignals: BehavioralSignal[] = [
+      {
+        ...makeSignal('speculative conviction', 'cognitive_trait'),
+        evidence: 'comfortable with bold volatile bets',
+      },
+    ];
+
+    const result = detector.evaluateDrift(recentSignals, historicalSignals);
+
+    expect(result.driftingDimensions).toEqual([]);
+    expect(result.maxDelta).toBe(0);
+    expect(result.recommendedStrategy).toBe('incremental');
   });
 });
