@@ -48,7 +48,7 @@ monte ingest ./generated-persona
 monte persona build
 
 # Run simulation from plain English
-monte simulate "should I quit my job and day trade with my $80k savings?" --wait
+monte simulate 'should I quit my job and day trade with my $80k savings?' --wait
 
 # Generate full report with narrative analysis
 monte report <simulation-id>
@@ -67,9 +67,9 @@ monte compare ./persona-conservative ./persona-aggressive -s day_trading
 Describe decisions in plain English by default:
 
 ```bash
-monte simulate "should I move to Berlin from NYC?" --wait
-monte simulate "should I buy this $1300 iPhone or wait?"
-monte simulate "is buying a $600k house smart right now?"
+monte simulate 'should I move to Berlin from NYC?' --wait
+monte simulate 'should I buy this $1300 iPhone or wait?'
+monte simulate 'is buying a $600k house smart right now?'
 ```
 
 Need explicit control? Advanced mode still works:
@@ -118,7 +118,7 @@ MINIO_SECRET_KEY=minioadmin
 OPENROUTER_API_KEY=your_key    # recommended: covers both LLM + embeddings
 # OR
 GROQ_API_KEY=your_key
-EMBEDDING_API_KEY=your_key     # required with Groq-only setups
+EMBEDDING_API_KEY=your_openai_or_openrouter_key # required with Groq-only setups (since Groq has no embeddings)
 ```
 
 ### 3. Start Infrastructure
@@ -171,7 +171,7 @@ Then build your persona and run simulations:
 
 ```bash
 monte persona build
-monte simulate "should I day trade full time?"
+monte simulate 'should I day trade full time?'
 ```
 
 ---
@@ -324,8 +324,8 @@ monte persona traits                        # View behavioral dimensions
 monte persona history                       # Version history
 
 # Run simulations
-monte simulate "should I quit my job and start a business?"   # Natural-language simulation
-monte simulate "is buying a $600k house smart right now?"     # Auto-detects scenario + capital
+monte simulate 'should I quit my job and start a business?'   # Natural-language simulation
+monte simulate 'is buying a $600k house smart right now?'     # Auto-detects scenario + capital
 monte simulate run -s day_trading --wait                      # Advanced explicit mode
 monte simulate list                         # List all simulations
 monte simulate progress <id>                # Check progress
@@ -364,6 +364,7 @@ Not all data is equal. Monte Engine extracts behavioral signals from your files 
 | **Search History** | JSON (Google Takeout) | Financial intent, career goals, education interests, relocation plans, health focus | `financial_trading`, `career_change`, `education`, `relocation`, `health_fitness` + urgency scoring |
 | **Social Media Posts** | JSON (Reddit/Twitter export) | Risk tolerance, emotional state, decision patterns, social engagement | `high_risk_tolerance`, `anxiety`, `decision_paralysis`, `high_social_engagement` |
 | **Bank Transactions** | CSV | Spending habits, financial discipline, investment behavior | `impulse_spending`, `budget_struggles`, `active_investor` |
+| **AI Chat History** | JSON (ChatGPT/Gemini/Claude/Grok) | Structural problem-solving patterns, emotional state, decision dependency | `topic_interests`, `decision_paralysis`, `anxiety` |
 
 > **Why Tier 1?** These reveal *actual behavior* — what you searched, how you spend, what you post when nobody's watching. This is the "revealed preference" data that Monte was designed for.
 
@@ -467,8 +468,8 @@ GROQ_API_KEY=your_key              # Groq fast inference for chat completions on
 
 # Embeddings
 # Auto-uses OPENROUTER_API_KEY when present.
-# If you run Groq-only for LLMs, you must also set one of these:
-# EMBEDDING_API_KEY=your_key
+# If you run Groq-only for LLMs, you must set an OpenAI or OpenRouter key specifically for text-embedding-3-small:
+# EMBEDDING_API_KEY=your_openai_or_openrouter_key
 # EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
 # EMBEDDING_MODEL=openai/text-embedding-3-small
 
