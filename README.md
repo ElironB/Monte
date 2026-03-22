@@ -400,13 +400,21 @@ These contradictions are what make Monte different from generic personality test
 
 | Platform | How to Export | File You Get |
 |----------|--------------|-------------|
-| Google | [takeout.google.com](https://takeout.google.com) | Search history JSON, YouTube watch history JSON |
+| Google | [takeout.google.com](https://takeout.google.com) | Search, Gemini, & YouTube history config (see below) |
 | Reddit | [reddit.com/settings/data-request](https://www.reddit.com/settings/data-request) | Posts/comments JSON |
 | Twitter/X | Settings → Your Account → Download Archive | tweets.json |
 | Bank/Credit Card | Your bank's export feature | transactions.csv |
 | Obsidian | Just point at your vault folder | .md files |
 | Notion | Settings → Export → Markdown | .md files |
 | Spotify | [spotify.com/account/privacy](https://www.spotify.com/account/privacy) | streaming_history.json |
+
+### ⚠️ Crucial: Google Takeout Export Instructions
+Google Takeout can export gigabytes of raw, useless system logs if not configured correctly. To get the cleanest, highest-signal data for Monte:
+
+1. **Format MUST be JSON**: In the final step of Takeout, the format is often set to HTML by default. **You MUST change it to JSON**. Monte’s extractors strictly parse JSON arrays and will ignore HTML.
+2. **Deselect All**: Click "Deselect All" at the top of the page.
+3. **Select "My Activity"**: Click "All activity data included" and only check **Search**, **Discover**, and **Gemini** (or Assistant). This skips heavy ad-click data and system pings.
+4. **Select "YouTube and YouTube Music"**: Click "Multiple Formats" or "All YouTube data included" and uncheck everything EXCEPT **history** (viewing/watch history). This skips downloading massive video files or comments.
 
 ### Quick Test (No Real Data Needed)
 
