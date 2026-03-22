@@ -92,6 +92,16 @@ export interface BeliefState {
   updateNarrative: string;
 }
 
+export interface CausalState {
+  demandStrength: number;
+  executionCapacity: number;
+  runwayStress: number;
+  marketTailwind: number;
+  socialLegitimacy: number;
+  reversibilityPressure: number;
+  evidenceMomentum: number;
+}
+
 export interface ExperimentRecommendation {
   priority: 'highest' | 'high' | 'medium';
   uncertainty: string;
@@ -130,6 +140,7 @@ export interface SimulationState {
   events: EventRecord[];
   metrics: Record<string, number>; // Scenario-specific metrics
   beliefState: BeliefState;
+  causalState: CausalState;
   outcome?: string; // Optional outcome classification
 }
 

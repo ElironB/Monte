@@ -24,6 +24,13 @@ import {
   cloneSimulationState,
   refreshBeliefState,
 } from './state.js';
+import {
+  applyDecisionCausalTransition,
+  applyEventOutcomeCausalTransition,
+  applyExternalCausalTransition,
+  calculateEventProbability,
+  selectEventOutcome,
+} from './causalModel.js';
 import { createForkEvaluator, type ForkEvaluator } from './forkEvaluator.js';
 import { chaosInjector, createChaosInjector } from './chaosInjector.js';
 import { FinancialWorldAgent } from './worldAgents/financial.js';
@@ -194,6 +201,13 @@ export class SimulationEngine {
         beliefEvidenceClarity: context.state.beliefState.evidenceClarity,
         beliefCommitmentLockIn: context.state.beliefState.commitmentLockIn,
         beliefDownsideSalience: context.state.beliefState.downsideSalience,
+        demandStrength: context.state.causalState.demandStrength,
+        executionCapacity: context.state.causalState.executionCapacity,
+        runwayStress: context.state.causalState.runwayStress,
+        marketTailwind: context.state.causalState.marketTailwind,
+        socialLegitimacy: context.state.causalState.socialLegitimacy,
+        reversibilityPressure: context.state.causalState.reversibilityPressure,
+        evidenceMomentum: context.state.causalState.evidenceMomentum,
       },
       duration,
     };
@@ -281,6 +295,7 @@ export class SimulationEngine {
     } else {
       context.currentNodeId = chosenOption.nextNodeId;
     }
+    applyDecisionCausalTransition(context.state, this.scenario.id, node.id, chosenOptionId);
 
     // Record decision
     context.state.decisions.push({
@@ -301,40 +316,13 @@ export class SimulationEngine {
     node: EventNode,
     worldAgents: WorldAgents
   ): void {
-    // Calculate modified probability based on clone parameters
-    let probability = node.probability;
-    
-    if (node.probabilityModifiers) {
-      for (const modifier of node.probabilityModifiers) {
-        const rawTraitValue = context.parameters[modifier.condition.split(' ')[0] as keyof CloneParameters];
-        if (typeof rawTraitValue === 'number') {
-          const threshold = parseFloat(modifier.condition.split(' ')[2]);
-          const operator = modifier.condition.split(' ')[1];
-          
-          let conditionMet = false;
-          if (operator === '>') conditionMet = rawTraitValue > threshold;
-          else if (operator === '<') conditionMet = rawTraitValue < threshold;
-          else if (operator === '>=') conditionMet = rawTraitValue >= threshold;
-          else if (operator === '<=') conditionMet = rawTraitValue <= threshold;
-          
-          if (conditionMet) {
-            probability *= modifier.factor;
-          }
-        }
-      }
-    }
-
-    // Determine if event occurs
+    const probability = calculateEventProbability(context, node);
     const eventOccurred = Math.random() < probability;
 
     if (eventOccurred && node.outcomes.length > 0) {
-      // Select outcome (could be probabilistic, here using first for simplicity)
-      const outcome = node.outcomes[Math.floor(Math.random() * node.outcomes.length)];
-      
-      // Apply effects
+      const outcome = selectEventOutcome(context.state, this.scenario.id, node);
+      applyEventOutcomeCausalTransition(context.state, this.scenario.id, node.id, outcome.id);
       context.state = applyEffectsToState(context.state, outcome.effects);
-      
-      // Move to next node
       context.currentNodeId = outcome.nextNodeId;
 
       // Record event
@@ -347,11 +335,9 @@ export class SimulationEngine {
         description: outcome.label,
       });
     } else {
-      // Event didn't occur - if there's only one outcome, still follow it
       if (node.outcomes.length === 1) {
         context.currentNodeId = node.outcomes[0].nextNodeId;
       } else {
-        // Find a default path (should be defined in graph)
         context.currentNodeId = node.outcomes[0]?.nextNodeId || context.currentNodeId;
       }
 
@@ -582,6 +568,7 @@ export class SimulationEngine {
     for (const agent of agents) {
       const event = agent.evaluate(context);
       if (event) {
+        applyExternalCausalTransition(context.state, event.type);
         context.state = applyEffectsToState(context.state, event.impact);
         context.state.events.push({
           nodeId: `world:${agent.type}:${event.type}`,

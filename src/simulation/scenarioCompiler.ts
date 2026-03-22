@@ -1,6 +1,7 @@
 import { getScenario, ScenarioType } from './decisionGraph.js';
 import { cloneSimulationState, createDefaultBeliefState, refreshBeliefState } from './state.js';
 import type { DecisionFrame, GraphNode, Scenario, SimulationState } from './types.js';
+import { seedCausalStateFromDecisionFrame } from './causalModel.js';
 
 export interface ScenarioCompilationInput {
   scenarioType: string;
@@ -334,6 +335,8 @@ const applyDecisionFrameToState = (
       0.95,
     );
   }
+
+  nextState.causalState = seedCausalStateFromDecisionFrame(frame, nextState.metrics);
 
   nextState.beliefState = createDefaultBeliefState({
     thesisConfidence: clamp(0.42 - (frame.uncertaintyLoad * 0.08) + (frame.reversibilityScore * 0.04), 0.22, 0.68),

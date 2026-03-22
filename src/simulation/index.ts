@@ -12,6 +12,7 @@ export * from './kellyCalculator.js';
 export * from './baseRateRegistry.js';
 export * from './scenarioCompiler.js';
 export * from './experimentPlanner.js';
+export * from './causalModel.js';
 
 // World Agents
 export * from './worldAgents/base.js';

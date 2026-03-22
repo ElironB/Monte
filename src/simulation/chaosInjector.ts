@@ -9,6 +9,7 @@ import {
 } from './types.js';
 import { logger } from '../utils/logger.js';
 import { applyEffectsToState } from './state.js';
+import { applyExternalCausalTransition } from './causalModel.js';
 
 // Chaos event definitions with base probabilities
 const CHAOS_EVENTS: ChaosEvent[] = [
@@ -341,6 +342,7 @@ export class ChaosInjector {
 
   // Apply chaos event effects to state
   applyEvent(state: CloneExecutionContext['state'], event: ChaosEvent): CloneExecutionContext['state'] {
+    applyExternalCausalTransition(state, event.id);
     return applyEffectsToState(state, event.impact);
   }
 
