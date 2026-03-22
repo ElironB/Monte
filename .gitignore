@@ -48,3 +48,10 @@ tsconfig.tsbuildinfo
 *.tmp
 *.bak
 .cache/
+
+# Windows junction mirror of .agents/ — not directly trackable by git
+.agent/
+
+# Generated synthetic personas (local test data)
+generated-persona/
+generated-persona-*/
