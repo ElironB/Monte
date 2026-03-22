@@ -331,36 +331,54 @@ async function processPersona(job: Job<PersonaJobData>): Promise<void> {
 
   const { userId, personaId } = job.data;
 
-  const previousPersona = await runQuerySingle<{ id: string; version: number | { toNumber: () => number } }>(
-    `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)
-     WHERE p.buildStatus = 'ready' AND p.id <> $personaId
-     RETURN p.id as id, p.version as version
-     ORDER BY p.version DESC
-     LIMIT 1`,
-    { userId, personaId }
-  );
+  try {
+    const previousPersona = await runQuerySingle<{ id: string; version: number | { toNumber: () => number } }>(
+      `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)
+       WHERE p.buildStatus = 'ready' AND p.id <> $personaId
+       RETURN p.id as id, p.version as version
+       ORDER BY p.version DESC
+       LIMIT 1`,
+      { userId, personaId }
+    );
 
-  if (previousPersona) {
-    const historicalSignals = await fetchSignals(userId, false);
-    const nowMs = Date.now();
-    const recentSignals = historicalSignals.filter(s => {
-      const d = parseTimestamp(s.timestamp);
-      return d && (nowMs - d.getTime() <= 90 * 24 * 60 * 60 * 1000);
-    });
-    
-    const driftEval = new DriftDetector().evaluateDrift(recentSignals, historicalSignals);
-    
-    if (driftEval.recommendedStrategy.includes('full_rebuild')) {
-      logger.info({ userId, strategy: driftEval.recommendedStrategy }, 'Drift detected, initiating full rebuild');
-      await processFullBuild(userId, personaId);
+    if (previousPersona) {
+      const historicalSignals = await fetchSignals(userId, false);
+      const nowMs = Date.now();
+      const recentSignals = historicalSignals.filter(s => {
+        const d = parseTimestamp(s.timestamp);
+        return d && (nowMs - d.getTime() <= 90 * 24 * 60 * 60 * 1000);
+      });
+      
+      const driftEval = new DriftDetector().evaluateDrift(recentSignals, historicalSignals);
+      
+      if (driftEval.recommendedStrategy.includes('full_rebuild')) {
+        logger.info({ userId, strategy: driftEval.recommendedStrategy }, 'Drift detected, initiating full rebuild');
+        await processFullBuild(userId, personaId);
+        return;
+      }
+
+      await processIncrementalUpdate(userId, personaId, previousPersona.id);
       return;
     }
 
-    await processIncrementalUpdate(userId, personaId, previousPersona.id);
-    return;
+    await processFullBuild(userId, personaId);
+  } catch (error) {
+    await markPersonaFailed(personaId, error);
+    throw error;
   }
+}
 
-  await processFullBuild(userId, personaId);
+
+async function markPersonaFailed(personaId: string, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : 'Unknown persona build failure';
+  await runWriteSingle(
+    `MATCH (p:Persona {id: $personaId})
+     SET p.buildStatus = 'failed',
+         p.lastError = $message,
+         p.updatedAt = datetime()
+     RETURN p.id as id`,
+    { personaId, message }
+  );
 }
 
 interface StoredSignalRecord {

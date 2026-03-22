@@ -22,12 +22,14 @@ async function personaRoutes(fastify: FastifyInstance) {
         traitCount: number;
         memoryCount: number;
         createdAt: string;
+        lastError?: string | null;
       }>(
         `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)
          OPTIONAL MATCH (p)-[:HAS_TRAIT]->(t:Trait)
          OPTIONAL MATCH (p)-[:HAS_MEMORY]->(m:Memory)
          RETURN p.id as id, p.version as version, p.buildStatus as buildStatus,
-                count(DISTINCT t) as traitCount, count(DISTINCT m) as memoryCount, p.createdAt as createdAt
+                count(DISTINCT t) as traitCount, count(DISTINCT m) as memoryCount, p.createdAt as createdAt,
+                p.lastError as lastError
          ORDER BY p.version DESC LIMIT 1`,
         { userId: request.user.userId }
       );
@@ -99,6 +101,7 @@ async function personaRoutes(fastify: FastifyInstance) {
         version: number;
         buildStatus: string;
         createdAt: string;
+        lastError?: string | null;
       }>(
         `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)
          RETURN p.id as id, p.version as version, p.buildStatus as buildStatus, p.createdAt as createdAt

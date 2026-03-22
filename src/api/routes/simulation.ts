@@ -149,7 +149,25 @@ async function simulationRoutes(fastify: FastifyInstance) {
          RETURN p.id as id ORDER BY p.version DESC LIMIT 1`,
         { userId: request.user.userId }
       );
-      if (!persona) throw new ValidationError('No ready persona found');
+      if (!persona) {
+        const latestPersona = await runQuerySingle<{ buildStatus: string; lastError?: string | null }>(
+          `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)
+           RETURN p.buildStatus as buildStatus, p.lastError as lastError
+           ORDER BY p.version DESC LIMIT 1`,
+          { userId: request.user.userId }
+        );
+
+        if (latestPersona?.buildStatus === 'building') {
+          throw new ValidationError('No ready persona found. Your latest persona is still building; run `monte persona status` to monitor progress.');
+        }
+
+        if (latestPersona?.buildStatus === 'failed') {
+          const suffix = latestPersona.lastError ? ` Last error: ${latestPersona.lastError}` : '';
+          throw new ValidationError(`No ready persona found. Your latest persona build failed.${suffix}`);
+        }
+
+        throw new ValidationError('No ready persona found. Build a persona first with `monte persona build`.');
+      }
 
       const simulationId = uuidv4();
       await runWriteSingle(

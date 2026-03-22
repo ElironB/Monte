@@ -24,6 +24,10 @@ function divider(width: number): string {
   return chalk.dim('─'.repeat(width));
 }
 
+function asCount(value: unknown): number {
+  return typeof value === 'number' ? value : 0;
+}
+
 export const personaCommands = new Command('persona')
   .description(chalk.dim('Persona management commands'));
 
@@ -39,6 +43,7 @@ personaCommands
         buildStatus?: string;
         traitCount?: number;
         memoryCount?: number;
+        lastError?: string | null;
       };
 
       if (persona.status === 'none') {
@@ -51,8 +56,11 @@ personaCommands
       console.log(`  ${infoLabel('ID:')} ${dimText(persona.id || 'unknown')}`);
       console.log(`  ${infoLabel('Version:')} ${valueText(persona.version || 0)}`);
       console.log(`  ${infoLabel('Status:')} ${statusColor(persona.buildStatus || 'unknown')}`);
-      console.log(`  ${infoLabel('Traits:')} ${valueText(persona.traitCount || 0)}`);
-      console.log(`  ${infoLabel('Memories:')} ${valueText(persona.memoryCount || 0)}`);
+      console.log(`  ${infoLabel('Traits:')} ${valueText(asCount(persona.traitCount))}`);
+      console.log(`  ${infoLabel('Memories:')} ${valueText(asCount(persona.memoryCount))}`);
+      if (persona.lastError) {
+        console.log(`  ${infoLabel('Last error:')} ${chalk.red(persona.lastError)}`);
+      }
     } catch (err) {
       console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);

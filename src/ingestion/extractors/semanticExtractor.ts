@@ -3,6 +3,7 @@ import { config } from '../../config/index.js';
 import { logger } from '../../utils/logger.js';
 import { RawSourceData, BehavioralSignal } from '../types.js';
 import { SignalExtractor } from './base.js';
+import { parseJsonResponse } from '../../utils/json.js';
 
 interface SemanticSignalCandidate {
   type?: BehavioralSignal['type'];
@@ -76,7 +77,7 @@ Return valid JSON with a top-level "signals" array. If no meaningful signals fou
       });
 
       const raw = completion.choices[0]?.message?.content || '{}';
-      const parsed = JSON.parse(raw) as SemanticSignalCandidate[] | { signals?: SemanticSignalCandidate[] };
+      const parsed = parseJsonResponse<SemanticSignalCandidate[] | { signals?: SemanticSignalCandidate[] }>(raw);
       const signals = Array.isArray(parsed) ? parsed : (parsed.signals || []);
 
       return signals
@@ -95,7 +96,7 @@ Return valid JSON with a top-level "signals" array. If no meaningful signals fou
         ))
         .slice(0, 10);
     } catch (err) {
-      logger.warn({ err, sourceId: data.sourceId }, 'Semantic extraction failed — falling back to regex only');
+      logger.warn({ err, sourceId: data.sourceId, rawPreview: data.rawContent.slice(0, 160) }, 'Semantic extraction failed — falling back to regex only');
       return [];
     }
   }
