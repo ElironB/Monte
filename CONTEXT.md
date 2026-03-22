@@ -314,9 +314,28 @@ GROQ_API_KEY=gsk_...
 - Built `DriftDetector` in `bayesianUpdater.ts` to orchestrate rebuild strategies (incremental vs full) based on recent dimension deltas
 - Scaffolded `benchmark.test.ts` for rigorous quant metric tracking (r-values and d-prime)
 
+### 18. PsychologyLayer (PR #35)
+
+**Why**: Raw dimension scores tell you *what* someone does. Psychology frameworks explain *why* — mapping behavioral patterns to validated constructs gives the simulation engine human-interpretable risk factors.
+
+**What changed**:
+- New `src/persona/psychologyLayer.ts` — pure synchronous post-processor (no LLM, no async, no DB)
+- Runs after `DimensionMapper` produces scores, before `PersonaCompressor` finalises `MasterPersona`
+- Maps 9 behavioral dimensions → 4 psychology frameworks:
+  - **Big Five (OCEAN)**: openness, conscientiousness, extraversion, agreeableness, neuroticism
+  - **Attachment Style**: secure / anxious / avoidant / disorganized
+  - **Locus of Control**: internal / mixed / external
+  - **Temporal Discounting**: hyperbolic_severe → hyperbolic_moderate → near_rational → future_biased
+- 5 composite **risk flags**: `execution_overconfidence`, `social_financial_contamination`, `planning_paralysis`, `stress_capitulation`, `autonomous_drift`
+- `MasterPersona` gains optional `psychologicalProfile?` and `llmContextSummary?` fields (backward compatible)
+- `CloneGenerator` applies psychology modifiers to 20-30% of clone pool (e.g. amplified executionGap for overconfident clones)
+- `ForkEvaluator` injects risk flags and clone-specific modifiers into the LLM fork prompt
+- Persisted to Neo4j as JSON string on the `Persona` node — readable by `GET /persona/psychology`
+- New CLI command: `monte persona psychology [--format json]`
+- 6 unit tests covering all 3 spec archetypes + edge cases — all passing
+
 ---
 
-## Persona Pipeline: Audit Roadmap
 
 A deep technical audit identified 6 fatal flaws in the persona construction pipeline. P0 items are fixed. Remaining work is prioritized below.
 
@@ -436,6 +455,7 @@ A deep technical audit identified 6 fatal flaws in the persona construction pipe
 - **P1 Pipeline Items Complete**: Added 3 new dimensions (`executionGap`, `informationSeeking`, `stressResponse`), multi-anchor concept embeddings, source reliability weighting, and per-dimension confidence intervals.
 - **P2 Flow Enhancements Complete**: Added temporal-aware embeddings prefixing, adaptive recency decay by source type, sequential pattern detection (sliding windows), and contradiction magnitude/convergence tracking.
 - **P3 Pipeline Upgrades Complete**: Implemented cycle detection using autocorrelation, behavioral epoch detection via changepoint slicing, drift detection coordinating incremental vs full rebuild strategies, and structured the quantitative benchmark test suite.
+- **PsychologyLayer Complete** (PR #35): Post-processing step maps dimensions → Big Five, Attachment Style, Locus of Control, Temporal Discounting. Generates risk flags, enriches LLM fork prompt, persists to Neo4j. CLI: `monte persona psychology`.
 
 ---
 
@@ -488,7 +508,8 @@ Monte/
 │   │   ├── dimensionMapper.ts     # 6 behavioral dimensions
 │   │   ├── graphBuilder.ts        # Neo4j graph writes
 │   │   ├── personaCompressor.ts   # Master persona generation
-│   │   ├── cloneGenerator.ts      # 1000 stratified clones
+│   │   ├── psychologyLayer.ts     # Post-processor: Big Five, Attachment, Locus, Discounting, Risk Flags
+│   │   ├── cloneGenerator.ts      # 1000 stratified clones with psychology modifiers
 │   │   ├── bayesianUpdater.ts     # Incremental persona updates via Bayes
 │   │   └── syntheticGenerator.ts  # LLM synthetic persona data generation
 │   ├── simulation/
@@ -651,6 +672,8 @@ monte ingest delete <id> --force  # Delete a source
 monte persona build               # Build from ingested data
 monte persona status              # Check build status
 monte persona traits              # View behavioral dimensions
+monte persona psychology          # View psychological profile (Big Five, Attachment, Locus, Discounting, Risk Flags)
+monte persona psychology --format json  # Machine-readable JSON output
 monte persona history             # Version history
 
 # Run simulations
@@ -715,6 +738,6 @@ npm run dev
 
 ---
 
-**Last Updated**: March 2026 — Persona pipeline P0, P1, P2, and P3 upgrades complete
-**Status**: Phases 1-9 complete.
+**Last Updated**: March 2026 — PsychologyLayer complete (PR #35): Big Five, Attachment, Locus of Control, Temporal Discounting, Risk Flags
+**Status**: Phases 1-9 complete. PsychologyLayer shipped.
 **Next**: Beta testing open source release, scaling user base, and refining cloud API strategy.
