@@ -304,6 +304,16 @@ GROQ_API_KEY=gsk_...
 - 5 signal categories: topic classification (8 domains), emotional tone, decision delegation patterns, repetition/revisiting detection, prompting style analysis
 - Source reliability tier: ~0.75-0.80 (between Revealed Preference and Semi-Curated — it's private but the user knows they're talking to AI)
 
+### 17. P3 Pipeline Upgrades (PR #34)
+
+**Why**: To evolve the static behavioral engine into a dynamic, time-aware system that adapts to recent behavioral shifts and isolates chronological habits.
+
+**What changed**:
+- Added `detectCycles` in `temporalUtils.ts` (7/14/30/90 day Pearson autocorrelation)
+- Added `detectEpochs` to slice chronological signals into discrete behavioral eras
+- Built `DriftDetector` in `bayesianUpdater.ts` to orchestrate rebuild strategies (incremental vs full) based on recent dimension deltas
+- Scaffolded `benchmark.test.ts` for rigorous quant metric tracking (r-values and d-prime)
+
 ---
 
 ## Persona Pipeline: Audit Roadmap
@@ -330,7 +340,7 @@ A deep technical audit identified 6 fatal flaws in the persona construction pipe
 | Sequential pattern detection | Large | Sliding windows (24h/72h/7d/30d), research cluster detection, decision trajectory mapping |
 | Contradiction magnitude + convergence | Medium | Track whether contradictions are resolving or deepening; persistent contradictions are stable personality features |
 
-### P3 — Lower Priority
+### ✅ P3 — COMPLETED
 | Change | Effort | Description |
 |--------|--------|-------------|
 | Cycle detection | Medium | Autocorrelation at 7/14/30/90 day periods to detect recurring behavioral patterns |
@@ -425,6 +435,7 @@ A deep technical audit identified 6 fatal flaws in the persona construction pipe
 - **AI chat history extractor** (SCO-034): New `ai_chat` source type for ChatGPT/Claude/Gemini/Grok exports
 - **P1 Pipeline Items Complete**: Added 3 new dimensions (`executionGap`, `informationSeeking`, `stressResponse`), multi-anchor concept embeddings, source reliability weighting, and per-dimension confidence intervals.
 - **P2 Flow Enhancements Complete**: Added temporal-aware embeddings prefixing, adaptive recency decay by source type, sequential pattern detection (sliding windows), and contradiction magnitude/convergence tracking.
+- **P3 Pipeline Upgrades Complete**: Implemented cycle detection using autocorrelation, behavioral epoch detection via changepoint slicing, drift detection coordinating incremental vs full rebuild strategies, and structured the quantitative benchmark test suite.
 
 ---
 
@@ -704,6 +715,6 @@ npm run dev
 
 ---
 
-**Last Updated**: March 2026 — Persona pipeline P0, P1, and P2 upgrades complete
+**Last Updated**: March 2026 — Persona pipeline P0, P1, P2, and P3 upgrades complete
 **Status**: Phases 1-9 complete.
-**Next**: P3 pipeline improvements (Cycle detection, Drift detection, Benchmarks).
+**Next**: Beta testing open source release, scaling user base, and refining cloud API strategy.
