@@ -374,10 +374,10 @@ async function processFullBuild(userId: string, personaId: string): Promise<void
   );
 
   const mapper = new DimensionMapper(signals, conceptEmbeddings, signalEmbeddings, contradictions);
-  const dimensions = mapper.mapToDimensions();
+  const result = mapper.mapToDimensionsWithContradictions();
 
   const graphBuilder = new GraphBuilder(userId, personaId);
-  await graphBuilder.buildPersonaGraph(dimensions, signalIds);
+  await graphBuilder.buildPersonaGraph(result.dimensions, result.dimensionScores, signalIds);
 
   const { traits, memories } = await graphBuilder.getPersonaGraph();
   const compressor = new PersonaCompressor(traits, memories);
@@ -407,7 +407,7 @@ async function processIncrementalUpdate(
     const conceptEmbeddings = await getDimensionConceptEmbeddings();
     const contradictions = await fetchContradictions(userId);
     const mapper = new DimensionMapper(newSignals, conceptEmbeddings, signalEmbeddings, contradictions);
-    const newDimensions = mapper.mapToDimensions();
+    const newDimensions = mapper.mapToDimensionsWithContradictions().dimensions;
     const updater = new BayesianUpdater(userId, personaId, conceptEmbeddings, signalEmbeddings);
     const updateResult = await updater.update(newSignals, newDimensions);
 

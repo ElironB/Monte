@@ -35,17 +35,25 @@ export class GraphBuilder {
     this.personaId = personaId;
   }
 
-  async buildPersonaGraph(dimensions: BehavioralDimensions, signalIds: string[]): Promise<void> {
+  async buildPersonaGraph(dimensions: BehavioralDimensions, dimensionScores: Record<string, any>, signalIds: string[]): Promise<void> {
     // Create dimension nodes as traits
-    const traits: TraitNode[] = Object.entries(dimensions).map(([dimension, value]) => ({
-      id: uuidv4(),
-      type: 'dimension',
-      name: dimension,
-      value,
-      confidence: 0.7 + (Math.abs(value - 0.5) * 0.6), // Higher confidence for extreme values
-      evidence: `Aggregated from ${signalIds.length} signals`,
-      dimension: dimension as keyof BehavioralDimensions,
-    }));
+    const traits: TraitNode[] = Object.entries(dimensions).map(([dimension, value]) => {
+      const score = dimensionScores[dimension];
+      return {
+        id: uuidv4(),
+        type: 'dimension',
+        name: dimension,
+        value,
+        confidence: score ? score.confidence : 0.7 + (Math.abs(value - 0.5) * 0.6),
+        evidence: `Aggregated from ${score ? score.signalCount : signalIds.length} signals`,
+        dimension: dimension as keyof BehavioralDimensions,
+        signalCount: score?.signalCount,
+        sourceCount: score?.sourceCount,
+        sourceTypes: score?.sourceTypes,
+        isEstimated: score?.isEstimated,
+        confidenceInterval: score?.confidenceInterval,
+      };
+    });
 
     // Store traits in Neo4j
     for (const trait of traits) {
@@ -59,7 +67,12 @@ export class GraphBuilder {
            confidence: $confidence,
            evidence: $evidence,
            dimension: $dimension,
-           evidenceCount: 1,
+           evidenceCount: $evidenceCount,
+           signalCount: $signalCount,
+           sourceCount: $sourceCount,
+           sourceTypes: $sourceTypes,
+           isEstimated: $isEstimated,
+           confidenceInterval: $confidenceInterval,
            createdAt: datetime()
          })
          CREATE (p)-[:HAS_TRAIT]->(t)
@@ -73,6 +86,12 @@ export class GraphBuilder {
           confidence: trait.confidence,
           evidence: trait.evidence,
           dimension: trait.dimension,
+          evidenceCount: trait.signalCount || 1,
+          signalCount: trait.signalCount ?? 1,
+          sourceCount: trait.sourceCount ?? 1,
+          sourceTypes: trait.sourceTypes ?? [],
+          isEstimated: typeof trait.isEstimated === 'boolean' ? trait.isEstimated : true,
+          confidenceInterval: trait.confidenceInterval ?? [0, 1],
         }
       );
     }
@@ -160,7 +179,9 @@ export class GraphBuilder {
     const results = await runWrite<TraitNode[]>(
       `MATCH (p:Persona {id: $personaId})-[:HAS_TRAIT]->(t:Trait)
        RETURN t.id as id, t.type as type, t.name as name, 
-              t.value as value, t.confidence as confidence, t.evidence as evidence, t.dimension as dimension`,
+              t.value as value, t.confidence as confidence, t.evidence as evidence, t.dimension as dimension,
+              t.evidenceCount as evidenceCount, t.signalCount as signalCount, t.sourceCount as sourceCount,
+              t.sourceTypes as sourceTypes, t.isEstimated as isEstimated, t.confidenceInterval as confidenceInterval`,
       { personaId: this.personaId }
     );
     return results[0] ?? [];
