@@ -1,13 +1,15 @@
 import { getScenario, ScenarioType } from './decisionGraph.js';
 import { cloneSimulationState, createDefaultBeliefState, refreshBeliefState } from './state.js';
-import type { DecisionFrame, GraphNode, Scenario, SimulationState } from './types.js';
+import type { DecisionFrame, EvidenceResult, GraphNode, Scenario, SimulationState } from './types.js';
 import { seedCausalStateFromDecisionFrame } from './causalModel.js';
+import { applyEvidenceToDecisionFrame, applyEvidenceToState } from './evidenceLoop.js';
 
 export interface ScenarioCompilationInput {
   scenarioType: string;
   name?: string;
   parameters?: Record<string, unknown>;
   capitalAtRisk?: number | null;
+  evidence?: EvidenceResult[];
 }
 
 const DEFAULT_TIMEFRAME_MONTHS: Record<string, number> = {
@@ -402,18 +404,21 @@ const parameterizeCustomGraph = (graph: GraphNode[], frame: DecisionFrame): Grap
 
 export function compileScenario(input: ScenarioCompilationInput): Scenario {
   const baseScenario = getScenario(input.scenarioType);
-  const decisionFrame = buildDecisionFrame(input);
+  const acceptedEvidence = input.evidence ?? [];
+  const baseDecisionFrame = buildDecisionFrame(input);
+  const decisionFrame = applyEvidenceToDecisionFrame(baseDecisionFrame, acceptedEvidence);
   const graph = cloneGraph(baseScenario.graph);
 
   const compiledGraph = input.scenarioType === ScenarioType.CUSTOM
     ? parameterizeCustomGraph(graph, decisionFrame)
     : graph;
 
-  const compiledState = applyDecisionFrameToState(
+  const frameSeededState = applyDecisionFrameToState(
     cloneSimulationState(baseScenario.initialState),
     decisionFrame,
     input.scenarioType,
   );
+  const compiledState = applyEvidenceToState(frameSeededState, acceptedEvidence);
 
   return {
     ...baseScenario,

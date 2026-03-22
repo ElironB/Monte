@@ -84,6 +84,7 @@ interface DecisionFrame {
 
 interface ExperimentRecommendation {
   priority: 'highest' | 'high' | 'medium';
+  focusMetric?: string;
   uncertainty: string;
   whyItMatters: string;
   recommendedExperiment: string;
@@ -98,6 +99,37 @@ interface DecisionIntelligence {
   recommendedExperiments: ExperimentRecommendation[];
 }
 
+interface EvidenceResult {
+  id: string;
+  uncertainty: string;
+  focusMetric: string;
+  recommendationIndex?: number;
+  recommendedExperiment: string;
+  result: 'positive' | 'negative' | 'mixed' | 'inconclusive';
+  confidence: number;
+  observedSignal: string;
+  notes?: string;
+  createdAt: string;
+}
+
+interface RerunComparison {
+  sourceSimulationId: string;
+  evidenceCount: number;
+  summary: string;
+  beliefDelta: {
+    thesisConfidence: number;
+    uncertaintyLevel: number;
+    downsideSalience: number;
+  };
+  recommendationDelta: {
+    changed: boolean;
+    previousTopUncertainty?: string;
+    newTopUncertainty?: string;
+    previousTopExperiment?: string;
+    newTopExperiment?: string;
+  };
+}
+
 interface AggregatedResults {
   scenarioId: string;
   cloneCount: number;
@@ -107,6 +139,8 @@ interface AggregatedResults {
   stratifiedBreakdown: StratifiedBreakdown;
   decisionFrame?: DecisionFrame;
   decisionIntelligence?: DecisionIntelligence;
+  appliedEvidence?: EvidenceResult[];
+  rerunComparison?: RerunComparison;
   narrative?: NarrativeResult;
   kelly?: KellyOutput;
 }
@@ -160,6 +194,10 @@ function formatCurrency(n: number): string {
 
 function formatPct(n: number, decimals: number = 1): string {
   return (n * 100).toFixed(decimals) + '%';
+}
+
+function formatSignedPoints(n: number): string {
+  return `${n >= 0 ? '+' : ''}${(n * 100).toFixed(1)} pts`;
 }
 
 function formatMonths(n: number): string {
@@ -219,6 +257,58 @@ function renderOutcomeDistribution(dist: OutcomeDistribution): string {
   lines.push(`Success: ${formatPct(dist.success).padStart(6)} ${renderBar(dist.success, maxVal)}`);
   lines.push(`Failure: ${formatPct(dist.failure).padStart(6)} ${renderBar(dist.failure, maxVal)}`);
   lines.push(`Neutral: ${formatPct(dist.neutral).padStart(6)} ${renderBar(dist.neutral, maxVal)}`);
+
+  return lines.join('\n');
+}
+
+function renderAppliedEvidenceSection(evidence: EvidenceResult[]): string {
+  const lines: string[] = [];
+  lines.push('## Applied Evidence');
+
+  for (const [index, entry] of evidence.entries()) {
+    lines.push(`### ${index + 1}. ${entry.uncertainty}`);
+    lines.push(`- Result: ${entry.result}`);
+    lines.push(`- Confidence: ${formatPct(entry.confidence)}`);
+    lines.push(`- Focus metric: ${entry.focusMetric}`);
+    lines.push(`- Experiment: ${entry.recommendedExperiment}`);
+    lines.push(`- Observed signal: ${entry.observedSignal}`);
+    if (entry.notes) {
+      lines.push(`- Notes: ${entry.notes}`);
+    }
+    lines.push('');
+  }
+
+  if (lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+
+  return lines.join('\n');
+}
+
+function renderRerunComparisonSection(rerunComparison: RerunComparison): string {
+  const lines: string[] = [];
+  lines.push('## Evidence Loop Delta');
+  lines.push(rerunComparison.summary);
+  lines.push('');
+  lines.push('| Measure | Delta |');
+  lines.push('|---------|-------|');
+  lines.push(`| Thesis confidence | ${formatSignedPoints(rerunComparison.beliefDelta.thesisConfidence)} |`);
+  lines.push(`| Uncertainty | ${formatSignedPoints(rerunComparison.beliefDelta.uncertaintyLevel)} |`);
+  lines.push(`| Downside salience | ${formatSignedPoints(rerunComparison.beliefDelta.downsideSalience)} |`);
+
+  if (
+    rerunComparison.recommendationDelta.previousTopUncertainty
+    || rerunComparison.recommendationDelta.newTopUncertainty
+    || rerunComparison.recommendationDelta.previousTopExperiment
+    || rerunComparison.recommendationDelta.newTopExperiment
+  ) {
+    lines.push('');
+    lines.push('### Recommendation Shift');
+    lines.push(`- Source simulation: ${rerunComparison.sourceSimulationId}`);
+    lines.push(`- Evidence items applied: ${rerunComparison.evidenceCount}`);
+    lines.push(`- Top uncertainty: ${rerunComparison.recommendationDelta.previousTopUncertainty ?? 'n/a'} → ${rerunComparison.recommendationDelta.newTopUncertainty ?? 'n/a'}`);
+    lines.push(`- Top experiment: ${rerunComparison.recommendationDelta.previousTopExperiment ?? 'n/a'} → ${rerunComparison.recommendationDelta.newTopExperiment ?? 'n/a'}`);
+  }
 
   return lines.join('\n');
 }
@@ -461,6 +551,16 @@ export function generateReport(
 
   if (results.decisionIntelligence) {
     sections.push(renderDecisionIntelligenceSection(results.decisionIntelligence));
+    sections.push('---');
+  }
+
+  if (results.appliedEvidence && results.appliedEvidence.length > 0) {
+    sections.push(renderAppliedEvidenceSection(results.appliedEvidence));
+    sections.push('---');
+  }
+
+  if (results.rerunComparison) {
+    sections.push(renderRerunComparisonSection(results.rerunComparison));
     sections.push('---');
   }
 

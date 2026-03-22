@@ -21,6 +21,19 @@ function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatSignedPoints(value: number): string {
+  const points = `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)} pts`;
+  return value >= 0 ? chalk.green(points) : chalk.red(points);
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
 export const simulationCommands = new Command('simulate')
   .description(chalk.dim('Run a simulation from a natural language description'))
   .usage('[query] [--clones <count>] [--wait]')
@@ -106,6 +119,74 @@ type SimulationProgressResult = {
   estimatedTimeRemaining?: number;
   lastUpdated?: string;
   error?: string;
+};
+
+type SimulationEvidenceResult = {
+  evidence: {
+    id: string;
+    uncertainty: string;
+    focusMetric: string;
+    recommendationIndex?: number;
+    recommendedExperiment: string;
+    result: 'positive' | 'negative' | 'mixed' | 'inconclusive';
+    confidence: number;
+    observedSignal: string;
+    notes?: string;
+    createdAt: string;
+  } | null;
+  evidenceCount: number;
+};
+
+type SimulationRerunResult = SimulationCreateResult & {
+  sourceSimulationId: string;
+  evidenceCount: number;
+};
+
+type SimulationResultsPayload = {
+  status: string;
+  distributions: {
+    outcomeDistribution: {
+      success: number;
+      failure: number;
+      neutral: number;
+    };
+    statistics: {
+      successRate: number;
+      meanCapital: number;
+      meanHealth: number;
+      meanHappiness: number;
+      averageDuration: number;
+    };
+    stratifiedBreakdown: {
+      edge: { count: number; avgOutcome: number };
+      typical: { count: number; avgOutcome: number };
+      central: { count: number; avgOutcome: number };
+    };
+    appliedEvidence?: Array<{
+      id: string;
+      uncertainty: string;
+      result: 'positive' | 'negative' | 'mixed' | 'inconclusive';
+      confidence: number;
+      observedSignal: string;
+    }>;
+    rerunComparison?: {
+      sourceSimulationId: string;
+      evidenceCount: number;
+      summary: string;
+      beliefDelta: {
+        thesisConfidence: number;
+        uncertaintyLevel: number;
+        downsideSalience: number;
+      };
+      recommendationDelta: {
+        changed: boolean;
+        previousTopUncertainty?: string;
+        newTopUncertainty?: string;
+        previousTopExperiment?: string;
+        newTopExperiment?: string;
+      };
+    };
+  } | null;
 };
 
 async function createSimulationAndHandleResult(
@@ -298,31 +379,15 @@ simulationCommands
   .option('-f, --format <format>', 'output format (table, json)', 'table')
   .action(async (id, options) => {
     try {
-      const data = await api.getSimulationResults(id) as {
-        status: string;
-        distributions: {
-          outcomeDistribution: {
-            success: number;
-            failure: number;
-            neutral: number;
-          };
-          statistics: {
-            successRate: number;
-            meanCapital: number;
-            meanHealth: number;
-            meanHappiness: number;
-            averageDuration: number;
-          };
-          stratifiedBreakdown: {
-            edge: { count: number; avgOutcome: number };
-            typical: { count: number; avgOutcome: number };
-            central: { count: number; avgOutcome: number };
-          };
-        };
-      };
+      const data = await api.getSimulationResults(id) as SimulationResultsPayload;
 
       if (data.status !== 'completed') {
         console.log(`${warningText(`Simulation is ${data.status}.`)} ${dimText('Results not available yet.')}`);
+        return;
+      }
+
+      if (!data.distributions) {
+        console.log(`${warningText('Simulation finished but aggregated results are not readable yet.')} ${dimText('Try again in a moment.')}`);
         return;
       }
 
@@ -331,7 +396,7 @@ simulationCommands
         return;
       }
 
-      const { outcomeDistribution, statistics, stratifiedBreakdown } = data.distributions;
+      const { outcomeDistribution, statistics, stratifiedBreakdown, appliedEvidence, rerunComparison } = data.distributions;
 
       console.log(`\n${sectionHeader('Simulation Results')}\n`);
 
@@ -359,6 +424,142 @@ simulationCommands
       console.log(
         `  ${infoLabel('Central:')} ${valueText(stratifiedBreakdown.central.count)} ${dimText('clones')} ${infoLabel('avg outcome:')} ${chalk.cyan(stratifiedBreakdown.central.avgOutcome.toFixed(2))}`,
       );
+
+      if (rerunComparison) {
+        console.log();
+        console.log(sectionHeader('Evidence Loop Delta'));
+        console.log(`  ${dimText(rerunComparison.summary)}`);
+        console.log(`  ${infoLabel('Thesis confidence:')} ${formatSignedPoints(rerunComparison.beliefDelta.thesisConfidence)}`);
+        console.log(`  ${infoLabel('Uncertainty:')} ${formatSignedPoints(rerunComparison.beliefDelta.uncertaintyLevel)}`);
+        console.log(`  ${infoLabel('Downside salience:')} ${formatSignedPoints(rerunComparison.beliefDelta.downsideSalience)}`);
+
+        if (rerunComparison.recommendationDelta.changed) {
+          if (rerunComparison.recommendationDelta.previousTopUncertainty || rerunComparison.recommendationDelta.newTopUncertainty) {
+            console.log(
+              `  ${infoLabel('Top uncertainty:')} ${dimText(rerunComparison.recommendationDelta.previousTopUncertainty ?? 'n/a')} ${chalk.dim('→')} ${valueText(rerunComparison.recommendationDelta.newTopUncertainty ?? 'n/a')}`,
+            );
+          }
+          if (rerunComparison.recommendationDelta.previousTopExperiment || rerunComparison.recommendationDelta.newTopExperiment) {
+            console.log(
+              `  ${infoLabel('Top experiment:')} ${dimText(truncateText(rerunComparison.recommendationDelta.previousTopExperiment ?? 'n/a', 72))} ${chalk.dim('→')} ${valueText(truncateText(rerunComparison.recommendationDelta.newTopExperiment ?? 'n/a', 72))}`,
+            );
+          }
+        }
+      }
+
+      if (appliedEvidence && appliedEvidence.length > 0) {
+        console.log();
+        console.log(sectionHeader('Applied Evidence'));
+        for (const entry of appliedEvidence.slice(0, 3)) {
+          console.log(
+            `  ${valueText(entry.result.toUpperCase())} ${chalk.white(entry.uncertainty)} ${dimText(`(${formatPercent(entry.confidence)})`)}`,
+          );
+          console.log(`    ${dimText(truncateText(entry.observedSignal, 110))}`);
+        }
+        if (appliedEvidence.length > 3) {
+          console.log(`  ${dimText(`...and ${appliedEvidence.length - 3} more evidence result(s)`)}`);
+        }
+      }
+    } catch (err) {
+      console.error(`${icons.error} ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+simulationCommands
+  .command('evidence')
+  .description(chalk.dim('Record an experiment result for a completed simulation'))
+  .argument('<id>', 'simulation ID')
+  .requiredOption('--result <result>', 'positive, negative, mixed, or inconclusive')
+  .requiredOption('--signal <text>', 'observed signal / what happened')
+  .option('-r, --recommendation <index>', 'recommended experiment number to resolve')
+  .option('--uncertainty <text>', 'manual uncertainty label')
+  .option('--focus-metric <metric>', 'manual focus metric')
+  .option('--experiment <text>', 'manual experiment description')
+  .option('--confidence <value>', 'confidence in the evidence signal (0-1)', '0.75')
+  .option('--notes <text>', 'extra notes')
+  .action(async (id, options) => {
+    try {
+      const recommendationIndex = options.recommendation ? parseInt(options.recommendation, 10) : undefined;
+      const confidence = parseFloat(options.confidence);
+
+      if (options.recommendation && Number.isNaN(recommendationIndex)) {
+        throw new Error(`Invalid recommendation index: ${options.recommendation}`);
+      }
+      if (Number.isNaN(confidence) || confidence < 0 || confidence > 1) {
+        throw new Error(`Invalid confidence value: ${options.confidence}`);
+      }
+
+      if (!recommendationIndex && (!options.uncertainty || !options.experiment)) {
+        throw new Error('Provide --recommendation <n> or supply both --uncertainty and --experiment.');
+      }
+
+      const result = await api.recordSimulationEvidence(id, {
+        recommendationIndex,
+        uncertainty: options.uncertainty,
+        focusMetric: options.focusMetric,
+        recommendedExperiment: options.experiment,
+        result: options.result,
+        confidence,
+        observedSignal: options.signal,
+        notes: options.notes,
+      }) as SimulationEvidenceResult;
+
+      if (!result.evidence) {
+        throw new Error('Evidence was not recorded.');
+      }
+
+      console.log(`${icons.success} ${chalk.green.bold('Evidence recorded')}`);
+      console.log(`  ${infoLabel('Evidence ID:')} ${chalk.cyan(result.evidence.id)}`);
+      console.log(`  ${infoLabel('Uncertainty:')} ${valueText(result.evidence.uncertainty)}`);
+      console.log(`  ${infoLabel('Result:')} ${valueText(result.evidence.result.toUpperCase())} ${dimText(`(${formatPercent(result.evidence.confidence)})`)}`);
+      console.log(`  ${infoLabel('Signal:')} ${dimText(result.evidence.observedSignal)}`);
+      console.log(`  ${infoLabel('Evidence count:')} ${valueText(result.evidenceCount)}`);
+      console.log(`\n${dimText('Run `monte simulate rerun ' + id + ' --wait` to create an evidence-adjusted rerun.')}`);
+    } catch (err) {
+      console.error(`${icons.error} ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+simulationCommands
+  .command('rerun')
+  .description(chalk.dim('Create an evidence-adjusted rerun from a completed simulation'))
+  .argument('<id>', 'simulation ID')
+  .option('-n, --name <name>', 'rerun simulation name')
+  .option('-c, --clones <count>', 'override clone count')
+  .option('--evidence <ids>', 'comma-separated evidence IDs to apply')
+  .option('--wait', 'wait for completion and show results', false)
+  .action(async (id, options) => {
+    try {
+      const cloneCount = options.clones ? parseCloneCount(options.clones) : undefined;
+      const evidenceIds = options.evidence
+        ? options.evidence
+          .split(',')
+          .map((entry: string) => entry.trim())
+          .filter((entry: string) => entry.length > 0)
+        : undefined;
+
+      const result = await api.rerunSimulationWithEvidence(id, {
+        name: options.name,
+        cloneCount,
+        evidenceIds,
+      }) as SimulationRerunResult;
+
+      console.log(`${icons.success} ${chalk.green.bold('Evidence rerun created')}`);
+      console.log(`  ${infoLabel('Simulation ID:')} ${chalk.cyan(result.simulationId)}`);
+      console.log(`  ${infoLabel('Source:')} ${chalk.cyan(result.sourceSimulationId)}`);
+      console.log(`  ${infoLabel('Clones:')} ${valueText(result.cloneCount)}`);
+      console.log(`  ${infoLabel('Evidence used:')} ${valueText(result.evidenceCount)}`);
+
+      if (options.wait) {
+        console.log(`\n${infoLabel('Waiting for completion...')}`);
+        await waitForSimulation(result.simulationId);
+        return;
+      }
+
+      console.log(`\n${dimText('Run `monte simulate progress ' + result.simulationId + '` to check progress')}`);
+      console.log(dimText('Run `monte simulate results ' + result.simulationId + '` for the evidence delta when done'));
     } catch (err) {
       console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);

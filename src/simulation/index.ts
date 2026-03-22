@@ -13,6 +13,7 @@ export * from './baseRateRegistry.js';
 export * from './scenarioCompiler.js';
 export * from './experimentPlanner.js';
 export * from './causalModel.js';
+export * from './evidenceLoop.js';
 
 // World Agents
 export * from './worldAgents/base.js';
