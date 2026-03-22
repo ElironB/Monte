@@ -230,3 +230,141 @@ function calculateProgressionScore(sequence: BehavioralSignal[], embeddings: Map
   // progressionScore = 1 - (meanPairwiseDistance_last / meanPairwiseDistance_first)
   return 1 - (distLast / distFirst);
 }
+
+export interface CycleDetectionResult {
+  periodDays: 7 | 14 | 30 | 90;
+  phase: string;
+  autocorrelationScore: number;
+}
+
+export interface Epoch {
+  startDate: string;
+  endDate: string;
+  signalCount: number;
+  dominantCluster: string;
+}
+
+export function detectCycles(signals: BehavioralSignal[], periods: number[] = [7, 14, 30, 90]): CycleDetectionResult[] {
+  const dates = signals
+    .map(s => parseTimestamp(s.timestamp))
+    .filter((d): d is Date => d !== null)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  if (dates.length < 2) return [];
+
+  const minTime = dates[0].getTime();
+  const maxTime = dates[dates.length - 1].getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const numDays = Math.ceil((maxTime - minTime) / dayMs) || 1;
+  const dailyCounts = new Array(numDays).fill(0);
+
+  for (const d of dates) {
+    const dayIndex = Math.floor((d.getTime() - minTime) / dayMs);
+    dailyCounts[Math.min(dayIndex, numDays - 1)]++;
+  }
+
+  const results: CycleDetectionResult[] = [];
+  const CYCLE_SIGNIFICANCE_THRESHOLD = 0.3;
+
+  for (const period of periods) {
+    if (numDays < period * 2) continue; // Need at least two full periods
+
+    let meanOrig = 0;
+    let meanShifted = 0;
+    const n = numDays - period;
+    
+    for (let i = 0; i < n; i++) {
+        meanOrig += dailyCounts[i];
+        meanShifted += dailyCounts[i + period];
+    }
+    meanOrig /= n;
+    meanShifted /= n;
+
+    let num = 0, den1 = 0, den2 = 0;
+    for (let i = 0; i < n; i++) {
+        const diffOrig = dailyCounts[i] - meanOrig;
+        const diffShifted = dailyCounts[i + period] - meanShifted;
+        num += diffOrig * diffShifted;
+        den1 += diffOrig * diffOrig;
+        den2 += diffShifted * diffShifted;
+    }
+
+    const denom = Math.sqrt(den1 * den2);
+    const correlation = denom === 0 ? 0 : num / denom;
+
+    if (correlation > CYCLE_SIGNIFICANCE_THRESHOLD) {
+      // Find phase (day of period with highest average count)
+      const periodSums = new Array(period).fill(0);
+      for (let i = 0; i < numDays; i++) {
+          periodSums[i % period] += dailyCounts[i];
+      }
+      const maxSum = Math.max(...periodSums);
+      const phaseIndex = periodSums.indexOf(maxSum);
+      
+      let phaseName = `Day ${phaseIndex + 1}`;
+      if (period === 7) {
+          const firstDay = new Date(minTime).getUTCDay();
+          const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          phaseName = dayNames[(firstDay + phaseIndex) % 7];
+      }
+
+      results.push({
+        periodDays: period as 7 | 14 | 30 | 90,
+        phase: phaseName,
+        autocorrelationScore: correlation
+      });
+    }
+  }
+
+  return results;
+}
+
+export function detectEpochs(signals: BehavioralSignal[]): Epoch[] {
+  const sortedSignals = [...signals]
+    .filter(s => parseTimestamp(s.timestamp))
+    .sort((a, b) => parseTimestamp(a.timestamp)!.getTime() - parseTimestamp(b.timestamp)!.getTime());
+
+  if (sortedSignals.length === 0) return [];
+
+  const epochs: Epoch[] = [];
+  let currentBlock: BehavioralSignal[] = [sortedSignals[0]];
+  const MAX_GAP_MS = 30 * 24 * 60 * 60 * 1000;
+
+  for (let i = 1; i < sortedSignals.length; i++) {
+    const prevTime = parseTimestamp(sortedSignals[i - 1].timestamp)!.getTime();
+    const currTime = parseTimestamp(sortedSignals[i].timestamp)!.getTime();
+
+    if (currTime - prevTime > MAX_GAP_MS) {
+      // Finalize block
+      const start = parseTimestamp(currentBlock[0].timestamp)!.toISOString();
+      const end = parseTimestamp(currentBlock[currentBlock.length - 1].timestamp)!.toISOString();
+      const timestamps = currentBlock.map(s => s.timestamp);
+      const profile = analyzeTemporalPatterns(timestamps);
+
+      epochs.push({
+        startDate: start,
+        endDate: end,
+        signalCount: currentBlock.length,
+        dominantCluster: profile.dominantCluster
+      });
+      currentBlock = [];
+    }
+    currentBlock.push(sortedSignals[i]);
+  }
+
+  if (currentBlock.length > 0) {
+    const start = parseTimestamp(currentBlock[0].timestamp)!.toISOString();
+    const end = parseTimestamp(currentBlock[currentBlock.length - 1].timestamp)!.toISOString();
+    const timestamps = currentBlock.map(s => s.timestamp);
+    const profile = analyzeTemporalPatterns(timestamps);
+
+    epochs.push({
+      startDate: start,
+      endDate: end,
+      signalCount: currentBlock.length,
+      dominantCluster: profile.dominantCluster
+    });
+  }
+
+  return epochs;
+}

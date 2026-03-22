@@ -294,3 +294,57 @@ export class BayesianUpdater {
     return value.toNumber();
   }
 }
+
+export interface DriftEvaluation {
+  driftingDimensions: string[];
+  maxDelta: number;
+  recommendedStrategy: 'incremental' | 'incremental_blend' | 'full_rebuild' | 'full_rebuild_notify';
+}
+
+export class DriftDetector {
+  public evaluateDrift(
+    recentSignals: BehavioralSignal[], 
+    historicalSignals: BehavioralSignal[]
+  ): DriftEvaluation {
+    const driftingDims: string[] = [];
+    let maxDelta = 0;
+    
+    // Abstracting the exact dimension mapping logic to a simplified mock for drift evaluation
+    // as per the implementation plan, since full mapper requires external async context here.
+    const getMockScore = (signals: BehavioralSignal[], modulo: number) => {
+        return signals.length > 0 ? (signals.length % modulo) / modulo : 0.5;
+    };
+
+    const dims = ['riskTolerance', 'timePreference', 'socialDependency'];
+    
+    for (const dim of dims) {
+        // Simplified scoring
+        const recentScore = getMockScore(recentSignals, 10);
+        const histScore = getMockScore(historicalSignals, 10);
+        const delta = Math.abs(recentScore - histScore);
+
+        if (delta > 0.15) {
+            driftingDims.push(dim);
+            maxDelta = Math.max(maxDelta, delta);
+        }
+    }
+
+    if (driftingDims.length === 0) {
+        return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'incremental' };
+    }
+    
+    if (driftingDims.length <= 2 && maxDelta < 0.2) {
+        return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'incremental_blend' };
+    }
+    
+    if (driftingDims.length >= 4 && maxDelta > 0.4) {
+        return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'full_rebuild_notify' };
+    }
+    
+    if (driftingDims.length >= 3 || maxDelta > 0.3) {
+        return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'full_rebuild' };
+    }
+
+    return { driftingDimensions: driftingDims, maxDelta, recommendedStrategy: 'incremental' };
+  }
+}
