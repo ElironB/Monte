@@ -80,10 +80,10 @@ export class CloneGenerator {
     
     // Generate outliers
     for (let i = 0; i < outlierCount / 2; i++) {
-      clones.push(this.createClone(10, 'edge'));  // 10th percentile
+      clones.push(this.createClone(10, 'central'));  // 10th percentile
     }
     for (let i = 0; i < outlierCount / 2; i++) {
-      clones.push(this.createClone(90, 'edge'));  // 90th percentile
+      clones.push(this.createClone(90, 'central'));  // 90th percentile
     }
     
     // Generate typical distribution
