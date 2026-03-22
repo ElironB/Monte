@@ -99,6 +99,8 @@ export interface EventRecord {
   occurred: boolean;
   outcomeId?: string;
   timestamp: number;
+  source?: 'graph' | 'world' | 'chaos';
+  description?: string;
 }
 
 // Clone execution context

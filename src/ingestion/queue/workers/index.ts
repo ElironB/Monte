@@ -30,6 +30,7 @@ import { SimulationEngine } from '../../../simulation/engine.js';
 import { createAggregator } from '../../../simulation/resultAggregator.js';
 import { CloneResult } from '../../../simulation/types.js';
 import { calculateKelly } from '../../../simulation/kellyCalculator.js';
+import { calculateSimulationProgress, estimateTimeRemainingSeconds } from '../../../simulation/progress.js';
 import { RateLimiter, createConcurrencyLimiter, detectProviderRPM } from '../../../utils/rateLimiter.js';
 
 const extractors = [
@@ -42,6 +43,39 @@ const extractors = [
 ];
 
 const semanticExtractor = new SemanticExtractor();
+const SIMULATION_PROGRESS_TTL_SECONDS = 300;
+
+function getSimulationProgressKey(simulationId: string): string {
+  return `sim:${simulationId}:progress`;
+}
+
+function getSimulationProcessedClonesKey(simulationId: string): string {
+  return `sim:${simulationId}:processedClones`;
+}
+
+function getSimulationProgressStartedAtKey(simulationId: string): string {
+  return `sim:${simulationId}:progressStartedAtMs`;
+}
+
+function getSimulationBatchProcessedClonesKey(simulationId: string, batchIndex: number): string {
+  return `sim:${simulationId}:batch:${batchIndex}:processedClones`;
+}
+
+async function publishSimulationProgress(
+  redis: Awaited<ReturnType<typeof getRedisClient>>,
+  simulationId: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await redis.setex(
+    getSimulationProgressKey(simulationId),
+    SIMULATION_PROGRESS_TTL_SECONDS,
+    JSON.stringify({
+      simulationId,
+      ...payload,
+      lastUpdated: new Date().toISOString(),
+    }),
+  );
+}
 
 async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
   logger.info({ jobId: job.id }, 'Processing ingestion');
@@ -833,6 +867,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
   logger.info({ jobId: job.id, data: job.data }, 'Processing simulation batch');
   
   const { simulationId, userId, personaId, scenarioType, cloneBatchIndex, totalBatches } = job.data;
+  let simulationCloneCount = 0;
   
   try {
     // Get simulation details
@@ -850,6 +885,15 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     if (!simulation) {
       throw new Error(`Simulation ${simulationId} not found`);
     }
+    simulationCloneCount = simulation.cloneCount;
+
+    await runWriteSingle(
+      `MATCH (s:Simulation {id: $simulationId})
+       WHERE coalesce(s.status, 'pending') = 'pending'
+       SET s.status = 'running'
+       RETURN s.id as id`,
+      { simulationId }
+    );
     
     // Get scenario
     const scenario = getScenario(scenarioType);
@@ -897,6 +941,21 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     const configuredConcurrency = Number.parseInt(process.env.SIMULATION_CONCURRENCY || '', 10);
     const concurrency = configuredConcurrency > 0 ? configuredConcurrency : 10;
     const rateLimiter = new RateLimiter(rpm);
+    const redis = await getRedisClient();
+    const processedClonesKey = getSimulationProcessedClonesKey(simulationId);
+    const batchProcessedClonesKey = getSimulationBatchProcessedClonesKey(simulationId, cloneBatchIndex);
+    const progressStartedAtKey = getSimulationProgressStartedAtKey(simulationId);
+    const batchStartedAtMs = Date.now();
+    const progressStartedAtWasSet = await redis.setnx(progressStartedAtKey, String(batchStartedAtMs));
+    await redis.expire(progressStartedAtKey, SIMULATION_PROGRESS_TTL_SECONDS);
+    let progressStartedAtMs = batchStartedAtMs;
+    if (progressStartedAtWasSet === 0) {
+      const existingStartedAt = await redis.get(progressStartedAtKey);
+      const parsedStartedAt = Number.parseInt(existingStartedAt || '', 10);
+      if (Number.isFinite(parsedStartedAt)) {
+        progressStartedAtMs = parsedStartedAt;
+      }
+    }
 
     // Fetch MasterPersona so psychology context flows into the LLM prompt
     const personaRow = await runQuerySingle<{
@@ -937,6 +996,19 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     const results: CloneResult[] = [];
     const limit = createConcurrencyLimiter(concurrency);
     const batchStart = Date.now();
+    const initialProcessedClones = Number.parseInt(await redis.get(processedClonesKey) || '0', 10);
+    await publishSimulationProgress(redis, simulationId, {
+      status: 'running',
+      progress: calculateSimulationProgress(initialProcessedClones, simulation.cloneCount, 'running'),
+      totalBatches,
+      currentBatch: cloneBatchIndex,
+      processedClones: initialProcessedClones,
+      totalClones: simulation.cloneCount,
+      batchProcessedClones: 0,
+      batchCloneCount: clones.length,
+    });
+    const batchLogInterval = Math.max(1, Math.ceil(clones.length / 4));
+    let lastLoggedBatchProgress = 0;
 
     await Promise.all(
       clones.map((clone) =>
@@ -950,6 +1022,51 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
             results.push(result);
           } catch (err) {
             logger.error({ err, cloneId: clone.cloneId }, 'Clone simulation failed');
+          } finally {
+            const [processedClones, batchProcessedClones] = await Promise.all([
+              redis.incr(processedClonesKey),
+              redis.incr(batchProcessedClonesKey),
+            ]);
+
+            await Promise.all([
+              redis.expire(processedClonesKey, SIMULATION_PROGRESS_TTL_SECONDS),
+              redis.expire(batchProcessedClonesKey, SIMULATION_PROGRESS_TTL_SECONDS),
+            ]);
+
+            const progress = calculateSimulationProgress(processedClones, simulation.cloneCount, 'running');
+            const estimatedTimeRemaining = estimateTimeRemainingSeconds(
+              progressStartedAtMs,
+              processedClones,
+              simulation.cloneCount,
+            );
+
+            await publishSimulationProgress(redis, simulationId, {
+              status: 'running',
+              progress,
+              totalBatches,
+              currentBatch: cloneBatchIndex,
+              processedClones,
+              totalClones: simulation.cloneCount,
+              batchProcessedClones,
+              batchCloneCount: clones.length,
+              estimatedTimeRemaining,
+            });
+
+            if (
+              batchProcessedClones === clones.length ||
+              batchProcessedClones >= lastLoggedBatchProgress + batchLogInterval
+            ) {
+              lastLoggedBatchProgress = batchProcessedClones;
+              logger.info({
+                simulationId,
+                batchIndex: cloneBatchIndex,
+                batchProcessedClones,
+                batchCloneCount: clones.length,
+                processedClones,
+                totalClones: simulation.cloneCount,
+                progress,
+              }, 'Simulation batch progress');
+            }
           }
         })
       )
@@ -1007,9 +1124,12 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       `MATCH (s:Simulation {id: $simulationId})
        SET s.completedBatches = coalesce(s.completedBatches, 0) + 1
        WITH s, s.completedBatches as completedBatches
-       SET s.progress = toInteger(round((toFloat(completedBatches) / $totalBatches) * 100)),
+       SET s.progress = CASE
+             WHEN completedBatches >= $totalBatches THEN 99
+             ELSE toInteger(round((toFloat(completedBatches) / $totalBatches) * 100))
+           END,
            s.status = CASE
-             WHEN completedBatches >= $totalBatches THEN coalesce(s.status, 'pending')
+             WHEN completedBatches >= $totalBatches AND coalesce(s.status, 'pending') IN ['aggregating', 'completed', 'failed'] THEN s.status
              ELSE 'running'
            END
        RETURN s.completedBatches as completedBatches,
@@ -1022,25 +1142,30 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     const completedBatches = progressState?.completedBatches ?? 0;
     const progress = progressState?.progress ?? 0;
 
-    // Publish real-time progress to Redis for SSE streaming
-    const redis = await getRedisClient();
-    await redis.setex(
-      `sim:${simulationId}:progress`,
-      300, // 5 minute TTL
-      JSON.stringify({
-        simulationId,
-        progress,
+    const isFinalBatch = completedBatches >= totalBatches;
+
+    // Publish real-time progress to Redis. For non-final batches publish now;
+    // for the final batch we publish 'completed' only after results are stored
+    // to avoid a race where the CLI reads 'completed' before results exist in Neo4j.
+    const processedClones = Number.parseInt(await redis.get(processedClonesKey) || '0', 10);
+    if (!isFinalBatch) {
+      await publishSimulationProgress(redis, simulationId, {
+        status: 'running',
+        progress: calculateSimulationProgress(processedClones, simulation.cloneCount, 'running'),
         completedBatches,
         totalBatches,
         currentBatch: cloneBatchIndex,
-        processedClones: results.length,
-        status: completedBatches >= totalBatches ? 'completed' : 'running',
-        lastUpdated: new Date().toISOString(),
-      })
-    );
-
-    // Finalize only once all persisted batches have completed.
-    const isFinalBatch = completedBatches >= totalBatches;
+        processedClones,
+        totalClones: simulation.cloneCount,
+        batchProcessedClones: clones.length,
+        batchCloneCount: clones.length,
+        estimatedTimeRemaining: estimateTimeRemainingSeconds(
+          progressStartedAtMs,
+          processedClones,
+          simulation.cloneCount,
+        ),
+      });
+    }
     
     if (isFinalBatch) {
       const finalized = await runWriteSingle<{ id: string }>(
@@ -1055,6 +1180,18 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         logger.info({ simulationId, cloneBatchIndex, completedBatches, totalBatches }, 'Simulation already finalized by another batch');
         return;
       }
+
+      await publishSimulationProgress(redis, simulationId, {
+        status: 'aggregating',
+        progress: calculateSimulationProgress(processedClones, simulation.cloneCount, 'aggregating'),
+        completedBatches,
+        totalBatches,
+        currentBatch: cloneBatchIndex,
+        processedClones,
+        totalClones: simulation.cloneCount,
+        batchProcessedClones: clones.length,
+        batchCloneCount: clones.length,
+      });
 
       // Aggregate all results
       const aggregator = createAggregator(scenarioType);
@@ -1128,8 +1265,26 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         }
       );
       
-      logger.info({ 
-        simulationId, 
+      // Now it's safe to mark as completed in Redis — results are in Neo4j
+      await redis.setex(
+        processedClonesKey,
+        SIMULATION_PROGRESS_TTL_SECONDS,
+        String(simulation.cloneCount),
+      );
+      await publishSimulationProgress(redis, simulationId, {
+        status: 'completed',
+        progress: 100,
+        completedBatches: totalBatches,
+        totalBatches,
+        currentBatch: cloneBatchIndex,
+        processedClones: simulation.cloneCount,
+        totalClones: simulation.cloneCount,
+        batchProcessedClones: clones.length,
+        batchCloneCount: clones.length,
+      });
+
+      logger.info({
+        simulationId,
         cloneCount: finalResults.cloneCount,
         successRate: finalResults.statistics.successRate,
         llmUsage: engine.getLLMUsage(),
@@ -1150,17 +1305,17 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     // Publish failure status to Redis
     try {
       const redis = await getRedisClient();
-      await redis.setex(
-        `sim:${simulationId}:progress`,
-        300,
-        JSON.stringify({
-          simulationId,
-          progress: 0,
-          status: 'failed',
-          error: (err as Error).message,
-          lastUpdated: new Date().toISOString(),
-        })
+      const processedClones = Number.parseInt(
+        await redis.get(getSimulationProcessedClonesKey(simulationId)) || '0',
+        10,
       );
+      await publishSimulationProgress(redis, simulationId, {
+        progress: calculateSimulationProgress(processedClones, simulationCloneCount, 'failed'),
+        processedClones,
+        totalClones: simulationCloneCount,
+        status: 'failed',
+        error: (err as Error).message,
+      });
     } catch {
       // Ignore Redis errors during failure handling
     }

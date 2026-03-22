@@ -16,9 +16,13 @@ import {
 import { 
   findNode, 
   isTerminalNode, 
-  applyEffects, 
   categorizeOutcome,
 } from './decisionGraph.js';
+import {
+  applyEffectsToState,
+  applyOutcomeNodeResults,
+  cloneSimulationState,
+} from './state.js';
 import { createForkEvaluator, type ForkEvaluator } from './forkEvaluator.js';
 import { chaosInjector, createChaosInjector } from './chaosInjector.js';
 import { FinancialWorldAgent } from './worldAgents/financial.js';
@@ -28,6 +32,7 @@ import { SocialWorldAgent } from './worldAgents/social.js';
 import { logger } from '../utils/logger.js';
 import { type RateLimiter } from '../utils/rateLimiter.js';
 import { type MasterPersona } from '../persona/personaCompressor.js';
+import { buildSimulationPersonaRuntimeProfile } from './personaRuntime.js';
 
 interface WorldAgents {
   financial: FinancialWorldAgent;
@@ -79,7 +84,7 @@ export class SimulationEngine {
     const worldAgents = this.initializeWorldAgents(parameters);
     
     // Initialize state
-    const state: SimulationState = startingState || { ...this.scenario.initialState };
+    const state: SimulationState = cloneSimulationState(startingState ?? this.scenario.initialState);
     
     // Create execution context
     const context: CloneExecutionContext = {
@@ -109,6 +114,8 @@ export class SimulationEngine {
         break;
       }
 
+      this.syncWorldAgentMetrics(context, worldAgents);
+
       // Add to path
       context.path.push(context.currentNodeId);
 
@@ -123,12 +130,21 @@ export class SimulationEngine {
 
       // Apply world agent effects
       this.applyWorldAgents(context, worldAgents);
+      this.syncWorldAgentMetrics(context, worldAgents);
 
       // Check for chaos events
       if (this.config.useChaos) {
         const chaosResult = chaos.inject(context);
         if (chaosResult.occurred && chaosResult.event) {
           context.state = chaos.applyEvent(context.state, chaosResult.event);
+          context.state.events.push({
+            nodeId: `chaos:${chaosResult.event.id}`,
+            occurred: true,
+            outcomeId: chaosResult.event.id,
+            timestamp: Date.now(),
+            source: 'chaos',
+            description: chaosResult.event.description,
+          });
           
           if (this.config.logDecisions) {
             logger.debug({
@@ -294,7 +310,7 @@ export class SimulationEngine {
       const outcome = node.outcomes[Math.floor(Math.random() * node.outcomes.length)];
       
       // Apply effects
-      context.state = applyEffects(context.state, outcome.effects);
+      context.state = applyEffectsToState(context.state, outcome.effects);
       
       // Move to next node
       context.currentNodeId = outcome.nextNodeId;
@@ -305,6 +321,8 @@ export class SimulationEngine {
         occurred: true,
         outcomeId: outcome.id,
         timestamp: Date.now(),
+        source: 'graph',
+        description: outcome.label,
       });
     } else {
       // Event didn't occur - if there's only one outcome, still follow it
@@ -319,6 +337,8 @@ export class SimulationEngine {
         nodeId: node.id,
         occurred: false,
         timestamp: Date.now(),
+        source: 'graph',
+        description: node.description,
       });
     }
   }
@@ -331,24 +351,7 @@ export class SimulationEngine {
     // Mark as complete
     context.complete = true;
     
-    // Apply any final effects
-    if (node.results) {
-      for (const [key, value] of Object.entries(node.results)) {
-        if (key === 'finalCapital' && typeof value === 'number') {
-          context.state.capital = value;
-        } else if (key === 'outcome' && typeof value === 'string') {
-          context.state.outcome = value;
-        } else if (key === 'healthImpact' && typeof value === 'number') {
-          context.state.health += value;
-        } else if (key === 'happinessImpact' && typeof value === 'number') {
-          context.state.happiness += value;
-        } else if (typeof value === 'number') {
-          context.state.metrics[key] = value;
-        } else if (typeof value === 'boolean') {
-          context.state.metrics[key] = value ? 1 : 0;
-        }
-      }
-    }
+    context.state = applyOutcomeNodeResults(context.state, node.results);
   }
 
   // Heuristic decision when LLM unavailable
@@ -473,39 +476,44 @@ export class SimulationEngine {
   // Initialize world agents based on scenario type
   private initializeWorldAgents(parameters: CloneParameters): WorldAgents {
     const initialCapital = this.scenario.initialState.capital;
-    const riskTolerance = parameters.riskTolerance;
+    const personaRuntime = buildSimulationPersonaRuntimeProfile(parameters, this.masterPersona);
+    const salaryMetric = this.scenario.initialState.metrics.currentSalary;
+    const salary = typeof salaryMetric === 'number' ? salaryMetric : 75000;
+    const monthlySavings = Math.max(0, (salary * personaRuntime.savingsRate) / 12);
 
     // Financial agent
     const financial = new FinancialWorldAgent();
     financial.initialize(
       initialCapital,
-      initialCapital * 0.1 / 12, // Assume saving 10% monthly
-      riskTolerance
+      monthlySavings,
+      personaRuntime.investmentAggressiveness,
+      personaRuntime
     );
 
     // Career agent
     const career = new CareerWorldAgent();
-    const salary = this.scenario.initialState.metrics.currentSalary;
     career.initialize(
-      typeof salary === 'number' ? salary : 75000,
-      0.7,
-      0.5
+      salary,
+      personaRuntime.careerStability,
+      personaRuntime.careerSkillLevel,
+      personaRuntime
     );
 
     // Education agent (for relevant scenarios)
     const education = new EducationWorldAgent();
     if (this.scenario.id === 'advanced_degree') {
-      education.initialize('masters');
+      education.initialize('masters', personaRuntime);
     } else if (this.scenario.id === 'career_change') {
-      education.initialize('bootcamp');
+      education.initialize('bootcamp', personaRuntime);
     }
 
     // Social agent
     const social = new SocialWorldAgent();
     social.initialize(
-      8,
-      0.6,
-      false
+      personaRuntime.supportNetworkSize,
+      personaRuntime.relationshipSatisfaction,
+      personaRuntime.hasPartner,
+      personaRuntime
     );
 
     return { financial, career, education, social };
@@ -518,33 +526,42 @@ export class SimulationEngine {
     for (const agent of agents) {
       const event = agent.evaluate(context);
       if (event) {
-        // Apply event effects
-        for (const effect of event.impact) {
-          const { target, delta, type } = effect;
-
-          if (target === 'capital') {
-            if (type === 'percentage') {
-              context.state.capital *= (1 - Math.abs(delta));
-            } else {
-              context.state.capital += delta;
-            }
-          } else if (target === 'health') {
-            context.state.health = Math.max(0, Math.min(1, context.state.health + delta));
-          } else if (target === 'happiness') {
-            context.state.happiness = Math.max(0, Math.min(1, context.state.happiness + delta));
-          } else if (target.startsWith('metrics.')) {
-            const metricKey = target.replace('metrics.', '');
-            const rawValue = context.state.metrics[metricKey];
-            const currentValue = typeof rawValue === 'number' ? rawValue : 0;
-            if (type === 'percentage') {
-              context.state.metrics[metricKey] = currentValue * (1 + delta);
-            } else {
-              context.state.metrics[metricKey] = currentValue + delta;
-            }
-          }
-        }
+        context.state = applyEffectsToState(context.state, event.impact);
+        context.state.events.push({
+          nodeId: `world:${agent.type}:${event.type}`,
+          occurred: true,
+          outcomeId: event.type,
+          timestamp: Date.now(),
+          source: 'world',
+          description: event.description,
+        });
       }
     }
+  }
+
+  private syncWorldAgentMetrics(
+    context: CloneExecutionContext,
+    worldAgents: WorldAgents,
+  ): void {
+    const financialSnapshot = worldAgents.financial.getSnapshot();
+    context.state.metrics.portfolioValue = financialSnapshot.totalValue;
+    context.state.metrics.maxDrawdown = Math.abs(financialSnapshot.maxDrawdown);
+
+    const careerSnapshot = worldAgents.career.getSnapshot();
+    context.state.metrics.currentSalary = careerSnapshot.currentSalary;
+    context.state.metrics.jobStability = careerSnapshot.jobStability;
+    context.state.metrics.burnoutLevel = careerSnapshot.burnoutLevel;
+
+    const educationSnapshot = worldAgents.education.getSnapshot();
+    context.state.metrics.completionProgress = educationSnapshot.completionProgress;
+    context.state.metrics.skillAcquisition = educationSnapshot.skillAcquisition;
+    context.state.metrics.monthsRemaining = educationSnapshot.monthsRemaining;
+
+    const socialSnapshot = worldAgents.social.getSnapshot();
+    context.state.metrics.relationshipSatisfaction = socialSnapshot.relationshipSatisfaction;
+    context.state.metrics.socialDisruption = socialSnapshot.socialDisruption;
+    context.state.metrics.socialCapital = socialSnapshot.socialCapital;
+    context.state.metrics.supportNetworkSize = socialSnapshot.supportNetworkSize;
   }
 
   // Get LLM usage stats

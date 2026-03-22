@@ -5,10 +5,10 @@
 import { 
   ChaosEvent, 
   CloneExecutionContext, 
-  OutcomeEffect,
   CloneParameters 
 } from './types.js';
 import { logger } from '../utils/logger.js';
+import { applyEffectsToState } from './state.js';
 
 // Chaos event definitions with base probabilities
 const CHAOS_EVENTS: ChaosEvent[] = [
@@ -341,33 +341,7 @@ export class ChaosInjector {
 
   // Apply chaos event effects to state
   applyEvent(state: CloneExecutionContext['state'], event: ChaosEvent): CloneExecutionContext['state'] {
-    const newState = { ...state, metrics: { ...state.metrics } };
-
-    for (const effect of event.impact) {
-      const { target, delta, type } = effect;
-
-      if (target === 'capital') {
-        if (type === 'percentage') {
-          newState.capital *= (1 - Math.abs(delta));
-        } else {
-          newState.capital += delta;
-        }
-      } else if (target === 'health') {
-        newState.health = Math.max(0, Math.min(1, newState.health + delta));
-      } else if (target === 'happiness') {
-        newState.happiness = Math.max(0, Math.min(1, newState.happiness + delta));
-      } else if (target.startsWith('metrics.')) {
-        const metricKey = target.replace('metrics.', '');
-        const currentValue = newState.metrics[metricKey] || 0;
-        if (type === 'percentage') {
-          newState.metrics[metricKey] = currentValue * (1 + delta);
-        } else {
-          newState.metrics[metricKey] = currentValue + delta;
-        }
-      }
-    }
-
-    return newState;
+    return applyEffectsToState(state, event.impact);
   }
 
   // Get all available chaos events

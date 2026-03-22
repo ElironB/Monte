@@ -23,6 +23,10 @@ export class EmbeddingService {
     this.client = new OpenAI({
       apiKey: embConfig.apiKey,
       baseURL: embConfig.baseUrl,
+      defaultHeaders: {
+        'HTTP-Referer': 'https://github.com/ElironB/Monte',
+        'X-Title': 'Monte Engine',
+      },
     });
     this.model = embConfig.model;
     this.dimensions = embConfig.dimensions;

@@ -445,6 +445,10 @@ async function generateComparisonNarrative(
   const client = new OpenAI({
     apiKey: llmConfig.apiKey,
     baseURL: llmConfig.baseUrl,
+    defaultHeaders: {
+      'HTTP-Referer': 'https://github.com/ElironB/Monte',
+      'X-Title': 'Monte Engine',
+    },
   });
   const model = llmConfig.model || 'openai/gpt-oss-20b';
 

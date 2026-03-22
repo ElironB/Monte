@@ -17,7 +17,7 @@ function resolveLLMConfig() {
     return {
       apiKey: process.env.GROQ_API_KEY,
       baseUrl: 'https://api.groq.com/openai/v1',
-      model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
+    model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
       reasoningModel: process.env.LLM_REASONING_MODEL || 'openai/gpt-oss-120b',
     };
   }

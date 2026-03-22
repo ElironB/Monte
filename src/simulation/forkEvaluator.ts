@@ -90,8 +90,10 @@ export class ForkEvaluator {
 
   private readonly MAX_REASONING_CALLS = 20;
   private readonly COMPLEXITY_THRESHOLD = 0.6;
-  private readonly USES_OPENROUTER_STRUCTURED_OUTPUTS =
-    (config.llm?.baseUrl || '').includes('openrouter.ai');
+  // OpenRouter prepends '{"' when json_object mode is on, and the model also
+  // starts with '{', producing the double-brace garbage '{"{".  Skip it.
+  private readonly useJsonObjectMode =
+    !(config.llm?.baseUrl || '').includes('openrouter.ai');
 
   constructor(options: ForkEvaluatorOptions = {}) {
     this.rateLimiter = options.rateLimiter ?? null;
@@ -100,6 +102,12 @@ export class ForkEvaluator {
       this.client = new OpenAI({
         apiKey: config.llm.apiKey,
         baseURL: config.llm.baseUrl || 'https://api.groq.com/openai/v1',
+        defaultHeaders: {
+          // OpenRouter deprioritises requests without these headers on free models,
+          // leading to aggressive truncation.
+          'HTTP-Referer': 'https://github.com/ElironB/Monte',
+          'X-Title': 'Monte Engine',
+        },
       });
       this.model = config.llm.model || 'openai/gpt-oss-20b';
       this.reasoningModel = config.llm.reasoningModel || null;
@@ -122,8 +130,9 @@ export class ForkEvaluator {
 
     try {
       return await this.callLLM(request, complexity, useReasoning);
-    } catch (error) {
-      logger.error({ error, scenario: scenario.id }, 'LLM evaluation failed, using heuristic fallback');
+    } catch {
+      // Heuristic fallback is expected when the provider truncates or drops
+      // responses (common on free-tier OpenRouter). Not an error.
       return await this.heuristicEvaluation(request, complexity);
     }
   }
@@ -200,8 +209,8 @@ export class ForkEvaluator {
         ],
         model,
         temperature: 0.4 + (complexity * 0.3),
-        max_tokens: useReasoning ? 320 : 220,
-        response_format: this.getResponseFormat(),
+        max_tokens: useReasoning ? 600 : 400,
+        ...(this.useJsonObjectMode ? { response_format: { type: 'json_object' as const } } : {}),
       });
     });
 
@@ -216,19 +225,37 @@ export class ForkEvaluator {
 
     logger.debug({ duration, model, complexity, useReasoning }, 'LLM evaluation completed');
 
-    const content = completion.choices[0]?.message?.content || '{}';
+    const choice = completion.choices[0];
+    const content = choice?.message?.content || '{}';
+    const finishReason = choice?.finish_reason;
+
+    // If the provider dropped the connection (no finish_reason at all) or the
+    // response is suspiciously short, skip straight to heuristic — don't waste
+    // a repair call on a provider-side truncation.
+    if (!finishReason && content.length < 60) {
+      throw new Error('Provider returned truncated response (no finish_reason)');
+    }
 
     try {
       return this.parseLLMResponse(content, request.decisionNode, complexity);
     } catch (error) {
-      logger.warn(
+      // If the response is too short to contain a valid JSON object with all
+      // three required fields, skip the repair call — it won't help.
+      if (content.length < 40) {
+        logger.debug(
+          { model, preview: content.slice(0, 200) },
+          'LLM response truncated, falling back to heuristic'
+        );
+        throw error;
+      }
+
+      logger.debug(
         {
           model,
           complexity,
           useReasoning,
-          maxTokens: useReasoning ? 320 : 220,
+          maxTokens: useReasoning ? 600 : 400,
           preview: content.slice(0, 200),
-          error,
         },
         'Failed to parse LLM response, retrying once with repair prompt'
       );
@@ -243,24 +270,21 @@ export class ForkEvaluator {
         messages: [
           {
             role: 'system',
-            content: 'Repair the assistant output into a valid JSON object matching the requested schema. Return only JSON.',
+            content: 'You repair malformed JSON. Output only the corrected JSON object with keys: chosenOptionId, reasoning, confidence.',
           },
           {
             role: 'user',
             content: [
-              'Return a valid JSON object for this simulation decision.',
-              `Allowed option ids: ${request.decisionNode.options.map(option => option.id).join(', ')}`,
-              'JSON schema:',
-              JSON.stringify(this.getResponseSchema()),
-              'Malformed content:',
-              content,
+              `Valid option IDs: ${request.decisionNode.options.map(o => o.id).join(', ')}`,
+              `Malformed input: ${content.slice(0, 300)}`,
+              'Return corrected JSON only.',
             ].join('\n'),
           },
         ],
         model,
         temperature: 0,
-        max_tokens: 220,
-        response_format: this.getResponseFormat(),
+        max_tokens: 200,
+        ...(this.useJsonObjectMode ? { response_format: { type: 'json_object' as const } } : {}),
       });
     });
 
@@ -295,29 +319,6 @@ export class ForkEvaluator {
     } as const;
   }
 
-  private getResponseFormat():
-    | { type: 'json_object' }
-    | {
-      type: 'json_schema';
-      json_schema: {
-        name: string;
-        strict: true;
-        schema: ReturnType<ForkEvaluator['getResponseSchema']>;
-      };
-    } {
-    if (this.USES_OPENROUTER_STRUCTURED_OUTPUTS) {
-      return {
-        type: 'json_schema',
-        json_schema: {
-          name: 'fork_evaluation',
-          strict: true,
-          schema: this.getResponseSchema(),
-        },
-      };
-    }
-
-    return { type: 'json_object' };
-  }
 
   private async callWithRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -414,16 +415,17 @@ export class ForkEvaluator {
     const traitDescriptions = this.describeTraits(cloneParams);
     const stateDescription = this.describeState(state);
     const psychologyBlock = this.describePsychologyModifiers(cloneParams, scenario.id, request.masterPersona);
+    const personaContextBlock = this.describeMasterPersonaContext(request.masterPersona);
 
+    const optionIds = decisionNode.options.map(o => o.id).join(', ');
     const optionsList = decisionNode.options.map((opt, i) =>
-      `${i + 1}. ${opt.label} (ID: ${opt.id})`
+      `${i + 1}. ${opt.label} (id: "${opt.id}")`
     ).join('\n');
 
-    return `
-You are simulating a behavioral clone with the following traits:
+    return `Behavioral clone traits:
 ${traitDescriptions}
-${psychologyBlock}
-Current State:
+${psychologyBlock}${personaContextBlock}
+Current state:
 ${stateDescription}
 
 Decision: ${decisionNode.prompt}
@@ -431,20 +433,27 @@ Decision: ${decisionNode.prompt}
 Options:
 ${optionsList}
 
-Based on the persona's behavioral traits, which option would they choose?
+Which option does this persona choose?
 
-Respond with JSON in this format:
-{
-  "chosenOptionId": "option_id_here",
-  "reasoning": "one short sentence under 20 words explaining the choice",
-  "confidence": 0.85
-}
+Respond with JSON containing exactly these three keys:
+- "chosenOptionId": string — must be one of [${optionIds}]
+- "reasoning": string — one sentence, under 20 words
+- "confidence": number — between 0.7 and 0.95`;
+  }
 
-Requirements:
-- chosenOptionId must exactly match one of the option IDs above
-- reasoning must be a single concise sentence
-- confidence should be 0.7-0.95 based on how clear the choice is given the traits
-- do not include markdown or any extra keys`;
+  private describeMasterPersonaContext(
+    masterPersona?: import('../persona/personaCompressor.js').MasterPersona
+  ): string {
+    const narrative = masterPersona?.llmContextSummary?.trim();
+    if (!narrative) {
+      return '';
+    }
+
+    const condensedNarrative = narrative.length > 1400
+      ? `${narrative.slice(0, 1397)}...`
+      : narrative;
+
+    return `\nRicher persona context:\n${condensedNarrative}`;
   }
 
   private describePsychologyModifiers(

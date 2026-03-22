@@ -26,6 +26,10 @@ export class SemanticExtractor extends SignalExtractor {
       this.client = new OpenAI({
         apiKey: config.llm.apiKey,
         baseURL: config.llm.baseUrl,
+        defaultHeaders: {
+          'HTTP-Referer': 'https://github.com/ElironB/Monte',
+          'X-Title': 'Monte Engine',
+        },
       });
       this.model = config.llm.model || 'openai/gpt-oss-20b';
     } else {

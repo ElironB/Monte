@@ -4,6 +4,7 @@
 import { BaseWorldAgent, HISTORICAL_DATA, simulateMarketReturn } from './base.js';
 import { CloneExecutionContext, WorldEvent, OutcomeEffect } from '../types.js';
 import { getBaseRate, applyPersonaModulation } from '../baseRateRegistry.js';
+import type { SimulationPersonaRuntimeProfile } from '../personaRuntime.js';
 
 interface FinancialState {
   portfolioValue: number;
@@ -25,6 +26,7 @@ interface FinancialState {
 
 export class FinancialWorldAgent extends BaseWorldAgent {
   type = 'financial';
+  private personaProfile?: SimulationPersonaRuntimeProfile;
   
   private state: FinancialState = {
     portfolioValue: 0,
@@ -41,11 +43,15 @@ export class FinancialWorldAgent extends BaseWorldAgent {
   initialize(
     startingCapital: number,
     monthlySavings: number = 0,
-    riskTolerance: number = 0.5
+    riskTolerance: number = 0.5,
+    personaProfile?: SimulationPersonaRuntimeProfile,
   ): void {
+    this.personaProfile = personaProfile;
     this.state.portfolioValue = startingCapital;
-    this.state.cashPosition = startingCapital * 0.1;
-    this.state.monthlySavings = monthlySavings;
+    this.state.monthlySavings = Math.max(
+      0,
+      monthlySavings * (personaProfile ? Math.max(0.45, personaProfile.executionReliability) : 1),
+    );
     
     // Set risk profile and allocation based on risk tolerance
     if (riskTolerance < 0.3) {
@@ -58,6 +64,7 @@ export class FinancialWorldAgent extends BaseWorldAgent {
       this.state.riskProfile = 'moderate';
       this.state.allocation = { stocks: 0.6, bonds: 0.3, cash: 0.1 };
     }
+    this.state.cashPosition = startingCapital * this.state.allocation.cash;
     
     this.state.returns = { monthly: [], annual: [] };
     this.state.maxDrawdown = 0;
@@ -80,9 +87,17 @@ export class FinancialWorldAgent extends BaseWorldAgent {
 
   // Simulate one month of market activity
   private simulateMonth(): void {
+    const persona = this.personaProfile;
     const { allocation } = this.state;
     const sp500Return = getBaseRate('day_trading', 'sp500_mean_return')?.rate ?? 0.095;
-    const adjustedSp500Return = applyPersonaModulation(sp500Return, 0.5);
+    const adjustedSp500Return = applyPersonaModulation(
+      sp500Return,
+      persona?.investmentAggressiveness ?? 0.5,
+      0.06,
+    );
+    const behaviorDrag = persona
+      ? ((1 - persona.executionReliability) * 0.012) + (persona.stressFragility * 0.008) - (persona.informationDepth * 0.004)
+      : 0;
     
     // Stock returns (monthly)
     const monthlyStockReturn = this.randomNormal(
@@ -100,7 +115,8 @@ export class FinancialWorldAgent extends BaseWorldAgent {
     const portfolioReturn = 
       allocation.stocks * monthlyStockReturn +
       allocation.bonds * monthlyBondReturn +
-      allocation.cash * monthlyCashReturn;
+      allocation.cash * monthlyCashReturn -
+      behaviorDrag;
     
     // Apply return to portfolio
     const previousValue = this.state.portfolioValue;
@@ -108,7 +124,7 @@ export class FinancialWorldAgent extends BaseWorldAgent {
     
     // Add monthly savings
     this.state.portfolioValue += this.state.monthlySavings;
-    this.state.cashPosition += this.state.monthlySavings * 0.1;
+    this.state.cashPosition += this.state.monthlySavings * this.state.allocation.cash;
     
     // Track returns
     this.state.returns.monthly.push(portfolioReturn);
@@ -143,16 +159,26 @@ export class FinancialWorldAgent extends BaseWorldAgent {
   evaluate(context: CloneExecutionContext): WorldEvent | null {
     const { state, parameters } = context;
     const events: WorldEvent[] = [];
+    const persona = this.personaProfile;
     
     // Market crash event (low probability)
-    const crashProbability = this.applyBehavioralModifiers(
+    let crashProbability = this.applyBehavioralModifiers(
       0.05, // 5% base chance per evaluation
       context,
       [
         { trait: 'riskTolerance', threshold: 0.8, factor: 1.5 }, // Higher risk = more exposure to crashes
         { trait: 'emotionalVolatility', threshold: 0.7, factor: 0.8 }, // Emotional traders may exit before crashes
+        { trait: 'stressResponse', threshold: 0.65, factor: 1.2 },
+        { trait: 'executionGap', threshold: 0.65, factor: 1.15 },
       ]
     );
+    if (parameters.informationSeeking < 0.4) {
+      crashProbability *= 1.1;
+    }
+    if (persona?.riskFlags.includes('stress_capitulation')) {
+      crashProbability *= 1.15;
+    }
+    crashProbability = Math.min(1, crashProbability);
     
     if (this.roll(crashProbability)) {
       const crashSeverity = this.randomRange(0.15, 0.45);
@@ -168,13 +194,20 @@ export class FinancialWorldAgent extends BaseWorldAgent {
     }
     
     // Bull market event
-    const bullProbability = this.applyBehavioralModifiers(
+    let bullProbability = this.applyBehavioralModifiers(
       0.15,
       context,
       [
         { trait: 'decisionSpeed', threshold: 0.7, factor: 1.3 }, // Quick decision makers catch momentum
+        { trait: 'informationSeeking', threshold: 0.65, factor: 1.15 },
+        { trait: 'executionGap', threshold: 0.35, factor: 1.1, direction: 'below' },
+        { trait: 'stressResponse', threshold: 0.4, factor: 1.1, direction: 'below' },
       ]
     );
+    if (persona?.riskFlags.includes('planning_paralysis')) {
+      bullProbability *= 0.92;
+    }
+    bullProbability = Math.min(1, bullProbability);
     
     if (this.roll(bullProbability)) {
       const gain = this.randomRange(0.1, 0.3);
@@ -237,7 +270,7 @@ export class FinancialWorldAgent extends BaseWorldAgent {
     maxDrawdown: number;
     riskProfile: string;
   } {
-    const totalValue = this.state.portfolioValue + this.state.cashPosition;
+    const totalValue = this.state.portfolioValue;
     const monthlyReturns = this.state.returns.monthly;
     const ytdReturn = monthlyReturns.length > 0
       ? monthlyReturns.reduce((a, b) => a + b, 0)

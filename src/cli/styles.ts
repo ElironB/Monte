@@ -47,6 +47,7 @@ export function statusColor(status: string, width?: number): string {
     case 'running':
     case 'processing':
     case 'pending':
+    case 'aggregating':
       return chalk.yellow(value);
     case 'failed':
     case 'error':

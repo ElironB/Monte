@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getRedisClient } from '../../config/redis.js';
 import { logger } from '../../utils/logger.js';
 import { runQuerySingle } from '../../config/neo4j.js';
+import { calculateSimulationProgress } from '../../simulation/progress.js';
 
 interface SSEClient {
   id: string;
@@ -10,6 +11,24 @@ interface SSEClient {
 }
 
 const clients = new Map<string, SSEClient>();
+
+function getSimulationProgressKey(simulationId: string): string {
+  return `sim:${simulationId}:progress`;
+}
+
+function getSimulationProcessedClonesKey(simulationId: string): string {
+  return `sim:${simulationId}:processedClones`;
+}
+
+function getNumberField(payload: Record<string, unknown> | null, key: string): number | undefined {
+  const value = payload?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function getStringField(payload: Record<string, unknown> | null, key: string): string | undefined {
+  const value = payload?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
 
 export function broadcastSimulationProgress(simulationId: string, data: unknown): void {
   for (const client of clients.values()) {
@@ -62,9 +81,13 @@ async function streamRoutes(fastify: FastifyInstance) {
 
       // Send current progress from Redis if available
       const redis = await getRedisClient();
-      const progress = await redis.get(`sim:${id}:progress`);
+      const progress = await redis.get(getSimulationProgressKey(id));
       if (progress) {
-        reply.raw.write(`data: ${JSON.stringify({ type: 'progress', data: JSON.parse(progress) })}\n\n`);
+        try {
+          reply.raw.write(`data: ${JSON.stringify({ type: 'progress', data: JSON.parse(progress) })}\n\n`);
+        } catch (err) {
+          logger.warn({ err, simulationId: id }, 'Failed to parse live simulation progress');
+        }
       }
 
       // Keep connection alive with ping every 30 seconds
@@ -114,21 +137,45 @@ async function streamRoutes(fastify: FastifyInstance) {
 
       // Get real-time updates from Redis
       const redis = await getRedisClient();
-      const realTimeProgress = await redis.get(`sim:${id}:progress`);
+      const [realTimeProgress, processedClonesRaw] = await Promise.all([
+        redis.get(getSimulationProgressKey(id)),
+        redis.get(getSimulationProcessedClonesKey(id)),
+      ]);
 
+      let parsed: Record<string, unknown> | null = null;
       if (realTimeProgress) {
-        const parsed = JSON.parse(realTimeProgress);
+        try {
+          parsed = JSON.parse(realTimeProgress) as Record<string, unknown>;
+        } catch (err) {
+          logger.warn({ err, simulationId: id }, 'Failed to parse live simulation progress');
+        }
+      }
+
+      const processedClones = processedClonesRaw
+        ? Number.parseInt(processedClonesRaw, 10)
+        : getNumberField(parsed, 'processedClones');
+
+      if (parsed || Number.isFinite(processedClones)) {
+        const status = getStringField(parsed, 'status') ?? simulation.status;
+        const liveProcessedClones = typeof processedClones === 'number' && Number.isFinite(processedClones)
+          ? processedClones
+          : undefined;
         return {
           simulationId: id,
-          status: simulation.status,
-          progress: parsed.progress ?? simulation.progress ?? 0,
-          completedBatches: parsed.completedBatches ?? simulation.completedBatches ?? 0,
+          status,
+          progress: typeof liveProcessedClones === 'number' && liveProcessedClones > 0
+            ? calculateSimulationProgress(liveProcessedClones, simulation.cloneCount, status)
+            : getNumberField(parsed, 'progress') ?? simulation.progress ?? 0,
+          completedBatches: getNumberField(parsed, 'completedBatches') ?? simulation.completedBatches ?? 0,
           totalBatches: Math.ceil(simulation.cloneCount / 100),
           cloneCount: simulation.cloneCount,
-          error: parsed.error ?? simulation.error,
-          currentBatch: parsed.currentBatch,
-          estimatedTimeRemaining: parsed.estimatedTimeRemaining,
-          lastUpdated: parsed.lastUpdated,
+          processedClones: liveProcessedClones ?? 0,
+          error: getStringField(parsed, 'error') ?? simulation.error,
+          currentBatch: getNumberField(parsed, 'currentBatch'),
+          batchProcessedClones: getNumberField(parsed, 'batchProcessedClones'),
+          batchCloneCount: getNumberField(parsed, 'batchCloneCount'),
+          estimatedTimeRemaining: getNumberField(parsed, 'estimatedTimeRemaining'),
+          lastUpdated: getStringField(parsed, 'lastUpdated'),
         };
       }
 

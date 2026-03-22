@@ -77,14 +77,19 @@ export abstract class BaseWorldAgent implements WorldAgent {
   protected applyBehavioralModifiers(
     baseProbability: number,
     context: CloneExecutionContext,
-    modifiers: Array<{ trait: string; threshold: number; factor: number }>
+    modifiers: Array<{ trait: string; threshold: number; factor: number; direction?: 'above' | 'below' }>
   ): number {
     let probability = baseProbability;
     const { parameters } = context;
 
     for (const mod of modifiers) {
       const traitValue = parameters[mod.trait as keyof typeof parameters];
-      if (typeof traitValue === 'number' && traitValue > mod.threshold) {
+      const direction = mod.direction ?? 'above';
+      const conditionMet =
+        typeof traitValue === 'number' &&
+        (direction === 'below' ? traitValue < mod.threshold : traitValue > mod.threshold);
+
+      if (conditionMet) {
         probability *= mod.factor;
       }
     }

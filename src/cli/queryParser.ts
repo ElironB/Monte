@@ -49,7 +49,14 @@ function isScenarioType(value: unknown): value is ScenarioType {
 
 export async function parseSimulationQuery(query: string): Promise<ParsedSimulation> {
   const { apiKey, baseUrl, model } = loadLLMConfig();
-  const client = new OpenAI({ apiKey, baseURL: baseUrl });
+  const client = new OpenAI({
+    apiKey,
+    baseURL: baseUrl,
+    defaultHeaders: {
+      'HTTP-Referer': 'https://github.com/ElironB/Monte',
+      'X-Title': 'Monte Engine',
+    },
+  });
 
   const systemPrompt = `You parse natural language decision questions into structured simulation parameters.
 

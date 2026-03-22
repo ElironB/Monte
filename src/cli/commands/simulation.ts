@@ -92,6 +92,22 @@ type SimulationCreateResult = {
   cloneCount: number;
 };
 
+type SimulationProgressResult = {
+  simulationId: string;
+  status: string;
+  progress: number;
+  completedBatches: number;
+  totalBatches: number;
+  cloneCount: number;
+  processedClones?: number;
+  currentBatch?: number;
+  batchProcessedClones?: number;
+  batchCloneCount?: number;
+  estimatedTimeRemaining?: number;
+  lastUpdated?: string;
+  error?: string;
+};
+
 async function createSimulationAndHandleResult(
   scenarioType: string,
   name: string,
@@ -251,23 +267,19 @@ simulationCommands
   .argument('<id>', 'simulation ID')
   .action(async (id) => {
     try {
-      const progress = await api.getSimulationProgress(id) as {
-        simulationId: string;
-        status: string;
-        progress: number;
-        completedBatches: number;
-        totalBatches: number;
-        cloneCount: number;
-        estimatedTimeRemaining?: number;
-      };
+      const progress = await api.getSimulationProgress(id) as SimulationProgressResult;
 
       console.log(`\n${sectionHeader('Simulation Progress')}`);
       console.log(`  ${infoLabel('Simulation:')} ${chalk.cyan(progress.simulationId)}`);
       console.log(`  ${infoLabel('Status:')} ${statusColor(progress.status)}`);
       console.log(
-        `  ${infoLabel('Progress:')} ${chalk.cyan.bold(`${progress.progress}%`)} ${dimText(`(${progress.completedBatches}/${progress.totalBatches} batches)`)}`,
+        `  ${infoLabel('Progress:')} ${chalk.cyan.bold(`${progress.progress}%`)} ${dimText(`(${formatProgressSummary(progress)})`)}`,
       );
       console.log(`  ${infoLabel('Clones:')} ${valueText(progress.cloneCount)}`);
+      const currentBatch = formatCurrentBatch(progress);
+      if (currentBatch) {
+        console.log(`  ${infoLabel('Live batch:')} ${dimText(currentBatch)}`);
+      }
       if (progress.estimatedTimeRemaining) {
         console.log(`  ${infoLabel('ETA:')} ${dimText(formatDuration(progress.estimatedTimeRemaining))}`);
       }
@@ -412,21 +424,24 @@ async function waitForSimulation(id: string): Promise<void> {
 
     const check = async () => {
       try {
-        const progress = await api.getSimulationProgress(id) as {
-          status: string;
-          progress: number;
-          error?: string;
-          lastUpdated?: string;
-        };
+        const progress = await api.getSimulationProgress(id) as SimulationProgressResult;
 
         if (progress.status === 'completed') {
+          // Re-fetch until results are actually in Neo4j (race: Redis marks
+          // completed before the aggregation write finishes)
+          const results = await api.getSimulationResults(id) as {
+            status: string;
+            distributions: { statistics: { successRate: number } } | null;
+          };
+
+          if (!results.distributions) {
+            // Aggregation not written yet — keep polling
+            setTimeout(check, 1000);
+            return;
+          }
+
           process.stdout.write('\n');
           console.log(`${icons.success} ${chalk.green.bold('Simulation complete!')}`);
-          const results = await api.getSimulationResults(id) as {
-            distributions: {
-              statistics: { successRate: number };
-            };
-          };
           console.log(`  ${infoLabel('Success Rate:')} ${chalk.green.bold(formatPercent(results.distributions.statistics.successRate))}`);
           resolve();
           return;
@@ -450,13 +465,17 @@ async function waitForSimulation(id: string): Promise<void> {
           lastProgress = progress.progress;
         }
 
-        process.stdout.write(`\r${infoLabel('Progress:')} [${progressBar(progress.progress)}] ${chalk.cyan.bold(`${progress.progress}%`)}`);
+        process.stdout.write(
+          `\r${infoLabel('Progress:')} [${progressBar(progress.progress)}] ${chalk.cyan.bold(`${progress.progress}%`)} ${dimText(`(${formatProgressSummary(progress)})`)}${progress.status === 'aggregating' ? ` ${dimText('aggregating results')}` : ''}`
+        );
 
         if (stagnantPolls >= 15 && !warnedAboutStall) {
           process.stdout.write('\n');
           console.log(
             warningText(
-              `No progress update for ~${stagnantPolls * 2}s. Simulation may be waiting on workers or queued LLM calls.`
+              progress.status === 'aggregating'
+                ? `No progress update for ~${stagnantPolls * 2}s. Final aggregation may still be writing results.`
+                : `No progress update for ~${stagnantPolls * 2}s. Simulation may be waiting on workers or queued LLM calls.`
             )
           );
           if (progress.lastUpdated) {
@@ -480,4 +499,28 @@ function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function formatProgressSummary(progress: SimulationProgressResult): string {
+  const processedClones = typeof progress.processedClones === 'number'
+    ? Math.min(progress.cloneCount, Math.max(0, progress.processedClones))
+    : undefined;
+  const cloneSummary = processedClones === undefined
+    ? `${progress.cloneCount} clones`
+    : `${processedClones}/${progress.cloneCount} clones`;
+
+  return `${cloneSummary}, ${progress.completedBatches}/${progress.totalBatches} batches`;
+}
+
+function formatCurrentBatch(progress: SimulationProgressResult): string | null {
+  if (typeof progress.currentBatch !== 'number') {
+    return null;
+  }
+
+  const batchLabel = `batch ${progress.currentBatch + 1}/${progress.totalBatches}`;
+  if (typeof progress.batchProcessedClones === 'number' && typeof progress.batchCloneCount === 'number') {
+    return `${batchLabel} · ${progress.batchProcessedClones}/${progress.batchCloneCount} clones`;
+  }
+
+  return batchLabel;
 }

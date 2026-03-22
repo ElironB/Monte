@@ -45,16 +45,53 @@ export function extractFirstJsonObject(raw: string): string | null {
   return null;
 }
 
+/** Attempt to close a truncated JSON object by appending brackets/values. */
+export function repairTruncatedJson(raw: string): string | null {
+  const t = raw.trim();
+  if (!t.startsWith('{')) return null;
+
+  // Most common case: object truncated before the closing brace
+  const closers = ['}', '"}', '0}', '0.8}', 'null}'];
+  for (const closer of closers) {
+    try {
+      JSON.parse(t + closer);
+      return t + closer;
+    } catch { /* try next */ }
+  }
+
+  // Drop the last incomplete key-value pair (everything after the last complete comma)
+  const lastComma = t.lastIndexOf(',');
+  if (lastComma > 0) {
+    const truncated = t.slice(0, lastComma) + '}';
+    try {
+      JSON.parse(truncated);
+      return truncated;
+    } catch { /* try next */ }
+  }
+
+  return null;
+}
+
 export function parseJsonResponse<T>(raw: string): T {
   const cleaned = stripCodeFence(raw);
 
   try {
     return JSON.parse(cleaned) as T;
-  } catch {
-    const extracted = extractFirstJsonObject(cleaned);
-    if (extracted) {
+  } catch { /* try extraction */ }
+
+  const extracted = extractFirstJsonObject(cleaned);
+  if (extracted) {
+    try {
       return JSON.parse(extracted) as T;
-    }
+    } catch { /* try repair */ }
+  }
+
+  // Last resort: try to repair truncated JSON
+  const repaired = repairTruncatedJson(extracted ?? cleaned);
+  if (repaired) {
+    try {
+      return JSON.parse(repaired) as T;
+    } catch { /* give up */ }
   }
 
   const preview = cleaned.slice(0, 200) || '[empty response]';

@@ -3,6 +3,7 @@
 
 import { BaseWorldAgent } from './base.js';
 import { CloneExecutionContext, WorldEvent, OutcomeEffect } from '../types.js';
+import type { SimulationPersonaRuntimeProfile } from '../personaRuntime.js';
 
 interface SocialState {
   relationshipSatisfaction: number; // 0-1
@@ -24,6 +25,7 @@ interface Relationship {
 
 export class SocialWorldAgent extends BaseWorldAgent {
   type = 'social';
+  private personaProfile?: SimulationPersonaRuntimeProfile;
   
   private state: SocialState = {
     relationshipSatisfaction: 0.6,
@@ -42,19 +44,23 @@ export class SocialWorldAgent extends BaseWorldAgent {
   initialize(
     networkSize: number = 8,
     satisfaction: number = 0.6,
-    hasPartner: boolean = false
+    hasPartner: boolean = false,
+    personaProfile?: SimulationPersonaRuntimeProfile,
   ): void {
+    this.personaProfile = personaProfile;
     this.state.relationshipSatisfaction = satisfaction;
     this.state.supportNetworkSize = networkSize;
-    this.state.socialCapital = this.calculateSocialCapital();
-    this.state.lonelinessLevel = networkSize < 5 ? 0.5 : 0.2;
+    this.state.lonelinessLevel = networkSize < 5
+      ? 0.5 + ((personaProfile?.attachmentStyle === 'anxious' ? 0.1 : 0))
+      : 0.2;
     this.state.socialDisruption = 0;
-    this.state.communityInvolvement = 0.4;
+    this.state.communityInvolvement = personaProfile?.communityInvolvement ?? 0.4;
     this.state.relocationStress = 0;
     this.state.lastMoveMonths = 999;
     
     // Generate initial relationships
     this.relationships = this.generateRelationships(networkSize, hasPartner);
+    this.state.socialCapital = this.calculateSocialCapital();
   }
 
   // Advance simulation by months
@@ -66,6 +72,7 @@ export class SocialWorldAgent extends BaseWorldAgent {
 
   // Simulate one month of social dynamics
   private simulateMonth(): void {
+    const persona = this.personaProfile;
     this.state.lastMoveMonths++;
     
     // Social disruption decays over time
@@ -82,13 +89,22 @@ export class SocialWorldAgent extends BaseWorldAgent {
     if (this.state.supportNetworkSize < 3) {
       this.state.lonelinessLevel = Math.min(1, this.state.lonelinessLevel + 0.01);
     } else {
-      this.state.lonelinessLevel = Math.max(0, this.state.lonelinessLevel - 0.005);
+      this.state.lonelinessLevel = Math.max(
+        0,
+        this.state.lonelinessLevel - (0.005 + ((persona?.communityInvolvement ?? 0.4) * 0.004)),
+      );
     }
     
     // Relationship satisfaction fluctuates
     this.state.relationshipSatisfaction = Math.max(0.2, Math.min(1,
-      this.state.relationshipSatisfaction + (Math.random() - 0.5) * 0.02
+      this.state.relationshipSatisfaction
+        + ((Math.random() - 0.5) * 0.02 * (persona?.socialPressureSensitivity ?? 1))
+        + (((persona ? (1 - persona.stressFragility) : 0.5) - 0.5) * 0.02)
     ));
+    this.state.communityInvolvement = Math.max(
+      0,
+      Math.min(1, this.state.communityInvolvement + (((persona?.informationDepth ?? 0.5) - 0.5) * 0.02)),
+    );
     
     // Update social capital
     this.state.socialCapital = this.calculateSocialCapital();
@@ -98,9 +114,17 @@ export class SocialWorldAgent extends BaseWorldAgent {
   evaluate(context: CloneExecutionContext): WorldEvent | null {
     const { state, parameters } = context;
     const events: WorldEvent[] = [];
+    const persona = this.personaProfile;
     
     // Relationship strain (especially after relocation)
-    if (this.state.relocationStress > 0.4 && this.roll(0.15)) {
+    let relationshipStrainProbability = 0.15;
+    if (this.state.relocationStress > 0.4) {
+      relationshipStrainProbability *= persona?.socialPressureSensitivity ?? 1;
+      if (persona?.attachmentStyle === 'anxious' || persona?.attachmentStyle === 'disorganized') {
+        relationshipStrainProbability *= 1.15;
+      }
+    }
+    if (this.state.relocationStress > 0.4 && this.roll(Math.min(1, relationshipStrainProbability))) {
       events.push(this.createEvent(
         'relationship_strain',
         'Relationships strained by distance/lifestyle changes',
@@ -109,7 +133,7 @@ export class SocialWorldAgent extends BaseWorldAgent {
           { target: 'metrics.socialDisruption', delta: 0.2, type: 'absolute' },
           { target: 'health', delta: -0.05, type: 'absolute' },
         ],
-        0.15
+        Math.min(1, relationshipStrainProbability)
       ));
     }
     
@@ -140,14 +164,17 @@ export class SocialWorldAgent extends BaseWorldAgent {
     }
     
     // New connection opportunity
-    const connectionProbability = this.applyBehavioralModifiers(
+    let connectionProbability = this.applyBehavioralModifiers(
       0.1,
       context,
       [
         { trait: 'socialDependency', threshold: 0.6, factor: 1.6 },
         { trait: 'decisionSpeed', threshold: 0.6, factor: 1.2 }, // Fast decision makers more social
+        { trait: 'informationSeeking', threshold: 0.65, factor: 1.2 },
+        { trait: 'stressResponse', threshold: 0.4, factor: 1.1, direction: 'below' },
       ]
     );
+    connectionProbability = Math.min(1, connectionProbability * (0.8 + (this.state.communityInvolvement * 0.4)));
     
     if (this.roll(connectionProbability)) {
       this.state.supportNetworkSize++;
@@ -165,7 +192,10 @@ export class SocialWorldAgent extends BaseWorldAgent {
     
     // Support network activation (crisis support)
     if (state.capital < 10000 || state.health < 0.5) {
-      const supportProbability = Math.min(0.5, this.state.socialCapital * 0.6);
+      const supportProbability = Math.min(
+        0.6,
+        this.state.socialCapital * 0.6 * (persona?.socialPressureSensitivity ?? 1),
+      );
       
       if (this.roll(supportProbability)) {
         events.push(this.createEvent(
@@ -184,7 +214,10 @@ export class SocialWorldAgent extends BaseWorldAgent {
     // Partnership milestone
     if (this.relationships.some(r => r.type === 'partner') && 
         this.state.relationshipSatisfaction > 0.8 && 
-        this.roll(0.03)) {
+        this.roll(Math.min(
+          0.08,
+          0.03 * (persona?.attachmentStyle === 'secure' ? 1.4 : 1) * (0.8 + ((persona ? (1 - persona.stressFragility) : 0.5) * 0.4)),
+        ))) {
       events.push(this.createEvent(
         'relationship_milestone',
         'Relationship deepening - major commitment',
@@ -301,6 +334,7 @@ export class SocialWorldAgent extends BaseWorldAgent {
     relationshipSatisfaction: number;
     supportNetworkSize: number;
     socialCapital: number;
+    socialDisruption: number;
     lonelinessLevel: number;
     relocationStress: number;
     monthsSinceMove: number;
@@ -309,6 +343,7 @@ export class SocialWorldAgent extends BaseWorldAgent {
       relationshipSatisfaction: this.state.relationshipSatisfaction,
       supportNetworkSize: this.state.supportNetworkSize,
       socialCapital: this.state.socialCapital,
+      socialDisruption: this.state.socialDisruption,
       lonelinessLevel: this.state.lonelinessLevel,
       relocationStress: this.state.relocationStress,
       monthsSinceMove: this.state.lastMoveMonths,

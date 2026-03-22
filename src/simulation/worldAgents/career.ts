@@ -4,6 +4,7 @@
 import { BaseWorldAgent } from './base.js';
 import { CloneExecutionContext, WorldEvent, OutcomeEffect } from '../types.js';
 import { getBaseRate } from '../baseRateRegistry.js';
+import type { SimulationPersonaRuntimeProfile } from '../personaRuntime.js';
 
 const ANNUAL_SALARY_GROWTH =
   getBaseRate('career_change', 'salary_growth_annual', ['us_workers', 'private_industry'])?.rate ?? 0.035;
@@ -35,6 +36,7 @@ interface JobOffer {
 
 export class CareerWorldAgent extends BaseWorldAgent {
   type = 'career';
+  private personaProfile?: SimulationPersonaRuntimeProfile;
   
   private state: CareerState = {
     currentSalary: 0,
@@ -52,15 +54,20 @@ export class CareerWorldAgent extends BaseWorldAgent {
   initialize(
     startingSalary: number,
     industryStability: number = 0.7,
-    skillLevel: number = 0.5
+    skillLevel: number = 0.5,
+    personaProfile?: SimulationPersonaRuntimeProfile,
   ): void {
+    this.personaProfile = personaProfile;
     this.state.currentSalary = startingSalary;
     this.state.jobStability = industryStability;
     this.state.skillRelevance = skillLevel;
     this.state.yearsInRole = 0;
-    this.state.promotionReadiness = 0.3;
-    this.state.networkStrength = 0.4;
-    this.state.burnoutLevel = 0.2;
+    this.state.promotionReadiness = 0.25 + (personaProfile?.executionReliability ?? 0.5) * 0.15;
+    this.state.networkStrength = Math.min(
+      1,
+      0.2 + ((personaProfile?.supportNetworkSize ?? 6) / 20) + ((personaProfile?.informationDepth ?? 0.5) * 0.2),
+    );
+    this.state.burnoutLevel = personaProfile?.burnoutBaseline ?? 0.2;
     this.state.jobSearchStatus = 'employed';
     this.state.monthsUnemployed = 0;
   }
@@ -74,6 +81,7 @@ export class CareerWorldAgent extends BaseWorldAgent {
 
   // Simulate one month of career dynamics
   private simulateMonth(): void {
+    const persona = this.personaProfile;
     // Update job tenure
     if (this.state.jobSearchStatus === 'employed') {
       this.state.yearsInRole += 1/12;
@@ -81,22 +89,32 @@ export class CareerWorldAgent extends BaseWorldAgent {
     
     // Salary growth (annual raise, prorated monthly)
     const monthlyGrowth = Math.pow(1 + ANNUAL_SALARY_GROWTH, 1 / 12) - 1;
-    this.state.currentSalary *= (1 + monthlyGrowth);
+    const growthMultiplier = persona
+      ? 0.9 + persona.executionReliability * 0.15 + persona.informationDepth * 0.08
+      : 1;
+    this.state.currentSalary *= (1 + (monthlyGrowth * growthMultiplier));
     
     // Promotion readiness increases with tenure
     this.state.promotionReadiness = Math.min(1, 
-      this.state.promotionReadiness + (0.05 / 12)
+      this.state.promotionReadiness + ((0.05 / 12) * (0.8 + ((persona?.executionReliability ?? 0.5) * 0.4)))
+    );
+    this.state.networkStrength = Math.max(
+      0.2,
+      Math.min(
+        1,
+        this.state.networkStrength + ((((persona?.informationDepth ?? 0.5) + (persona?.socialPressureSensitivity ?? 1)) * 0.01) - 0.01),
+      ),
     );
     
     // Skill relevance slowly decays
     this.state.skillRelevance = Math.max(0.3, 
-      this.state.skillRelevance - (0.02 / 12)
+      this.state.skillRelevance - (0.02 / 12) + ((persona?.informationDepth ?? 0.5) * 0.005)
     );
     
     // Burnout dynamics
     if (this.state.yearsInRole > 2) {
       this.state.burnoutLevel = Math.min(1, 
-        this.state.burnoutLevel + (0.03 / 12)
+        this.state.burnoutLevel + ((0.03 / 12) * (0.8 + (persona?.stressFragility ?? 0.5)))
       );
     }
     
@@ -108,18 +126,25 @@ export class CareerWorldAgent extends BaseWorldAgent {
 
   // Evaluate context and return career world event
   evaluate(context: CloneExecutionContext): WorldEvent | null {
-    const { state, parameters } = context;
+    const { state } = context;
     const events: WorldEvent[] = [];
+    const persona = this.personaProfile;
     
     // Job loss event (layoff)
-    const layoffProbability = this.applyBehavioralModifiers(
+    let layoffProbability = this.applyBehavioralModifiers(
       MONTHLY_LAYOFF_RATE,
       context,
       [
         { trait: 'emotionalVolatility', threshold: 0.8, factor: 1.3 }, // Emotional issues may affect performance
         { trait: 'socialDependency', threshold: 0.7, factor: 0.9 }, // Good relationships provide protection
+        { trait: 'stressResponse', threshold: 0.65, factor: 1.2 },
+        { trait: 'executionGap', threshold: 0.65, factor: 1.15 },
       ]
     );
+    if (persona?.riskFlags.includes('autonomous_drift')) {
+      layoffProbability *= 1.1;
+    }
+    layoffProbability = Math.min(1, layoffProbability);
     
     if (this.state.jobSearchStatus === 'employed' && this.roll(layoffProbability)) {
       const severance = this.state.currentSalary * (0.1 + Math.random() * 0.2); // 1-3 months
@@ -139,14 +164,20 @@ export class CareerWorldAgent extends BaseWorldAgent {
     }
     
     // Voluntary quit (if conditions met)
-    const quitProbability = this.applyBehavioralModifiers(
+    let quitProbability = this.applyBehavioralModifiers(
       MONTHLY_VOLUNTARY_QUIT_RATE,
       context,
       [
         { trait: 'riskTolerance', threshold: 0.7, factor: 1.5 },
         { trait: 'decisionSpeed', threshold: 0.8, factor: 1.3 },
+        { trait: 'stressResponse', threshold: 0.65, factor: 1.2 },
+        { trait: 'timePreference', threshold: 0.7, factor: 1.1 },
       ]
     );
+    if (persona?.riskFlags.includes('stress_capitulation')) {
+      quitProbability *= 1.2;
+    }
+    quitProbability = Math.min(1, quitProbability);
     
     if (this.state.jobSearchStatus === 'employed' && 
         this.state.burnoutLevel > 0.6 && 
@@ -190,14 +221,21 @@ export class CareerWorldAgent extends BaseWorldAgent {
     // Job offer while searching
     if (this.state.jobSearchStatus === 'unemployed' || 
         (this.state.jobSearchStatus === 'employed' && this.state.burnoutLevel > 0.5)) {
-      const offerProbability = this.applyBehavioralModifiers(
+      let offerProbability = this.applyBehavioralModifiers(
         0.15, // ~15% chance per month of getting offer when searching
         context,
         [
           { trait: 'socialDependency', threshold: 0.6, factor: 1.4 }, // Network helps
           { trait: 'learningStyle', threshold: 0.7, factor: 1.2 }, // Continuous learners get offers
+          { trait: 'informationSeeking', threshold: 0.65, factor: 1.2 },
+          { trait: 'executionGap', threshold: 0.35, factor: 1.15, direction: 'below' },
+          { trait: 'stressResponse', threshold: 0.4, factor: 1.1, direction: 'below' },
         ]
       );
+      if (persona?.riskFlags.includes('planning_paralysis')) {
+        offerProbability *= 0.95;
+      }
+      offerProbability = Math.min(1, offerProbability);
       
       if (this.roll(offerProbability)) {
         const offer = this.generateJobOffer();
@@ -265,15 +303,18 @@ export class CareerWorldAgent extends BaseWorldAgent {
 
   // Generate a job offer based on market conditions and skills
   private generateJobOffer(): JobOffer {
+    const persona = this.personaProfile;
     const baseSalary = this.state.currentSalary * this.randomRange(0.9, 1.3);
     const skillPremium = this.state.skillRelevance * 0.2;
     const networkBonus = this.state.networkStrength * 0.1;
+    const informationBonus = persona ? persona.informationDepth * 0.08 : 0;
+    const resilienceBonus = persona ? (1 - persona.stressFragility) * 0.05 : 0;
     
     return {
-      salary: baseSalary * (1 + skillPremium + networkBonus),
+      salary: baseSalary * (1 + skillPremium + networkBonus + informationBonus + resilienceBonus),
       stability: this.randomRange(0.5, 0.9),
-      growthPotential: this.randomRange(0.3, 0.8),
-      cultureFit: this.randomRange(0.4, 0.9),
+      growthPotential: Math.min(1, this.randomRange(0.3, 0.8) + (persona?.informationDepth ?? 0) * 0.08),
+      cultureFit: Math.min(1, this.randomRange(0.4, 0.9) + ((persona ? (1 - persona.burnoutBaseline) : 0.5) * 0.05)),
     };
   }
 

@@ -7,9 +7,11 @@ import {
   DecisionNode, 
   EventNode, 
   OutcomeNode,
+  OutcomeEffect,
   SimulationState,
   ScenarioType
 } from './types.js';
+import { applyEffectsToState } from './state.js';
 
 // Build decision graph for any scenario type
 export function buildDecisionGraph(scenarioType: string): GraphNode[] {
@@ -151,11 +153,20 @@ export function getInitialState(scenarioType: string): SimulationState {
         ...baseState,
         capital: 25000,
         metrics: {
-          commitmentLevel: 0,
+          commitmentLevel: 0.4,
           progressRate: 0,
           setbackCount: 0,
-          adaptationScore: 0,
+          adaptationScore: 0.2,
           optionalityPreserved: 1.0,
+          evidenceQuality: 0.3,
+          executionQuality: 0.5,
+          burnRate: 0.15,
+          socialPressure: 0.25,
+          convictionStability: 0.5,
+          reversibility: 0.8,
+          runwayMonths: 12,
+          learningVelocity: 0.3,
+          opportunityAccess: 0.4,
         },
       };
     
@@ -1649,114 +1660,429 @@ function buildCustomGraph(): GraphNode[] {
     {
       id: 'start',
       type: 'decision',
-      prompt: 'Initial commitment: How fully do you commit to this path?',
+      prompt: 'You are facing a genuinely hard decision with upside, downside, and incomplete information. How do you structure the initial bet?',
       options: [
-        { id: 'full_commit', label: 'Full commitment — go all in', value: 'full_commit', nextNodeId: 'early_signal' },
-        { id: 'partial_commit', label: 'Partial commitment — hedge with backup plan', value: 'partial_commit', nextNodeId: 'early_signal' },
-        { id: 'minimal_commit', label: 'Minimal commitment — test the waters first', value: 'minimal_commit', nextNodeId: 'early_signal' },
+        { id: 'full_commit', label: 'Aggressive all-in bet — commit most resources and close backup paths', value: 'full_commit', nextNodeId: 'setup_full_commit' },
+        { id: 'barbell_commit', label: 'Cautious barbell strategy — commit meaningfully while preserving a reversible backup plan', value: 'barbell_commit', nextNodeId: 'setup_barbell_commit', requiresEvaluation: true },
+        { id: 'test_commit', label: 'Research-first experiment — test the path cheaply before making a hard commitment', value: 'test_commit', nextNodeId: 'setup_test_commit', requiresEvaluation: true },
       ],
     } as DecisionNode,
     {
-      id: 'early_signal',
+      id: 'setup_full_commit',
       type: 'event',
-      name: 'Early Feedback Signals',
-      description: 'Early feedback signals arrive — results are ambiguous',
+      name: 'Concentrated Commitment',
+      description: 'You commit heavily up front, increasing speed but burning optionality.',
       probability: 1.0,
       outcomes: [
+        {
+          id: 'full_commitment_locked',
+          label: 'Resources and identity are now tightly tied to this path',
+          effects: [
+            { target: 'capital', delta: -0.18, type: 'percentage' },
+            { target: 'metrics.commitmentLevel', delta: 0.35, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: 0.18, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: -0.35, type: 'absolute' },
+            { target: 'metrics.burnRate', delta: 0.2, type: 'absolute' },
+            { target: 'metrics.reversibility', delta: -0.25, type: 'absolute' },
+          ],
+          nextNodeId: 'evidence_strategy',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'setup_barbell_commit',
+      type: 'event',
+      name: 'Barbell Commitment',
+      description: 'You commit, but keep a fallback path alive in case reality goes against you.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'barbell_commitment',
+          label: 'Progress starts while key escape hatches remain open',
+          effects: [
+            { target: 'capital', delta: -0.1, type: 'percentage' },
+            { target: 'metrics.commitmentLevel', delta: 0.2, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: 0.12, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: -0.1, type: 'absolute' },
+            { target: 'metrics.reversibility', delta: 0.1, type: 'absolute' },
+          ],
+          nextNodeId: 'evidence_strategy',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'setup_test_commit',
+      type: 'event',
+      name: 'Experimental Entry',
+      description: 'You keep costs low and use reversible experiments to gather signal.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'test_commitment',
+          label: 'You trade speed for lower downside and cleaner evidence',
+          effects: [
+            { target: 'capital', delta: -0.04, type: 'percentage' },
+            { target: 'metrics.commitmentLevel', delta: -0.05, type: 'absolute' },
+            { target: 'metrics.evidenceQuality', delta: 0.15, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: 0.1, type: 'absolute' },
+            { target: 'metrics.reversibility', delta: 0.2, type: 'absolute' },
+          ],
+          nextNodeId: 'evidence_strategy',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'evidence_strategy',
+      type: 'decision',
+      prompt: 'What do you optimize for while evidence is still noisy?',
+      options: [
+        { id: 'ship_fast', label: 'Ship fast and learn in public', value: 'ship_fast', nextNodeId: 'market_feedback', requiresEvaluation: true },
+        { id: 'run_experiment', label: 'Run a small reversible experiment and gather hard signal', value: 'run_experiment', nextNodeId: 'market_feedback', requiresEvaluation: true },
+        { id: 'research_more', label: 'Pause and research competitors, customers, and second-order effects', value: 'research_more', nextNodeId: 'market_feedback', requiresEvaluation: true },
+      ],
+    } as DecisionNode,
+    {
+      id: 'market_feedback',
+      type: 'event',
+      name: 'Market Feedback Window',
+      description: 'Reality starts to answer back, but the signal is noisy and easy to misread.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'early_traction',
+          label: 'A few strong signals suggest the path might work',
+          effects: [
+            { target: 'capital', delta: 0.08, type: 'percentage' },
+            { target: 'happiness', delta: 0.1, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: 0.22, type: 'absolute' },
+            { target: 'metrics.evidenceQuality', delta: 0.25, type: 'absolute' },
+            { target: 'metrics.opportunityAccess', delta: 0.15, type: 'absolute' },
+            { target: 'metrics.convictionStability', delta: 0.12, type: 'absolute' },
+          ],
+          nextNodeId: 'pressure_response',
+        },
         {
           id: 'mixed_signal',
-          label: 'Results are mixed and conviction is tested',
+          label: 'Results are mixed and easy to rationalize either way',
           effects: [
+            { target: 'capital', delta: -0.08, type: 'percentage' },
             { target: 'happiness', delta: -0.05, type: 'absolute' },
-            { target: 'capital', delta: -0.1, type: 'percentage' },
-            { target: 'metrics.progressRate', delta: 0.2, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: 0.08, type: 'absolute' },
+            { target: 'metrics.evidenceQuality', delta: 0.18, type: 'absolute' },
+            { target: 'metrics.socialPressure', delta: 0.1, type: 'absolute' },
+            { target: 'metrics.convictionStability', delta: -0.08, type: 'absolute' },
           ],
-          nextNodeId: 'pivot_decision',
+          nextNodeId: 'pressure_response',
+        },
+        {
+          id: 'weak_demand',
+          label: 'Weak demand and execution friction expose flaws in the plan',
+          effects: [
+            { target: 'capital', delta: -0.14, type: 'percentage' },
+            { target: 'happiness', delta: -0.12, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: -0.04, type: 'absolute' },
+            { target: 'metrics.setbackCount', delta: 1, type: 'absolute' },
+            { target: 'metrics.evidenceQuality', delta: 0.12, type: 'absolute' },
+            { target: 'metrics.convictionStability', delta: -0.15, type: 'absolute' },
+          ],
+          nextNodeId: 'pressure_response',
         },
       ],
     } as EventNode,
     {
-      id: 'pivot_decision',
+      id: 'pressure_response',
       type: 'decision',
-      prompt: 'Early results are mixed. Do you double down, adapt, or exit?',
+      prompt: 'The signal is no longer abstract. Do you double down, pivot, or preserve runway?',
       options: [
-        { id: 'double_down', label: 'Double down — increase investment', value: 'double_down', nextNodeId: 'mid_challenge', requiresEvaluation: true },
-        { id: 'adapt', label: 'Adapt — change approach based on feedback', value: 'adapt', nextNodeId: 'mid_challenge', requiresEvaluation: true },
-        { id: 'exit_early', label: 'Cut losses and exit', value: 'exit_early', nextNodeId: 'outcome_early_exit' },
+        { id: 'double_down', label: 'Double down — spend more and push harder now', value: 'double_down', nextNodeId: 'double_down_setup', requiresEvaluation: true },
+        { id: 'pivot', label: 'Pivot — keep the mission but change the approach based on evidence', value: 'pivot', nextNodeId: 'pivot_setup', requiresEvaluation: true },
+        { id: 'preserve_runway', label: 'Preserve runway — cut burn, slow down, and keep options alive', value: 'preserve_runway', nextNodeId: 'preserve_runway_setup', requiresEvaluation: true },
       ],
     } as DecisionNode,
     {
-      id: 'mid_challenge',
+      id: 'double_down_setup',
       type: 'event',
-      name: 'Major Setback',
-      description: 'A significant setback or unexpected obstacle appears',
+      name: 'Escalation',
+      description: 'You increase commitment under uncertainty.',
       probability: 1.0,
       outcomes: [
         {
-          id: 'major_setback',
-          label: 'A major setback forces a hard response',
+          id: 'double_down_effect',
+          label: 'Speed increases, but so do downside and identity costs',
           effects: [
-            { target: 'happiness', delta: -0.15, type: 'absolute' },
-            { target: 'health', delta: -0.05, type: 'absolute' },
-            { target: 'capital', delta: -0.15, type: 'percentage' },
-            { target: 'metrics.setbackCount', delta: 1, type: 'absolute' },
+            { target: 'capital', delta: -0.18, type: 'percentage' },
+            { target: 'metrics.commitmentLevel', delta: 0.22, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: 0.14, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: -0.18, type: 'absolute' },
+            { target: 'metrics.burnRate', delta: 0.18, type: 'absolute' },
+            { target: 'metrics.reversibility', delta: -0.18, type: 'absolute' },
           ],
-          nextNodeId: 'resilience_decision',
+          nextNodeId: 'pressure_builds',
         },
       ],
     } as EventNode,
     {
-      id: 'resilience_decision',
+      id: 'pivot_setup',
+      type: 'event',
+      name: 'Adaptive Pivot',
+      description: 'You accept that the original framing was wrong and change course.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'pivot_effect',
+          label: 'You give up some speed for a higher-quality path',
+          effects: [
+            { target: 'capital', delta: -0.1, type: 'percentage' },
+            { target: 'metrics.adaptationScore', delta: 0.3, type: 'absolute' },
+            { target: 'metrics.evidenceQuality', delta: 0.18, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: -0.03, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: 0.08, type: 'absolute' },
+            { target: 'metrics.reversibility', delta: 0.12, type: 'absolute' },
+          ],
+          nextNodeId: 'pressure_builds',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'preserve_runway_setup',
+      type: 'event',
+      name: 'Runway Preservation',
+      description: 'You deliberately reduce burn and avoid irreversible moves.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'runway_preserved',
+          label: 'The pace slows, but downside becomes more survivable',
+          effects: [
+            { target: 'capital', delta: -0.04, type: 'percentage' },
+            { target: 'metrics.optionalityPreserved', delta: 0.18, type: 'absolute' },
+            { target: 'metrics.burnRate', delta: -0.08, type: 'absolute' },
+            { target: 'metrics.commitmentLevel', delta: -0.08, type: 'absolute' },
+            { target: 'metrics.reversibility', delta: 0.2, type: 'absolute' },
+          ],
+          nextNodeId: 'pressure_builds',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'pressure_builds',
+      type: 'event',
+      name: 'Pressure Builds',
+      description: 'Social expectations, hidden costs, and time pressure begin to matter.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'unexpected_setback',
+          label: 'An unexpected setback creates urgency and visible doubt',
+          effects: [
+            { target: 'capital', delta: -0.15, type: 'percentage' },
+            { target: 'health', delta: -0.05, type: 'absolute' },
+            { target: 'happiness', delta: -0.1, type: 'absolute' },
+            { target: 'metrics.setbackCount', delta: 1, type: 'absolute' },
+            { target: 'metrics.socialPressure', delta: 0.15, type: 'absolute' },
+            { target: 'metrics.runwayMonths', delta: -3, type: 'absolute' },
+          ],
+          nextNodeId: 'final_tradeoff',
+        },
+        {
+          id: 'hidden_costs',
+          label: 'Hidden costs and second-order effects arrive late',
+          effects: [
+            { target: 'capital', delta: -0.12, type: 'percentage' },
+            { target: 'metrics.burnRate', delta: 0.12, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: -0.08, type: 'absolute' },
+            { target: 'metrics.setbackCount', delta: 1, type: 'absolute' },
+            { target: 'metrics.socialPressure', delta: 0.08, type: 'absolute' },
+          ],
+          nextNodeId: 'final_tradeoff',
+        },
+        {
+          id: 'supportive_momentum',
+          label: 'Useful support and momentum buy you time and confidence',
+          effects: [
+            { target: 'capital', delta: 0.06, type: 'percentage' },
+            { target: 'happiness', delta: 0.08, type: 'absolute' },
+            { target: 'health', delta: 0.04, type: 'absolute' },
+            { target: 'metrics.opportunityAccess', delta: 0.15, type: 'absolute' },
+            { target: 'metrics.convictionStability', delta: 0.12, type: 'absolute' },
+          ],
+          nextNodeId: 'final_tradeoff',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'final_tradeoff',
       type: 'decision',
-      prompt: 'Major setback hit. How do you respond under pressure?',
+      prompt: 'Under accumulated pressure, which tradeoff do you choose at the critical moment?',
       options: [
-        { id: 'persist', label: 'Push through — absorb the cost and keep going', value: 'persist', nextNodeId: 'outcome_persist', requiresEvaluation: true },
-        { id: 'strategic_retreat', label: 'Strategic retreat — preserve resources, regroup', value: 'strategic_retreat', nextNodeId: 'outcome_retreat', requiresEvaluation: true },
-        { id: 'abandon', label: 'Abandon — this is not working', value: 'abandon', nextNodeId: 'outcome_abandon' },
+        { id: 'scale', label: 'Scale aggressively — spend now to capture the window', value: 'scale', nextNodeId: 'scale_setup', requiresEvaluation: true },
+        { id: 'consolidate', label: 'Consolidate cautiously — tighten scope and improve execution', value: 'consolidate', nextNodeId: 'consolidate_setup', requiresEvaluation: true },
+        { id: 'retreat', label: 'Strategic retreat — pause the bet and preserve optionality', value: 'retreat', nextNodeId: 'retreat_setup', requiresEvaluation: true },
       ],
     } as DecisionNode,
     {
-      id: 'outcome_persist',
-      type: 'outcome',
-      results: {
-        outcome: 'persistence_result',
-        happinessImpact: 0.1,
-        adaptationScore: 0.4,
-        commitmentLevel: 1.0,
-        optionalityPreserved: 0.3,
-      },
-    } as OutcomeNode,
+      id: 'scale_setup',
+      type: 'event',
+      name: 'Aggressive Scaling',
+      description: 'You spend for speed and commit harder than before.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'scale_effect',
+          label: 'Upside increases, but fragility does too',
+          effects: [
+            { target: 'capital', delta: -0.22, type: 'percentage' },
+            { target: 'metrics.progressRate', delta: 0.18, type: 'absolute' },
+            { target: 'metrics.commitmentLevel', delta: 0.18, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: -0.18, type: 'absolute' },
+            { target: 'metrics.burnRate', delta: 0.2, type: 'absolute' },
+            { target: 'metrics.executionQuality', delta: -0.05, type: 'absolute' },
+          ],
+          nextNodeId: 'final_resolution',
+        },
+      ],
+    } as EventNode,
     {
-      id: 'outcome_retreat',
+      id: 'consolidate_setup',
+      type: 'event',
+      name: 'Focused Consolidation',
+      description: 'You narrow scope and improve execution instead of chasing maximum upside.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'consolidate_effect',
+          label: 'Execution quality rises while burn falls',
+          effects: [
+            { target: 'capital', delta: -0.08, type: 'percentage' },
+            { target: 'metrics.executionQuality', delta: 0.22, type: 'absolute' },
+            { target: 'metrics.adaptationScore', delta: 0.12, type: 'absolute' },
+            { target: 'metrics.evidenceQuality', delta: 0.1, type: 'absolute' },
+            { target: 'metrics.burnRate', delta: -0.06, type: 'absolute' },
+          ],
+          nextNodeId: 'final_resolution',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'retreat_setup',
+      type: 'event',
+      name: 'Strategic Retreat',
+      description: 'You deliberately give up some upside to avoid irreversible damage.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'retreat_effect',
+          label: 'The opportunity shrinks, but optionality and survivability increase',
+          effects: [
+            { target: 'capital', delta: -0.03, type: 'percentage' },
+            { target: 'metrics.optionalityPreserved', delta: 0.2, type: 'absolute' },
+            { target: 'metrics.adaptationScore', delta: 0.14, type: 'absolute' },
+            { target: 'metrics.commitmentLevel', delta: -0.14, type: 'absolute' },
+            { target: 'metrics.reversibility', delta: 0.2, type: 'absolute' },
+          ],
+          nextNodeId: 'final_resolution',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'final_resolution',
+      type: 'event',
+      name: 'Final Resolution',
+      description: 'The bet resolves with a mix of execution quality, luck, and adaptability.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'durable_success',
+          label: 'The path compounds into a durable win',
+          effects: [
+            { target: 'capital', delta: 0.2, type: 'percentage' },
+            { target: 'happiness', delta: 0.15, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: 0.25, type: 'absolute' },
+            { target: 'metrics.evidenceQuality', delta: 0.12, type: 'absolute' },
+            { target: 'metrics.executionQuality', delta: 0.15, type: 'absolute' },
+          ],
+          nextNodeId: 'outcome_durable_success',
+        },
+        {
+          id: 'fragile_win',
+          label: 'You get a win, but it is narrow and costly',
+          effects: [
+            { target: 'capital', delta: 0.05, type: 'percentage' },
+            { target: 'happiness', delta: 0.05, type: 'absolute' },
+            { target: 'metrics.progressRate', delta: 0.12, type: 'absolute' },
+            { target: 'metrics.burnRate', delta: 0.08, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: -0.08, type: 'absolute' },
+          ],
+          nextNodeId: 'outcome_fragile_win',
+        },
+        {
+          id: 'contained_failure',
+          label: 'The bet fails, but losses stay survivable and teach you something',
+          effects: [
+            { target: 'capital', delta: -0.1, type: 'percentage' },
+            { target: 'happiness', delta: -0.05, type: 'absolute' },
+            { target: 'metrics.adaptationScore', delta: 0.22, type: 'absolute' },
+            { target: 'metrics.optionalityPreserved', delta: 0.16, type: 'absolute' },
+            { target: 'metrics.setbackCount', delta: 1, type: 'absolute' },
+          ],
+          nextNodeId: 'outcome_contained_failure',
+        },
+        {
+          id: 'exhausted_collapse',
+          label: 'Costs compound faster than learning and the path collapses',
+          effects: [
+            { target: 'capital', delta: -0.22, type: 'percentage' },
+            { target: 'happiness', delta: -0.2, type: 'absolute' },
+            { target: 'health', delta: -0.1, type: 'absolute' },
+            { target: 'metrics.socialPressure', delta: 0.18, type: 'absolute' },
+            { target: 'metrics.setbackCount', delta: 2, type: 'absolute' },
+          ],
+          nextNodeId: 'outcome_exhausted_collapse',
+        },
+      ],
+    } as EventNode,
+    {
+      id: 'outcome_durable_success',
       type: 'outcome',
       results: {
-        outcome: 'strategic_retreat',
-        happinessImpact: 0.05,
+        outcome: 'durable_success',
         adaptationScore: 0.8,
-        commitmentLevel: 0.6,
-        optionalityPreserved: 1.0,
+        commitmentLevel: 0.9,
+        optionalityPreserved: 0.55,
+        executionQuality: 0.85,
       },
     } as OutcomeNode,
     {
-      id: 'outcome_abandon',
+      id: 'outcome_fragile_win',
       type: 'outcome',
       results: {
-        outcome: 'abandoned',
-        happinessImpact: -0.1,
-        adaptationScore: 0.1,
-        commitmentLevel: 0.2,
-        optionalityPreserved: 0.8,
+        outcome: 'fragile_win',
+        adaptationScore: 0.55,
+        commitmentLevel: 0.85,
+        optionalityPreserved: 0.35,
+        executionQuality: 0.6,
       },
     } as OutcomeNode,
     {
-      id: 'outcome_early_exit',
+      id: 'outcome_contained_failure',
       type: 'outcome',
       results: {
-        outcome: 'early_exit',
-        happinessImpact: -0.02,
-        adaptationScore: 0.5,
-        commitmentLevel: 0.3,
-        optionalityPreserved: 1.0,
+        outcome: 'contained_failure',
+        adaptationScore: 0.7,
+        commitmentLevel: 0.45,
+        optionalityPreserved: 0.85,
+        executionQuality: 0.55,
+      },
+    } as OutcomeNode,
+    {
+      id: 'outcome_exhausted_collapse',
+      type: 'outcome',
+      results: {
+        outcome: 'exhausted_collapse',
+        adaptationScore: 0.2,
+        commitmentLevel: 0.9,
+        optionalityPreserved: 0.15,
+        executionQuality: 0.35,
       },
     } as OutcomeNode,
   ];
@@ -1832,31 +2158,8 @@ export function isTerminalNode(node: GraphNode): boolean {
 }
 
 // Apply outcome effects to state
-export function applyEffects(state: SimulationState, effects: Array<{ target: string; delta: number; type: 'absolute' | 'percentage' }>): SimulationState {
-  const newState = { ...state };
-  
-  for (const effect of effects) {
-    const { target, delta, type } = effect;
-    
-    if (target === 'capital') {
-      newState.capital += delta;
-    } else if (target === 'health') {
-      newState.health = Math.max(0, Math.min(1, newState.health + delta));
-    } else if (target === 'happiness') {
-      newState.happiness = Math.max(0, Math.min(1, newState.happiness + delta));
-    } else if (target.startsWith('metrics.')) {
-      const metricKey = target.replace('metrics.', '');
-      const rawValue = newState.metrics[metricKey];
-      const currentValue = typeof rawValue === 'number' ? rawValue : 0;
-      if (type === 'percentage') {
-        newState.metrics[metricKey] = currentValue * (1 + delta);
-      } else {
-        newState.metrics[metricKey] = currentValue + delta;
-      }
-    }
-  }
-  
-  return newState;
+export function applyEffects(state: SimulationState, effects: OutcomeEffect[]): SimulationState {
+  return applyEffectsToState(state, effects);
 }
 
 // Determine outcome category based on final state
@@ -1911,9 +2214,59 @@ export function categorizeOutcome(state: SimulationState, scenarioType: string):
       if (fitnessLevel > 0.6 || state.health > 0.8) return 'success';
       if (fitnessLevel < 0.3 && consistency < 0.2) return 'failure';
       return 'neutral';
+
+    case ScenarioType.CUSTOM: {
+      const initialState = getInitialState(ScenarioType.CUSTOM);
+      const capitalPreservation = initialState.capital > 0
+        ? state.capital / initialState.capital
+        : state.capital >= 0 ? 1 : 0;
+      const happinessDrop = initialState.happiness - state.happiness;
+      const progressRate = typeof state.metrics.progressRate === 'number' ? state.metrics.progressRate : 0;
+      const adaptationScore = typeof state.metrics.adaptationScore === 'number' ? state.metrics.adaptationScore : 0;
+      const optionalityPreserved = typeof state.metrics.optionalityPreserved === 'number'
+        ? state.metrics.optionalityPreserved
+        : 0;
+      const evidenceQuality = typeof state.metrics.evidenceQuality === 'number' ? state.metrics.evidenceQuality : 0;
+      const executionQuality = typeof state.metrics.executionQuality === 'number' ? state.metrics.executionQuality : 0;
+      const burnRate = typeof state.metrics.burnRate === 'number' ? state.metrics.burnRate : 0;
+      const setbackCount = typeof state.metrics.setbackCount === 'number' ? state.metrics.setbackCount : 0;
+      const reversibility = typeof state.metrics.reversibility === 'number' ? state.metrics.reversibility : 0;
+
+      if (state.outcome === 'exhausted_collapse') return 'failure';
+      if (state.outcome === 'durable_success') return 'success';
+      if (state.outcome === 'contained_failure' && adaptationScore >= 0.6 && optionalityPreserved >= 0.7) {
+        return 'neutral';
+      }
+
+      if (
+        capitalPreservation <= 0.55 ||
+        state.happiness <= 0.42 ||
+        state.health <= 0.45 ||
+        happinessDrop >= 0.22 ||
+        (burnRate >= 0.7 && progressRate <= 0.3) ||
+        (setbackCount >= 3 && optionalityPreserved <= 0.4)
+      ) {
+        return 'failure';
+      }
+
+      if (
+        capitalPreservation >= 0.8 &&
+        state.happiness >= 0.62 &&
+        progressRate >= 0.45 &&
+        (adaptationScore >= 0.55 || evidenceQuality >= 0.6) &&
+        (executionQuality >= 0.58 || optionalityPreserved >= 0.72) &&
+        reversibility >= 0.35
+      ) {
+        return 'success';
+      }
+
+      return 'neutral';
+    }
     
     default:
-      return state.happiness > 0.5 ? 'success' : 'neutral';
+      if (state.capital < 0 || state.happiness < 0.3) return 'failure';
+      if (state.capital > 0 && state.happiness > 0.6) return 'success';
+      return 'neutral';
   }
 }
 

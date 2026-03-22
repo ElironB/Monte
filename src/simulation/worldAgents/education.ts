@@ -4,6 +4,7 @@
 import { BaseWorldAgent } from './base.js';
 import { CloneExecutionContext, WorldEvent, OutcomeEffect } from '../types.js';
 import { getBaseRate } from '../baseRateRegistry.js';
+import type { SimulationPersonaRuntimeProfile } from '../personaRuntime.js';
 
 const BACHELORS_COMPLETION_RATE =
   getBaseRate('advanced_degree', 'completion_rate_bachelors', ['4yr_institution', 'first_time_students'])?.rate ?? 0.62;
@@ -30,6 +31,7 @@ interface EducationState {
 
 export class EducationWorldAgent extends BaseWorldAgent {
   type = 'education';
+  private personaProfile?: SimulationPersonaRuntimeProfile;
   
   private state: EducationState = {
     programType: 'bachelors',
@@ -91,8 +93,12 @@ export class EducationWorldAgent extends BaseWorldAgent {
   };
 
   // Initialize with program type
-  initialize(programType: EducationState['programType']): void {
+  initialize(
+    programType: EducationState['programType'],
+    personaProfile?: SimulationPersonaRuntimeProfile,
+  ): void {
     const config = EducationWorldAgent.PROGRAM_CONFIGS[programType];
+    this.personaProfile = personaProfile;
     
     this.state.programType = programType;
     this.state.enrollmentDate = new Date();
@@ -102,7 +108,15 @@ export class EducationWorldAgent extends BaseWorldAgent {
     this.state.networkingValue = 0;
     this.state.tuitionCost = config.baseTuition;
     this.state.remainingCost = config.baseTuition;
-    this.state.dropoutRisk = 1 - config.completionRate;
+    this.state.dropoutRisk = Math.max(
+      0.05,
+      Math.min(
+        0.9,
+        (1 - config.completionRate)
+          * (1.05 + ((personaProfile ? (1 - personaProfile.educationPersistence) : 0.5) * 0.6))
+          * (1 + ((personaProfile?.stressFragility ?? 0.5) * 0.2)),
+      ),
+    );
     this.state.isCompleted = false;
     this.state.isDropped = false;
   }
@@ -118,24 +132,28 @@ export class EducationWorldAgent extends BaseWorldAgent {
   private simulateMonth(): void {
     if (this.state.isCompleted || this.state.isDropped) return;
     
+    const persona = this.personaProfile;
     const config = EducationWorldAgent.PROGRAM_CONFIGS[this.state.programType];
     const totalMonths = config.duration;
     
     // Progress increases each month
-    const progressRate = 1 / totalMonths;
+    const progressRate = (1 / totalMonths) * (0.75 + ((persona?.educationPersistence ?? 0.5) * 0.5));
     this.state.completionProgress = Math.min(1, 
       this.state.completionProgress + progressRate
     );
     
     // Skill acquisition follows learning curve (diminishing returns)
     const skillRate = progressRate * config.skillValue * 
-      (1 + 0.5 * (1 - this.state.completionProgress)); // Faster at start
+      (1 + 0.5 * (1 - this.state.completionProgress)) *
+      (0.85 + ((persona?.informationDepth ?? 0.5) * 0.3)); // Faster at start
     this.state.skillAcquisition = Math.min(1, 
       this.state.skillAcquisition + skillRate
     );
     
     // Networking builds over time, accelerates in later stages
-    const networkRate = progressRate * (0.5 + 0.5 * this.state.completionProgress);
+    const networkRate = progressRate
+      * (0.5 + 0.5 * this.state.completionProgress)
+      * (0.8 + ((persona?.socialPressureSensitivity ?? 1) * 0.1));
     this.state.networkingValue = Math.min(1, 
       this.state.networkingValue + networkRate
     );
@@ -155,21 +173,29 @@ export class EducationWorldAgent extends BaseWorldAgent {
 
   // Evaluate context and return education world event
   evaluate(context: CloneExecutionContext): WorldEvent | null {
-    const { state, parameters } = context;
+    const { state } = context;
     const events: WorldEvent[] = [];
     const config = EducationWorldAgent.PROGRAM_CONFIGS[this.state.programType];
+    const persona = this.personaProfile;
     
     // Dropout risk check
     if (!this.state.isCompleted && !this.state.isDropped) {
-      const dropoutProbability = this.applyBehavioralModifiers(
+      let dropoutProbability = this.applyBehavioralModifiers(
         this.state.dropoutRisk / this.state.expectedDuration, // Monthly risk
         context,
         [
           { trait: 'emotionalVolatility', threshold: 0.7, factor: 1.5 },
           { trait: 'timePreference', threshold: 0.7, factor: 1.3 }, // Impatient = higher dropout
           { trait: 'learningStyle', threshold: 0.8, factor: 0.8 }, // Good learners persist
+          { trait: 'executionGap', threshold: 0.65, factor: 1.25 },
+          { trait: 'stressResponse', threshold: 0.65, factor: 1.2 },
+          { trait: 'informationSeeking', threshold: 0.35, factor: 1.15, direction: 'below' },
         ]
       );
+      if (persona?.riskFlags.includes('planning_paralysis')) {
+        dropoutProbability *= 1.05;
+      }
+      dropoutProbability = Math.min(1, dropoutProbability);
       
       if (this.roll(dropoutProbability)) {
         const debtAccumulated = this.state.tuitionCost - this.state.remainingCost;
@@ -224,13 +250,19 @@ export class EducationWorldAgent extends BaseWorldAgent {
     
     // Financial strain from education costs
     if (this.state.remainingCost > 0 && state.capital < 10000) {
-      const strainProbability = this.applyBehavioralModifiers(
+      let strainProbability = this.applyBehavioralModifiers(
         0.15,
         context,
         [
           { trait: 'emotionalVolatility', threshold: 0.6, factor: 1.4 },
+          { trait: 'timePreference', threshold: 0.7, factor: 1.2 },
+          { trait: 'executionGap', threshold: 0.65, factor: 1.15 },
         ]
       );
+      if (persona?.riskFlags.includes('stress_capitulation')) {
+        strainProbability *= 1.1;
+      }
+      strainProbability = Math.min(1, strainProbability);
       
       if (this.roll(strainProbability)) {
         events.push(this.createEvent(
@@ -247,7 +279,18 @@ export class EducationWorldAgent extends BaseWorldAgent {
     }
     
     // Networking opportunity
-    if (this.state.networkingValue > 0.3 && this.roll(0.1)) {
+    let networkingProbability = 0.1;
+    if (this.state.networkingValue > 0.3) {
+      networkingProbability = this.applyBehavioralModifiers(
+        networkingProbability,
+        context,
+        [
+          { trait: 'socialDependency', threshold: 0.6, factor: 1.2 },
+          { trait: 'informationSeeking', threshold: 0.65, factor: 1.25 },
+        ]
+      );
+    }
+    if (this.state.networkingValue > 0.3 && this.roll(networkingProbability)) {
       events.push(this.createEvent(
         'networking_opportunity',
         'Valuable connection made through educational program',
@@ -255,7 +298,7 @@ export class EducationWorldAgent extends BaseWorldAgent {
           { target: 'metrics.networkStrength', delta: 0.15, type: 'absolute' },
           { target: 'metrics.opportunityAccess', delta: 0.1, type: 'absolute' },
         ],
-        0.1
+        networkingProbability
       ));
     }
     

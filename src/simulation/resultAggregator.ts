@@ -18,13 +18,17 @@ export class ResultAggregator {
   private cloneResults: CloneResult[] = [];
   private scenarioId: string = '';
   private initialCapital: number = 0;
+  private initialHappiness: number = 0.7;
 
   constructor(scenarioId: string) {
     this.scenarioId = scenarioId;
     try {
-      this.initialCapital = getInitialState(scenarioId).capital;
+      const initialState = getInitialState(scenarioId);
+      this.initialCapital = initialState.capital;
+      this.initialHappiness = initialState.happiness;
     } catch {
       this.initialCapital = 0;
+      this.initialHappiness = 0.7;
     }
   }
 
@@ -213,30 +217,15 @@ export class ResultAggregator {
   // Categorize a single result
   private categorizeResult(result: CloneResult): 'success' | 'failure' | 'neutral' {
     const { finalState, metrics } = result;
-    
-    // Success criteria: good happiness, good capital, or key metric improved
-    const happinessGood = finalState.happiness > 0.6;
-    const capitalGood = this.initialCapital > 0
-      ? finalState.capital > this.initialCapital * 0.8
-      : finalState.capital > 0;
-    
-    // Check for outcome-specific success
     const outcomeValue = String(finalState.outcome || metrics.outcome || '');
-    const outcomeSuccess = outcomeValue === 'success' || 
-                          outcomeValue === 'career_trader' ||
-                          outcomeValue === 'successful_transition' ||
-                          outcomeValue === 'degree_roi_positive' ||
-                          outcomeValue === 'relocation_success' ||
-                          outcomeValue === 'healthy_maintenance' ||
-                          outcomeValue === 'persistence_result' ||
-                          outcomeValue === 'strategic_retreat';
+    const capitalPreservation = this.calculateCapitalPreservation(finalState.capital);
+    const happinessThreshold = this.getSuccessHappinessThreshold(capitalPreservation);
+    const happinessGood = finalState.happiness >= happinessThreshold;
+    const capitalGood = capitalPreservation >= 0.8;
 
     // Failure criteria
-    const happinessBad = finalState.happiness < 0.3;
-    const capitalBad = this.initialCapital > 0
-      ? finalState.capital < this.initialCapital * 0.2
-      : finalState.capital < 0;
-    
+    const happinessBad = finalState.happiness < Math.max(0.35, this.initialHappiness - 0.3);
+    const capitalBad = capitalPreservation < 0.5;
     const outcomeFailure = outcomeValue === 'failure' ||
                           outcomeValue === 'shutdown' ||
                           outcomeValue === 'significant_loss' ||
@@ -245,16 +234,52 @@ export class ResultAggregator {
                           outcomeValue === 'abandoned';
 
     const outcomeNeutral = outcomeValue === 'early_exit';
-
-    if (outcomeSuccess || (happinessGood && capitalGood)) {
-      return 'success';
-    } else if (outcomeFailure || happinessBad || capitalBad) {
+    if (outcomeFailure || happinessBad || capitalBad) {
       return 'failure';
-    } else if (outcomeNeutral) {
-      return 'neutral';
-    } else {
+    }
+
+    if (outcomeNeutral) {
       return 'neutral';
     }
+
+    if (capitalGood && happinessGood) {
+      return 'success';
+    }
+
+    return 'neutral';
+  }
+
+  private calculateCapitalPreservation(finalCapital: number): number {
+    if (this.initialCapital > 0) {
+      return finalCapital / this.initialCapital;
+    }
+
+    if (this.initialCapital < 0) {
+      if (finalCapital >= this.initialCapital) {
+        return 1;
+      }
+
+      const additionalDebt = Math.abs(finalCapital) - Math.abs(this.initialCapital);
+      return Math.max(0, 1 - (additionalDebt / Math.abs(this.initialCapital)));
+    }
+
+    return finalCapital >= 0 ? 1 : 0;
+  }
+
+  private getSuccessHappinessThreshold(capitalPreservation: number): number {
+    if (capitalPreservation >= 1) {
+      return Math.max(0.55, this.initialHappiness - 0.15);
+    }
+
+    if (capitalPreservation >= 0.9) {
+      return Math.max(0.6, this.initialHappiness - 0.1);
+    }
+
+    if (capitalPreservation >= 0.8) {
+      return Math.max(0.65, this.initialHappiness - 0.05);
+    }
+
+    return Number.POSITIVE_INFINITY;
   }
 
   // Generate timeline data
