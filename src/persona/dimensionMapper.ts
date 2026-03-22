@@ -8,12 +8,27 @@ export interface BehavioralDimensions {
   learningStyle: number;
   decisionSpeed: number;
   emotionalVolatility: number;
+  executionGap: number;
+  informationSeeking: number;
+  stressResponse: number;
+}
+
+export interface DimensionScore {
+  value: number;
+  confidence: number;
+  signalCount: number;
+  sourceCount: number;
+  sourceTypes: string[];
+  isEstimated: boolean;
+  confidenceInterval: [number, number];
 }
 
 export interface DimensionMapResult {
   dimensions: BehavioralDimensions;
+  dimensionScores: Record<keyof BehavioralDimensions, DimensionScore>;
   contradictionPenalties: Record<keyof BehavioralDimensions, number>;
 }
+
 const SIMILARITY_THRESHOLD = 0.25;
 
 const DEFAULT_HALF_LIFE = 60;
@@ -25,13 +40,27 @@ const SOURCE_HALF_LIVES: Record<string, number> = {
   watch_history: 21,
   ai_chat: 45,
 };
-const DIMENSION_KEYS = [
+
+const SOURCE_RELIABILITY_WEIGHTS: Record<string, number> = {
+  financial: 0.95,
+  watch_history: 0.80,
+  ai_chat: 0.80,
+  search_history: 0.75,
+  social_media: 0.60,
+  notes: 0.55,
+  default: 0.50
+};
+
+export const DIMENSION_KEYS = [
   'riskTolerance',
   'timePreference',
   'socialDependency',
   'learningStyle',
   'decisionSpeed',
   'emotionalVolatility',
+  'executionGap',
+  'informationSeeking',
+  'stressResponse',
 ] as const;
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -77,39 +106,56 @@ export class DimensionMapper {
 
   mapToDimensionsWithContradictions(): DimensionMapResult {
     const dimensions = {} as BehavioralDimensions;
+    const dimensionScores = {} as Record<keyof BehavioralDimensions, DimensionScore>;
     const contradictionPenalties = {} as Record<keyof BehavioralDimensions, number>;
 
     for (const dimension of DIMENSION_KEYS) {
       if (this.conceptEmbeddings && this.conceptEmbeddings[dimension] && this.signalEmbeddings.size > 0) {
         const result = this.calculateDimensionSemantic(dimension);
-        dimensions[dimension] = result.value;
+        dimensions[dimension] = result.score.value;
+        dimensionScores[dimension] = result.score;
         contradictionPenalties[dimension] = result.contradictionPenalty;
       } else {
         dimensions[dimension] = 0.5;
+        dimensionScores[dimension] = {
+          value: 0.5,
+          confidence: 0,
+          signalCount: 0,
+          sourceCount: 0,
+          sourceTypes: [],
+          isEstimated: true,
+          confidenceInterval: [0, 1]
+        };
         contradictionPenalties[dimension] = 0;
       }
     }
 
-    return { dimensions, contradictionPenalties };
-  }
-
-  private calculateDimension(dimension: keyof BehavioralDimensions): number {
-    if (this.conceptEmbeddings && this.conceptEmbeddings[dimension] && this.signalEmbeddings.size > 0) {
-      return this.calculateDimensionSemantic(dimension).value;
-    }
-    return 0.5;
+    return { dimensions, dimensionScores, contradictionPenalties };
   }
 
   private calculateDimensionSemantic(
     dimension: keyof BehavioralDimensions
-  ): { value: number; contradictionPenalty: number } {
+  ): { score: DimensionScore; contradictionPenalty: number } {
     const concepts = this.conceptEmbeddings?.[dimension];
     if (!concepts) {
-      return { value: 0.5, contradictionPenalty: 0 };
+      return {
+        score: {
+          value: 0.5,
+          confidence: 0,
+          signalCount: 0,
+          sourceCount: 0,
+          sourceTypes: [],
+          isEstimated: true,
+          confidenceInterval: [0, 1]
+        },
+        contradictionPenalty: 0
+      };
     }
 
     let weightedSum = 0;
     let totalWeight = 0;
+    const passingSignals: BehavioralSignal[] = [];
+
     const relevantSignalIds = new Set(this.signals.map(signal => signal.id));
     const relevantContradictions = this.contradictions.filter(
       contradiction =>
@@ -123,42 +169,90 @@ export class DimensionMapper {
         continue;
       }
 
-      const simHigh = cosineSimilarity(embedding, concepts.high);
-      const simLow = cosineSimilarity(embedding, concepts.low);
+      const highSims = concepts.high ? concepts.high.map(anchor => cosineSimilarity(embedding, anchor)).sort((a, b) => b - a) : [0];
+      const lowSims = concepts.low ? concepts.low.map(anchor => cosineSimilarity(embedding, anchor)).sort((a, b) => b - a) : [0];
+      const negSims = concepts.negative && concepts.negative.length > 0 
+        ? concepts.negative.map(anchor => cosineSimilarity(embedding, anchor)).sort((a, b) => b - a)
+        : [0];
+
+      const simHigh = highSims.slice(0, 2).reduce((a, b) => a + b, 0) / Math.min(2, highSims.length);
+      const simLow = lowSims.slice(0, 2).reduce((a, b) => a + b, 0) / Math.min(2, lowSims.length);
+      const maxNeg = negSims[0];
+
       const maxSim = Math.max(simHigh, simLow);
 
-      if (maxSim < SIMILARITY_THRESHOLD) {
+      // Negative anchor gating
+      if (maxNeg > maxSim || maxSim < SIMILARITY_THRESHOLD) {
         continue;
       }
+
+      passingSignals.push(signal);
 
       const direction = simHigh - simLow;
       const strength = this.getSignalStrength(signal);
       const recency = this.getRecencyBoost(signal.timestamp, signal.sourceType);
       const relevance = maxSim;
       const contradictionBias = this.getContradictionSignalBias(signal.id, relevantContradictions);
-      const effectiveWeight = strength * recency * relevance * contradictionBias;
+      const sType = signal.sourceType || 'default';
+      const sourceWeight = SOURCE_RELIABILITY_WEIGHTS[sType] || SOURCE_RELIABILITY_WEIGHTS.default;
+      
+      const effectiveWeight = strength * recency * relevance * contradictionBias * sourceWeight;
 
       weightedSum += direction * effectiveWeight;
-      totalWeight += relevance * recency * contradictionBias;
+      totalWeight += relevance * recency * contradictionBias * sourceWeight;
     }
 
     if (totalWeight === 0) {
-      return { value: 0.5, contradictionPenalty: 0 };
+      return {
+        score: {
+          value: 0.5,
+          confidence: 0,
+          signalCount: 0,
+          sourceCount: 0,
+          sourceTypes: [],
+          isEstimated: true,
+          confidenceInterval: [0, 1]
+        },
+        contradictionPenalty: 0
+      };
     }
 
     const rawScore = weightedSum / totalWeight;
     const baseValue = this.sigmoidNormalize(rawScore);
 
-    if (relevantContradictions.length === 0) {
-      return { value: baseValue, contradictionPenalty: 0 };
-    }
+    const avgMagnitude = relevantContradictions.length > 0 
+      ? relevantContradictions.reduce((sum, contradiction) => sum + contradiction.magnitude, 0) / relevantContradictions.length
+      : 0;
 
-    const avgMagnitude = relevantContradictions.reduce((sum, contradiction) => sum + contradiction.magnitude, 0)
-      / relevantContradictions.length;
     const contradictionPenalty = Math.max(0, Math.min(1, avgMagnitude * 0.5));
     const adjustedValue = baseValue + (0.5 - baseValue) * contradictionPenalty;
 
-    return { value: adjustedValue, contradictionPenalty };
+    // Confidence and CI calculation
+    const signalCount = passingSignals.length;
+    const sourceTypesList = Array.from(new Set(passingSignals.map(s => s.sourceType || 'default')));
+    const sourceCount = sourceTypesList.length;
+    const isEstimated = signalCount < 3 || sourceCount === 1;
+    const estimationPenalty = isEstimated ? 1.5 : 1;
+    
+    const CI_width = (0.4 / Math.sqrt(Math.max(1, signalCount))) * (1 / Math.max(1, sourceCount)) * estimationPenalty;
+    const confidence = Math.max(0, 1 - Math.min(CI_width, 1));
+
+    const halfWidth = CI_width / 2;
+    const lowerBound = Math.max(0, adjustedValue - halfWidth);
+    const upperBound = Math.min(1, adjustedValue + halfWidth);
+
+    return { 
+      score: {
+        value: adjustedValue,
+        confidence,
+        signalCount,
+        sourceCount,
+        sourceTypes: sourceTypesList,
+        isEstimated,
+        confidenceInterval: [lowerBound, upperBound]
+      }, 
+      contradictionPenalty 
+    };
   }
 
   private getContradictionSignalBias(

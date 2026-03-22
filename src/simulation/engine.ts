@@ -262,16 +262,16 @@ export class SimulationEngine {
     
     if (node.probabilityModifiers) {
       for (const modifier of node.probabilityModifiers) {
-        const traitValue = context.parameters[modifier.condition.split(' ')[0] as keyof CloneParameters];
-        if (traitValue !== undefined) {
+        const rawTraitValue = context.parameters[modifier.condition.split(' ')[0] as keyof CloneParameters];
+        if (typeof rawTraitValue === 'number') {
           const threshold = parseFloat(modifier.condition.split(' ')[2]);
           const operator = modifier.condition.split(' ')[1];
           
           let conditionMet = false;
-          if (operator === '>') conditionMet = traitValue > threshold;
-          else if (operator === '<') conditionMet = traitValue < threshold;
-          else if (operator === '>=') conditionMet = traitValue >= threshold;
-          else if (operator === '<=') conditionMet = traitValue <= threshold;
+          if (operator === '>') conditionMet = rawTraitValue > threshold;
+          else if (operator === '<') conditionMet = rawTraitValue < threshold;
+          else if (operator === '>=') conditionMet = rawTraitValue >= threshold;
+          else if (operator === '<=') conditionMet = rawTraitValue <= threshold;
           
           if (conditionMet) {
             probability *= modifier.factor;

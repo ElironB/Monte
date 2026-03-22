@@ -1,8 +1,19 @@
 import { TraitNode, MemoryNode } from './graphBuilder.js';
 
+export interface DimensionScore {
+  value: number;
+  confidence: number;
+  signalCount: number;
+  sourceCount: number;
+  sourceTypes: string[];
+  isEstimated: boolean;
+  confidenceInterval: [number, number];
+}
+
 export interface MasterPersona {
   summary: string;
   behavioralFingerprint: Record<string, number>;
+  dimensionScores: Record<string, DimensionScore>;
   keyContradictions: string[];
   dominantTraits: string[];
   riskProfile: 'conservative' | 'moderate' | 'aggressive' | 'unknown';
@@ -27,6 +38,7 @@ export class PersonaCompressor {
     return {
       summary: this.generateSummary(dimensions, dominantTraits),
       behavioralFingerprint: dimensions,
+      dimensionScores: this.extractDimensionScores(),
       keyContradictions: contradictions,
       dominantTraits: dominantTraits.map(t => t.name),
       riskProfile: this.calculateRiskProfile(dimensions.riskTolerance),
@@ -57,6 +69,25 @@ export class PersonaCompressor {
     }
     
     return dimensions;
+  }
+
+  private extractDimensionScores(): Record<string, DimensionScore> {
+    const scores: Record<string, DimensionScore> = {};
+    for (const trait of this.traits) {
+      if (trait.type === 'dimension') {
+        // Will parse from trait or fallback if not available
+        scores[trait.name] = {
+          value: trait.value,
+          confidence: trait.confidence,
+          signalCount: trait['signalCount'] as number ?? 1,
+          sourceCount: trait['sourceCount'] as number ?? 1,
+          sourceTypes: trait['sourceTypes'] as string[] ?? [],
+          isEstimated: trait['isEstimated'] as boolean ?? true,
+          confidenceInterval: trait['confidenceInterval'] as [number, number] ?? [0, 1]
+        };
+      }
+    }
+    return scores;
   }
 
   private identifyDominantTraits(): TraitNode[] {

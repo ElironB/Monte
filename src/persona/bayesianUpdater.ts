@@ -81,7 +81,51 @@ export class BayesianUpdater {
       );
 
       if (!existingTrait) {
-        logger.warn({ userId: this.userId, personaId: this.personaId, dimension }, 'Missing trait for Bayesian update');
+        logger.warn({ userId: this.userId, personaId: this.personaId, dimension }, 'Missing trait for Bayesian update, initializing via fallback mapping.');
+        const relevantSignals = this.getRelevantSignals(newSignals, dimension);
+        const evidenceCount = relevantSignals.length || 1;
+        const confidence = 0.7 + (Math.abs(newValue - 0.5) * 0.6);
+        
+        await runWriteSingle(
+          `MATCH (p:Persona {id: $personaId})
+           CREATE (t:Trait {
+             id: randomUUID(),
+             type: 'dimension',
+             name: $dimName,
+             value: $newValue,
+             confidence: $confidence,
+             evidence: $evidence,
+             dimension: $dimName,
+             evidenceCount: $evidenceCount,
+             signalCount: $evidenceCount,
+             sourceCount: 1,
+             sourceTypes: ['unknown'],
+             isEstimated: true,
+             confidenceInterval: [0, 1],
+             createdAt: datetime()
+           })
+           CREATE (p)-[:HAS_TRAIT]->(t)
+           RETURN t.id as id`,
+          {
+            personaId: this.personaId,
+            dimName: dimension,
+            newValue,
+            confidence,
+            evidence: `Initialized from ${relevantSignals.length} signals during incremental update`,
+            evidenceCount
+          }
+        );
+        
+        updates.push({
+          dimension,
+          prior: 0.5,
+          likelihood: newValue,
+          posterior: confidence,
+          priorValue: 0.5,
+          posteriorValue: newValue,
+          evidenceType: 'neutral',
+          updateMagnitude: Math.abs(0.5 - newValue),
+        });
         continue;
       }
 
@@ -207,9 +251,20 @@ export class BayesianUpdater {
       if (!embedding) {
         return false;
       }
-      const simHigh = cosineSimilarity(embedding, concepts.high);
-      const simLow = cosineSimilarity(embedding, concepts.low);
-      return Math.max(simHigh, simLow) >= SIMILARITY_THRESHOLD;
+      const getSim = (emb: number[], anchors: number[][]) => {
+        if (!anchors || anchors.length === 0) return 0;
+        const sims = anchors.map(a => cosineSimilarity(emb, a)).sort((a,b) => b - a);
+        return sims.slice(0, 2).reduce((sum, s) => sum + s, 0) / Math.min(2, sims.length);
+      };
+      
+      const simHigh = getSim(embedding, concepts.high);
+      const simLow = getSim(embedding, concepts.low);
+      const simNegative = concepts.negative ? Math.max(...concepts.negative.map(a => cosineSimilarity(embedding, a))) : 0;
+      
+      const maxPole = Math.max(simHigh, simLow);
+      if (simNegative > maxPole) return false;
+      
+      return maxPole >= SIMILARITY_THRESHOLD;
     });
   }
 

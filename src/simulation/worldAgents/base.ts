@@ -84,7 +84,7 @@ export abstract class BaseWorldAgent implements WorldAgent {
 
     for (const mod of modifiers) {
       const traitValue = parameters[mod.trait as keyof typeof parameters];
-      if (traitValue !== undefined && traitValue > mod.threshold) {
+      if (typeof traitValue === 'number' && traitValue > mod.threshold) {
         probability *= mod.factor;
       }
     }

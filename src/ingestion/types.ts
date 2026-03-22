@@ -24,6 +24,8 @@ export interface BehavioralSignal {
   evidence: string;
   sourceDataId: string;
   sourceType?: string;
+  sourceReliability?: number;
+  anonymityLevel?: string;
   timestamp: string;
   dimensions: {
     category?: string;
