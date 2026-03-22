@@ -176,7 +176,7 @@ export class GraphBuilder {
   }
 
   private async queryTraits(): Promise<TraitNode[]> {
-    const results = await runWrite<TraitNode[]>(
+    const results = await runWrite<TraitNode>(
       `MATCH (p:Persona {id: $personaId})-[:HAS_TRAIT]->(t:Trait)
        RETURN t.id as id, t.type as type, t.name as name, 
               t.value as value, t.confidence as confidence, t.evidence as evidence, t.dimension as dimension,
@@ -184,17 +184,17 @@ export class GraphBuilder {
               t.sourceTypes as sourceTypes, t.isEstimated as isEstimated, t.confidenceInterval as confidenceInterval`,
       { personaId: this.personaId }
     );
-    return results[0] ?? [];
+    return results;
   }
 
   private async queryMemories(): Promise<MemoryNode[]> {
-    const results = await runWrite<MemoryNode[]>(
+    const results = await runWrite<MemoryNode>(
       `MATCH (p:Persona {id: $personaId})-[:HAS_MEMORY]->(m:Memory)
        RETURN m.id as id, m.type as type, m.content as content,
               m.timestamp as timestamp, m.sourceId as sourceId, m.emotionalValence as emotionalValence
        ORDER BY m.timestamp DESC LIMIT 100`,
       { personaId: this.personaId }
     );
-    return results[0] ?? [];
+    return results;
   }
 }

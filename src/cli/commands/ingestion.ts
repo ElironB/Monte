@@ -30,6 +30,25 @@ interface DiscoveredFile {
   mimetype: string;
 }
 
+interface DataSourceListItem {
+  id: string;
+  sourceType: string;
+  name: string;
+  status: string;
+  signalCount?: number;
+  createdAt: string;
+}
+
+interface PaginatedDataSources {
+  data: DataSourceListItem[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
 function divider(width: number): string {
   return chalk.dim('─'.repeat(width));
 }
@@ -211,14 +230,8 @@ ingestionCommands
   .description(chalk.dim('Show ingestion status for all sources'))
   .action(async () => {
     try {
-      const sources = await api.listDataSources() as Array<{
-        id: string;
-        sourceType: string;
-        name: string;
-        status: string;
-        signalCount: number;
-        createdAt: string;
-      }>;
+      const response = await api.listDataSources() as PaginatedDataSources;
+      const sources = response.data;
 
       if (sources.length === 0) {
         console.log(dimText('No data sources found'));
@@ -258,13 +271,8 @@ ingestionCommands
   .description(chalk.dim('List all data sources'))
   .action(async () => {
     try {
-      const sources = await api.listDataSources() as Array<{
-        id: string;
-        sourceType: string;
-        name: string;
-        status: string;
-        createdAt: string;
-      }>;
+      const response = await api.listDataSources() as PaginatedDataSources;
+      const sources = response.data;
 
       if (sources.length === 0) {
         console.log(dimText('No data sources found'));
@@ -282,6 +290,10 @@ ingestionCommands
           `  ${dimText(source.id)}  ${chalk.white(source.sourceType.padEnd(12))}  ${statusColor(source.status, 12)}  ${chalk.white.bold(source.name.slice(0, 20).padEnd(22))}  ${dimText(date)}`,
         );
       }
+
+      console.log(`
+${infoLabel('Page:')} ${valueText(`${response.pagination.page}/${Math.max(1, response.pagination.totalPages)}`)}`);
+      console.log(`${infoLabel('Total:')} ${valueText(response.pagination.total)}`);
     } catch (err) {
       console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
