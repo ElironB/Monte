@@ -241,6 +241,9 @@ export class SimulationEngine {
       const complexity = this.evaluator.calculateComplexity(node, context.parameters, context.state);
 
       try {
+        // Optimistically reserve a reasoning call before the await so concurrent
+        // clones see an up-to-date budget (avoids race on llmCallsUsed).
+        this.llmCallsUsed++;
         const availableLLMCalls = this.config.maxLLMCalls - this.llmCallsUsed;
         
         const evaluation: LLMEvaluation = await this.evaluator.evaluateFork(
@@ -253,8 +256,9 @@ export class SimulationEngine {
         reasoning = evaluation.reasoning;
         confidence = evaluation.confidence;
 
-        if (evaluation.complexity > 0.6) {
-          this.llmCallsUsed++;
+        // Release the reservation if a reasoning call was not actually used.
+        if (evaluation.complexity <= 0.6) {
+          this.llmCallsUsed--;
         }
 
         if (this.config.logDecisions) {
@@ -268,8 +272,13 @@ export class SimulationEngine {
           }, 'LLM decision');
         }
       } catch (error) {
-        // Fall back to heuristic
-        const heuristic = await this.evaluator.heuristicEvaluation(request, complexity);
+        // Undo the optimistic reservation on failure.
+        this.llmCallsUsed--;
+
+        // Fall back to evaluator's semantic heuristic, then to the engine's
+        // keyword heuristic if the semantic path also fails.
+        const heuristic = await this.evaluator.heuristicEvaluation(request, complexity)
+          .catch(() => this.heuristicDecision(context, node));
         chosenOptionId = heuristic.chosenOptionId;
         reasoning = heuristic.reasoning;
         confidence = heuristic.confidence;
@@ -653,24 +662,31 @@ export async function simulateBatch(
   config?: Partial<SimulationConfig>
 ): Promise<CloneResult[]> {
   const engine = new SimulationEngine(scenario, config);
-  const results: CloneResult[] = [];
+  const results: CloneResult[] = new Array(clones.length);
   const concurrency = 10;
   const limit = createConcurrencyLimiter(concurrency);
 
   await Promise.all(
-    clones.map((clone) =>
+    clones.map((clone, index) =>
       limit(async () => {
-        const result = await engine.executeClone(
-          clone.cloneId,
-          clone.parameters,
-          clone.stratification
-        );
-        results.push(result);
+        try {
+          const result = await engine.executeClone(
+            clone.cloneId,
+            clone.parameters,
+            clone.stratification
+          );
+          results[index] = result;
+        } catch (error) {
+          logger.error(
+            { cloneId: clone.cloneId, error: (error as Error).message },
+            'Clone execution failed in batch, skipping'
+          );
+        }
       })
     )
   );
 
-  return results;
+  return results.filter(Boolean);
 }
 
 // Export types
