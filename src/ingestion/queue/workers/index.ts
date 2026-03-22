@@ -25,8 +25,8 @@ import { BehavioralSignal, SignalContradiction } from '../../types.js';
 import { parseTimestamp, detectSequences } from '../../extractors/temporalUtils.js';
 
 // Phase 4: Simulation Engine imports
-import { getScenario } from '../../../simulation/decisionGraph.js';
 import { SimulationEngine } from '../../../simulation/engine.js';
+import { compileScenario } from '../../../simulation/scenarioCompiler.js';
 import { createAggregator } from '../../../simulation/resultAggregator.js';
 import { CloneResult } from '../../../simulation/types.js';
 import { calculateKelly } from '../../../simulation/kellyCalculator.js';
@@ -895,8 +895,16 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       { simulationId }
     );
     
-    // Get scenario
-    const scenario = getScenario(scenarioType);
+    // Compile scenario from stored simulation parameters
+    const simulationParameters = simulation.parameters
+      ? JSON.parse(simulation.parameters)
+      : {};
+    const scenario = compileScenario({
+      scenarioType,
+      name: simulation.name,
+      parameters: simulationParameters,
+      capitalAtRisk: simulation.capitalAtRisk,
+    });
     
     // Calculate batch size (100 clones per batch by default)
     const batchSize = 100;
@@ -1194,7 +1202,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       });
 
       // Aggregate all results
-      const aggregator = createAggregator(scenarioType);
+      const aggregator = createAggregator(scenarioType, scenario.decisionFrame);
       
       // Fetch all results for aggregation
       const allResults = await runQuery<{

@@ -10,6 +10,8 @@ export * from './resultAggregator.js';
 export * from './narrativeGenerator.js';
 export * from './kellyCalculator.js';
 export * from './baseRateRegistry.js';
+export * from './scenarioCompiler.js';
+export * from './experimentPlanner.js';
 
 // World Agents
 export * from './worldAgents/base.js';

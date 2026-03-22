@@ -11,7 +11,7 @@ import {
   SimulationState,
   ScenarioType
 } from './types.js';
-import { applyEffectsToState } from './state.js';
+import { applyEffectsToState, createDefaultBeliefState } from './state.js';
 
 // Build decision graph for any scenario type
 export function buildDecisionGraph(scenarioType: string): GraphNode[] {
@@ -47,6 +47,7 @@ export function getInitialState(scenarioType: string): SimulationState {
     decisions: [],
     events: [],
     metrics: {},
+    beliefState: createDefaultBeliefState(),
   };
 
   switch (scenarioType) {

@@ -67,6 +67,37 @@ interface KellyOutput {
   warning?: string;
 }
 
+interface DecisionFrame {
+  title: string;
+  primaryQuestion: string;
+  contextSummary: string;
+  timeframeMonths: number;
+  capitalAtRisk: number;
+  runwayMonths: number;
+  fallbackPlan: string;
+  reversibilityScore: number;
+  socialExposure: number;
+  uncertaintyLoad: number;
+  downsideSeverity: number;
+  keyUnknowns: string[];
+}
+
+interface ExperimentRecommendation {
+  priority: 'highest' | 'high' | 'medium';
+  uncertainty: string;
+  whyItMatters: string;
+  recommendedExperiment: string;
+  successSignal: string;
+  stopSignal: string;
+  learningValue: number;
+}
+
+interface DecisionIntelligence {
+  summary: string;
+  dominantUncertainties: string[];
+  recommendedExperiments: ExperimentRecommendation[];
+}
+
 interface AggregatedResults {
   scenarioId: string;
   cloneCount: number;
@@ -74,6 +105,8 @@ interface AggregatedResults {
   outcomeDistribution: OutcomeDistribution;
   statistics: SimulationStatistics;
   stratifiedBreakdown: StratifiedBreakdown;
+  decisionFrame?: DecisionFrame;
+  decisionIntelligence?: DecisionIntelligence;
   narrative?: NarrativeResult;
   kelly?: KellyOutput;
 }
@@ -129,6 +162,10 @@ function formatPct(n: number, decimals: number = 1): string {
   return (n * 100).toFixed(decimals) + '%';
 }
 
+function formatMonths(n: number): string {
+  return `${n} month${n === 1 ? '' : 's'}`;
+}
+
 function renderBar(value: number, maxValue: number, width: number = 40): string {
   const filled = Math.round((value / maxValue) * width);
   return '\u2588'.repeat(filled) + '\u2591'.repeat(width - filled);
@@ -137,6 +174,14 @@ function renderBar(value: number, maxValue: number, width: number = 40): string 
 function renderMiniBar(value: number, width: number = 10): string {
   const filled = Math.round(value * width);
   return '\u2588'.repeat(filled) + '\u2591'.repeat(width - filled);
+}
+
+function escapeTableCell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+function formatPriority(priority: ExperimentRecommendation['priority']): string {
+  return priority.charAt(0).toUpperCase() + priority.slice(1);
 }
 
 function dimensionLevel(value: number, metric: string): string {
@@ -300,7 +345,75 @@ function renderKellySection(kelly: KellyOutput): string {
   return lines.join('\n');
 }
 
-function generateReport(
+function renderDecisionFrameSection(frame: DecisionFrame): string {
+  const lines: string[] = [];
+  lines.push('## Decision Frame');
+  lines.push(`**Primary question:** ${frame.primaryQuestion}`);
+  lines.push('');
+  lines.push('| Field | Value |');
+  lines.push('|-------|-------|');
+  lines.push(`| Decision title | ${escapeTableCell(frame.title)} |`);
+  lines.push(`| Time horizon | ${formatMonths(frame.timeframeMonths)} |`);
+  lines.push(`| Capital at risk | ${formatCurrency(frame.capitalAtRisk)} |`);
+  lines.push(`| Runway | ${formatMonths(frame.runwayMonths)} |`);
+  lines.push(`| Fallback path | ${escapeTableCell(frame.fallbackPlan)} |`);
+  lines.push(`| Reversibility score | ${formatPct(frame.reversibilityScore)} |`);
+  lines.push(`| Social exposure | ${formatPct(frame.socialExposure)} |`);
+  lines.push(`| Uncertainty load | ${formatPct(frame.uncertaintyLoad)} |`);
+  lines.push(`| Downside severity | ${formatPct(frame.downsideSeverity)} |`);
+
+  if (frame.contextSummary) {
+    lines.push('');
+    lines.push(`**Context summary:** ${frame.contextSummary}`);
+  }
+
+  if (frame.keyUnknowns.length > 0) {
+    lines.push('');
+    lines.push('### Key Unknowns');
+    for (const [index, unknown] of frame.keyUnknowns.entries()) {
+      lines.push(`${index + 1}. ${unknown}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function renderDecisionIntelligenceSection(decisionIntelligence: DecisionIntelligence): string {
+  const lines: string[] = [];
+  lines.push('## Decision Intelligence');
+  lines.push(decisionIntelligence.summary);
+
+  if (decisionIntelligence.dominantUncertainties.length > 0) {
+    lines.push('');
+    lines.push('### Dominant Uncertainties');
+    for (const [index, uncertainty] of decisionIntelligence.dominantUncertainties.entries()) {
+      lines.push(`${index + 1}. ${uncertainty}`);
+    }
+  }
+
+  if (decisionIntelligence.recommendedExperiments.length > 0) {
+    lines.push('');
+    lines.push('### Recommended Experiments');
+
+    for (const [index, experiment] of decisionIntelligence.recommendedExperiments.entries()) {
+      lines.push(`#### ${index + 1}. ${formatPriority(experiment.priority)} priority — ${experiment.uncertainty}`);
+      lines.push(`- Learning value: ${formatPct(experiment.learningValue)}`);
+      lines.push(`- Why it matters: ${experiment.whyItMatters}`);
+      lines.push(`- Recommended experiment: ${experiment.recommendedExperiment}`);
+      lines.push(`- Success signal: ${experiment.successSignal}`);
+      lines.push(`- Stop signal: ${experiment.stopSignal}`);
+      lines.push('');
+    }
+
+    if (lines[lines.length - 1] === '') {
+      lines.pop();
+    }
+  }
+
+  return lines.join('\n');
+}
+
+export function generateReport(
   sim: SimulationInfo,
   results: AggregatedResults,
   traits: PersonaTrait[] | null,
@@ -313,10 +426,13 @@ function generateReport(
   });
 
   const scenarioName = formatScenarioName(sim.scenarioType);
+  const decisionTitle = results.decisionFrame?.title && results.decisionFrame.title !== scenarioName
+    ? ` | **Decision**: ${results.decisionFrame.title}`
+    : '';
   const sections: string[] = [];
 
   sections.push(`# Monte Engine Report`);
-  sections.push(`**Scenario**: ${scenarioName} | **Clones**: ${formatNumber(results.cloneCount)} | **Generated**: ${now}`);
+  sections.push(`**Scenario**: ${scenarioName}${decisionTitle} | **Clones**: ${formatNumber(results.cloneCount)} | **Generated**: ${now}`);
   sections.push('---');
 
   if (narrative?.executiveSummary) {
@@ -332,8 +448,19 @@ function generateReport(
       `Across ${formatNumber(results.cloneCount)} simulated clones in the ${scenarioName} scenario, ` +
       `${successPct} achieved a successful outcome while ${failurePct} ended in failure. ` +
       `Mean capital at simulation end was ${meanCap} with an average health score of ${formatPct(results.statistics.meanHealth)} ` +
-      `and happiness of ${formatPct(results.statistics.meanHappiness)}.`
+      `and happiness of ${formatPct(results.statistics.meanHappiness)}.` +
+      (results.decisionIntelligence?.summary ? ` ${results.decisionIntelligence.summary}` : '')
     );
+    sections.push('---');
+  }
+
+  if (results.decisionFrame) {
+    sections.push(renderDecisionFrameSection(results.decisionFrame));
+    sections.push('---');
+  }
+
+  if (results.decisionIntelligence) {
+    sections.push(renderDecisionIntelligenceSection(results.decisionIntelligence));
     sections.push('---');
   }
 

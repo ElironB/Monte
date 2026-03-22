@@ -9,19 +9,23 @@ import type {
   OutcomeDistribution,
   TimelineData,
   SimulationStatistics,
-  StratifiedBreakdown 
+  StratifiedBreakdown,
+  DecisionFrame,
 } from './types.js';
 import { logger } from '../utils/logger.js';
 import { getInitialState } from './decisionGraph.js';
+import { buildDecisionIntelligence } from './experimentPlanner.js';
 
 export class ResultAggregator {
   private cloneResults: CloneResult[] = [];
   private scenarioId: string = '';
   private initialCapital: number = 0;
   private initialHappiness: number = 0.7;
+  private decisionFrame?: DecisionFrame;
 
-  constructor(scenarioId: string) {
+  constructor(scenarioId: string, decisionFrame?: DecisionFrame) {
     this.scenarioId = scenarioId;
+    this.decisionFrame = decisionFrame;
     try {
       const initialState = getInitialState(scenarioId);
       this.initialCapital = initialState.capital;
@@ -58,6 +62,7 @@ export class ResultAggregator {
     const timeline = this.generateTimeline();
     const statistics = this.calculateStatistics();
     const stratifiedBreakdown = this.calculateStratifiedBreakdown();
+    const decisionIntelligence = buildDecisionIntelligence(this.cloneResults, this.decisionFrame);
 
     return {
       scenarioId: this.scenarioId,
@@ -67,6 +72,8 @@ export class ResultAggregator {
       timeline,
       statistics,
       stratifiedBreakdown,
+      decisionFrame: this.decisionFrame,
+      decisionIntelligence,
     };
   }
 
@@ -459,16 +466,17 @@ export class ResultAggregator {
 }
 
 // Create aggregator for a scenario
-export function createAggregator(scenarioId: string): ResultAggregator {
-  return new ResultAggregator(scenarioId);
+export function createAggregator(scenarioId: string, decisionFrame?: DecisionFrame): ResultAggregator {
+  return new ResultAggregator(scenarioId, decisionFrame);
 }
 
 // Aggregate batch results
 export function aggregateBatch(
   scenarioId: string,
-  results: CloneResult[]
+  results: CloneResult[],
+  decisionFrame?: DecisionFrame,
 ): AggregatedResults {
-  const aggregator = new ResultAggregator(scenarioId);
+  const aggregator = new ResultAggregator(scenarioId, decisionFrame);
   aggregator.addResults(results);
   return aggregator.aggregate();
 }

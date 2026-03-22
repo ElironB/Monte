@@ -64,6 +64,50 @@ export interface SimulationResults {
 
 export type GraphNode = DecisionNode | EventNode | OutcomeNode;
 
+export interface DecisionFrame {
+  title: string;
+  primaryQuestion: string;
+  contextSummary: string;
+  timeframeMonths: number;
+  capitalAtRisk: number;
+  runwayMonths: number;
+  fallbackPlan: string;
+  reversibilityScore: number;
+  socialExposure: number;
+  uncertaintyLoad: number;
+  downsideSeverity: number;
+  keyUnknowns: string[];
+}
+
+export interface BeliefState {
+  thesisConfidence: number;
+  uncertaintyLevel: number;
+  evidenceClarity: number;
+  reversibilityConfidence: number;
+  commitmentLockIn: number;
+  socialPressureLoad: number;
+  downsideSalience: number;
+  learningVelocity: number;
+  latestSignal: 'positive' | 'mixed' | 'negative' | 'neutral';
+  updateNarrative: string;
+}
+
+export interface ExperimentRecommendation {
+  priority: 'highest' | 'high' | 'medium';
+  uncertainty: string;
+  whyItMatters: string;
+  recommendedExperiment: string;
+  successSignal: string;
+  stopSignal: string;
+  learningValue: number;
+}
+
+export interface DecisionIntelligence {
+  summary: string;
+  dominantUncertainties: string[];
+  recommendedExperiments: ExperimentRecommendation[];
+}
+
 // Scenario definition
 export interface Scenario {
   id: string;
@@ -73,6 +117,7 @@ export interface Scenario {
   initialState: SimulationState;
   graph: GraphNode[];
   entryNodeId: string;
+  decisionFrame?: DecisionFrame;
 }
 
 // Simulation state during execution
@@ -84,6 +129,7 @@ export interface SimulationState {
   decisions: DecisionRecord[];
   events: EventRecord[];
   metrics: Record<string, number>; // Scenario-specific metrics
+  beliefState: BeliefState;
   outcome?: string; // Optional outcome classification
 }
 
@@ -92,6 +138,8 @@ export interface DecisionRecord {
   choice: string;
   timestamp: number;
   evaluatedByLLM: boolean;
+  reasoning?: string;
+  confidence?: number;
 }
 
 export interface EventRecord {
@@ -203,6 +251,8 @@ export interface AggregatedResults {
   timeline: TimelineData;
   statistics: SimulationStatistics;
   stratifiedBreakdown: StratifiedBreakdown;
+  decisionFrame?: DecisionFrame;
+  decisionIntelligence?: DecisionIntelligence;
   narrative?: NarrativeResult;
   kelly?: KellyOutput;
 }

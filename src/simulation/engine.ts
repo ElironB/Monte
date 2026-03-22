@@ -22,6 +22,7 @@ import {
   applyEffectsToState,
   applyOutcomeNodeResults,
   cloneSimulationState,
+  refreshBeliefState,
 } from './state.js';
 import { createForkEvaluator, type ForkEvaluator } from './forkEvaluator.js';
 import { chaosInjector, createChaosInjector } from './chaosInjector.js';
@@ -84,7 +85,9 @@ export class SimulationEngine {
     const worldAgents = this.initializeWorldAgents(parameters);
     
     // Initialize state
-    const state: SimulationState = cloneSimulationState(startingState ?? this.scenario.initialState);
+    const state: SimulationState = refreshBeliefState(
+      cloneSimulationState(startingState ?? this.scenario.initialState),
+    );
     
     // Create execution context
     const context: CloneExecutionContext = {
@@ -186,6 +189,11 @@ export class SimulationEngine {
         finalCapital: context.state.capital,
         finalHealth: context.state.health,
         finalHappiness: context.state.happiness,
+        beliefConfidence: context.state.beliefState.thesisConfidence,
+        beliefUncertainty: context.state.beliefState.uncertaintyLevel,
+        beliefEvidenceClarity: context.state.beliefState.evidenceClarity,
+        beliefCommitmentLockIn: context.state.beliefState.commitmentLockIn,
+        beliefDownsideSalience: context.state.beliefState.downsideSalience,
       },
       duration,
     };
@@ -201,6 +209,8 @@ export class SimulationEngine {
   ): Promise<void> {
     let chosenOptionId: string;
     let evaluatedByLLM = false;
+    let reasoning = 'Decision record unavailable.';
+    let confidence = 0.6;
 
     // Check if LLM evaluation is needed
     const requiresEvaluation = node.options.some(o => o.requiresEvaluation) || 
@@ -223,6 +233,8 @@ export class SimulationEngine {
 
         chosenOptionId = evaluation.chosenOptionId;
         evaluatedByLLM = true;
+        reasoning = evaluation.reasoning;
+        confidence = evaluation.confidence;
 
         if (evaluation.complexity > 0.6) {
           this.llmCallsUsed++;
@@ -240,7 +252,10 @@ export class SimulationEngine {
         }
       } catch (error) {
         // Fall back to heuristic
-        chosenOptionId = this.heuristicDecision(context, node);
+        const heuristic = this.heuristicDecision(context, node);
+        chosenOptionId = heuristic.chosenOptionId;
+        reasoning = heuristic.reasoning;
+        confidence = heuristic.confidence;
         evaluatedByLLM = false;
         
         logger.warn({
@@ -251,7 +266,10 @@ export class SimulationEngine {
       }
     } else {
       // Heuristic decision
-      chosenOptionId = this.heuristicDecision(context, node);
+      const heuristic = this.heuristicDecision(context, node);
+      chosenOptionId = heuristic.chosenOptionId;
+      reasoning = heuristic.reasoning;
+      confidence = heuristic.confidence;
     }
 
     // Find chosen option
@@ -270,7 +288,11 @@ export class SimulationEngine {
       choice: chosenOptionId,
       timestamp: Date.now(),
       evaluatedByLLM,
+      reasoning,
+      confidence,
     });
+    context.state = refreshBeliefState(context.state);
+    context.state.beliefState.updateNarrative = reasoning;
   }
 
   // Execute an event node
@@ -355,14 +377,20 @@ export class SimulationEngine {
   }
 
   // Heuristic decision when LLM unavailable
-  private heuristicDecision(context: CloneExecutionContext, node: DecisionNode): string {
+  private heuristicDecision(
+    context: CloneExecutionContext,
+    node: DecisionNode,
+  ): { chosenOptionId: string; reasoning: string; confidence: number } {
     const { parameters, state } = context;
     
     let bestOption = node.options[0];
     let bestScore = -Infinity;
+    let secondBestScore = -Infinity;
+    let bestReasons: string[] = [];
 
     for (const option of node.options) {
       let score = 0;
+      const reasons: string[] = [];
       const label = option.label.toLowerCase();
 
       // Risk matching
@@ -370,11 +398,13 @@ export class SimulationEngine {
         if (label.includes('aggressive') || label.includes('bold') || 
             label.includes('all-in') || label.includes('high')) {
           score += 2;
+          reasons.push('high risk tolerance matched a more aggressive branch');
         }
       } else if (parameters.riskTolerance < 0.3) {
         if (label.includes('safe') || label.includes('cautious') || 
             label.includes('preserve') || label.includes('low')) {
           score += 2;
+          reasons.push('low risk tolerance favored preserving downside');
         }
       }
 
@@ -383,11 +413,13 @@ export class SimulationEngine {
         if (label.includes('now') || label.includes('immediate') || 
             label.includes('start') || label.includes('quick')) {
           score += 1;
+          reasons.push('fast decision speed favored immediate action');
         }
       } else if (parameters.decisionSpeed < 0.3) {
         if (label.includes('plan') || label.includes('analyze') || 
             label.includes('research') || label.includes('study')) {
           score += 1;
+          reasons.push('deliberate decision speed favored more analysis');
         }
       }
 
@@ -396,11 +428,13 @@ export class SimulationEngine {
         if (label.includes('partner') || label.includes('team') || 
             label.includes('network') || label.includes('collaborate')) {
           score += 1;
+          reasons.push('social orientation favored collaborative support');
         }
       } else if (parameters.socialDependency < 0.3) {
         if (label.includes('independent') || label.includes('solo') || 
             label.includes('alone') || label.includes('self')) {
           score += 1;
+          reasons.push('independent orientation favored self-directed options');
         }
       }
 
@@ -409,11 +443,13 @@ export class SimulationEngine {
         if (label.includes('long') || label.includes('patient') || 
             label.includes('future') || label.includes('invest')) {
           score += 1;
+          reasons.push('patient time preference favored longer-horizon payoff');
         }
       } else if (parameters.timePreference > 0.7) {
         if (label.includes('now') || label.includes('immediate') || 
             label.includes('quick') || label.includes('fast')) {
           score += 1;
+          reasons.push('present bias favored faster payoff');
         }
       }
 
@@ -422,6 +458,7 @@ export class SimulationEngine {
         if (label.includes('exciting') || label.includes('passion') || 
             label.includes('dream') || label.includes('change')) {
           score += 1;
+          reasons.push('emotional volatility leaned toward more charged options');
         }
       }
 
@@ -430,11 +467,13 @@ export class SimulationEngine {
         if (label.includes('learn') || label.includes('study') || 
             label.includes('degree') || label.includes('education')) {
           score += 1;
+          reasons.push('theoretical learning style favored explicit learning paths');
         }
       } else if (parameters.learningStyle < 0.3) {
         if (label.includes('experience') || label.includes('practice') || 
             label.includes('do') || label.includes('try')) {
           score += 1;
+          reasons.push('experiential learning style favored action-first paths');
         }
       }
 
@@ -443,6 +482,7 @@ export class SimulationEngine {
         if (label.includes('quit') || label.includes('stop') || 
             label.includes('preserve') || label.includes('safe')) {
           score += 2; // Prefer exit when broke
+          reasons.push('low capital pushed the clone toward preserving runway');
         }
         if (label.includes('double') || label.includes('risk') || 
             label.includes('aggressive')) {
@@ -454,6 +494,7 @@ export class SimulationEngine {
         if (label.includes('health') || label.includes('rest') || 
             label.includes('medical') || label.includes('recover')) {
           score += 2;
+          reasons.push('poor health favored recovery over escalation');
         }
       }
 
@@ -461,16 +502,31 @@ export class SimulationEngine {
         if (label.includes('happiness') || label.includes('joy') || 
             label.includes('fulfillment') || label.includes('passion')) {
           score += 1;
+          reasons.push('low happiness increased the pull toward emotional relief');
         }
       }
 
       if (score > bestScore) {
+        secondBestScore = bestScore;
         bestScore = score;
         bestOption = option;
+        bestReasons = reasons;
+      } else if (score > secondBestScore) {
+        secondBestScore = score;
       }
     }
 
-    return bestOption.id;
+    const confidenceGap = Math.max(0, bestScore - secondBestScore);
+    const confidence = Math.max(0.55, Math.min(0.82, 0.58 + (confidenceGap * 0.06)));
+    const reasoning = bestReasons.length > 0
+      ? `Heuristic favored this branch because ${bestReasons.slice(0, 2).join(' and ')}.`
+      : 'Heuristic defaulted to the most behaviorally compatible option.';
+
+    return {
+      chosenOptionId: bestOption.id,
+      reasoning,
+      confidence,
+    };
   }
 
   // Initialize world agents based on scenario type
@@ -562,6 +618,7 @@ export class SimulationEngine {
     context.state.metrics.socialDisruption = socialSnapshot.socialDisruption;
     context.state.metrics.socialCapital = socialSnapshot.socialCapital;
     context.state.metrics.supportNetworkSize = socialSnapshot.supportNetworkSize;
+    context.state = refreshBeliefState(context.state);
   }
 
   // Get LLM usage stats
