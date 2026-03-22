@@ -408,7 +408,7 @@ async function waitForSimulation(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const check = async () => {
       try {
-        const progress = await api.getSimulationProgress(id) as { status: string; progress: number };
+        const progress = await api.getSimulationProgress(id) as { status: string; progress: number; error?: string };
 
         if (progress.status === 'completed') {
           process.stdout.write('\n');
@@ -426,7 +426,10 @@ async function waitForSimulation(id: string): Promise<void> {
         if (progress.status === 'failed') {
           process.stdout.write('\n');
           console.log(`${icons.error} ${chalk.red.bold('Simulation failed')}`);
-          reject(new Error('Simulation failed'));
+          if (progress.error) {
+            console.log(`  ${infoLabel('Error:')} ${chalk.red(progress.error)}`);
+          }
+          reject(new Error(progress.error || 'Simulation failed'));
           return;
         }
 
