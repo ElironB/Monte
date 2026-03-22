@@ -406,9 +406,18 @@ simulationCommands
 
 async function waitForSimulation(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    let lastProgress = -1;
+    let stagnantPolls = 0;
+    let warnedAboutStall = false;
+
     const check = async () => {
       try {
-        const progress = await api.getSimulationProgress(id) as { status: string; progress: number; error?: string };
+        const progress = await api.getSimulationProgress(id) as {
+          status: string;
+          progress: number;
+          error?: string;
+          lastUpdated?: string;
+        };
 
         if (progress.status === 'completed') {
           process.stdout.write('\n');
@@ -433,7 +442,30 @@ async function waitForSimulation(id: string): Promise<void> {
           return;
         }
 
+        if (progress.progress === lastProgress) {
+          stagnantPolls += 1;
+        } else {
+          stagnantPolls = 0;
+          warnedAboutStall = false;
+          lastProgress = progress.progress;
+        }
+
         process.stdout.write(`\r${infoLabel('Progress:')} [${progressBar(progress.progress)}] ${chalk.cyan.bold(`${progress.progress}%`)}`);
+
+        if (stagnantPolls >= 15 && !warnedAboutStall) {
+          process.stdout.write('\n');
+          console.log(
+            warningText(
+              `No progress update for ~${stagnantPolls * 2}s. Simulation may be waiting on workers or queued LLM calls.`
+            )
+          );
+          if (progress.lastUpdated) {
+            console.log(`  ${infoLabel('Last update:')} ${dimText(progress.lastUpdated)}`);
+          }
+          console.log(`  ${dimText(`Try \`monte simulate progress ${id}\` or inspect the server logs if this persists.`)}`);
+          warnedAboutStall = true;
+        }
+
         setTimeout(check, 2000);
       } catch (err) {
         reject(err);

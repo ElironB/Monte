@@ -12,6 +12,7 @@ import { logger } from '../utils/logger.js';
 import { config } from '../config/index.js';
 import { EmbeddingService, cosineSimilarity } from '../embeddings/embeddingService.js';
 import { type RateLimiter } from '../utils/rateLimiter.js';
+import { parseJsonResponse } from '../utils/json.js';
 
 interface LLMUsage {
   standardCalls: number;
@@ -64,6 +65,15 @@ interface ForkEvaluatorOptions {
   rateLimiter?: RateLimiter | null;
 }
 
+type ParsedForkResponse = {
+  chosenOptionId?: unknown;
+  option?: unknown;
+  choice?: unknown;
+  reasoning?: unknown;
+  explanation?: unknown;
+  confidence?: unknown;
+};
+
 export class ForkEvaluator {
   private static heuristicConceptEmbeddings: HeuristicConceptEmbeddings | null = null;
 
@@ -80,6 +90,8 @@ export class ForkEvaluator {
 
   private readonly MAX_REASONING_CALLS = 20;
   private readonly COMPLEXITY_THRESHOLD = 0.6;
+  private readonly USES_OPENROUTER_STRUCTURED_OUTPUTS =
+    (config.llm?.baseUrl || '').includes('openrouter.ai');
 
   constructor(options: ForkEvaluatorOptions = {}) {
     this.rateLimiter = options.rateLimiter ?? null;
@@ -179,7 +191,7 @@ export class ForkEvaluator {
         messages: [
           {
             role: 'system',
-            content: 'You are a behavioral simulation engine. Given a persona with specific behavioral traits and a decision context, determine which option they would choose. Respond ONLY with JSON.',
+            content: 'You are a behavioral simulation engine. Given a persona with specific behavioral traits and a decision context, determine which option they would choose. Respond ONLY with a valid structured JSON object that matches the requested schema.',
           },
           {
             role: 'user',
@@ -188,8 +200,8 @@ export class ForkEvaluator {
         ],
         model,
         temperature: 0.4 + (complexity * 0.3),
-        max_tokens: useReasoning ? 200 : 150,
-        response_format: { type: 'json_object' },
+        max_tokens: useReasoning ? 320 : 220,
+        response_format: this.getResponseFormat(),
       });
     });
 
@@ -204,11 +216,107 @@ export class ForkEvaluator {
 
     logger.debug({ duration, model, complexity, useReasoning }, 'LLM evaluation completed');
 
+    const content = completion.choices[0]?.message?.content || '{}';
+
+    try {
+      return this.parseLLMResponse(content, request.decisionNode, complexity);
+    } catch (error) {
+      logger.warn(
+        {
+          model,
+          complexity,
+          useReasoning,
+          maxTokens: useReasoning ? 320 : 220,
+          preview: content.slice(0, 200),
+          error,
+        },
+        'Failed to parse LLM response, retrying once with repair prompt'
+      );
+    }
+
+    const repaired = await this.callWithRetry(async () => {
+      if (this.rateLimiter) {
+        await this.rateLimiter.acquire();
+      }
+
+      return this.client!.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'Repair the assistant output into a valid JSON object matching the requested schema. Return only JSON.',
+          },
+          {
+            role: 'user',
+            content: [
+              'Return a valid JSON object for this simulation decision.',
+              `Allowed option ids: ${request.decisionNode.options.map(option => option.id).join(', ')}`,
+              'JSON schema:',
+              JSON.stringify(this.getResponseSchema()),
+              'Malformed content:',
+              content,
+            ].join('\n'),
+          },
+        ],
+        model,
+        temperature: 0,
+        max_tokens: 220,
+        response_format: this.getResponseFormat(),
+      });
+    });
+
     return this.parseLLMResponse(
-      completion.choices[0]?.message?.content || '{}',
+      repaired.choices[0]?.message?.content || '{}',
       request.decisionNode,
       complexity
     );
+  }
+
+  private getResponseSchema() {
+    return {
+      type: 'object',
+      properties: {
+        chosenOptionId: {
+          type: 'string',
+          description: 'One of the option IDs exactly as provided in the prompt.',
+        },
+        reasoning: {
+          type: 'string',
+          description: 'One short sentence, under 20 words, explaining the behavioral choice.',
+        },
+        confidence: {
+          type: 'number',
+          minimum: 0,
+          maximum: 1,
+          description: 'Confidence score between 0 and 1.',
+        },
+      },
+      required: ['chosenOptionId', 'reasoning', 'confidence'],
+      additionalProperties: false,
+    } as const;
+  }
+
+  private getResponseFormat():
+    | { type: 'json_object' }
+    | {
+      type: 'json_schema';
+      json_schema: {
+        name: string;
+        strict: true;
+        schema: ReturnType<ForkEvaluator['getResponseSchema']>;
+      };
+    } {
+    if (this.USES_OPENROUTER_STRUCTURED_OUTPUTS) {
+      return {
+        type: 'json_schema',
+        json_schema: {
+          name: 'fork_evaluation',
+          strict: true,
+          schema: this.getResponseSchema(),
+        },
+      };
+    }
+
+    return { type: 'json_object' };
   }
 
   private async callWithRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
@@ -328,11 +436,15 @@ Based on the persona's behavioral traits, which option would they choose?
 Respond with JSON in this format:
 {
   "chosenOptionId": "option_id_here",
-  "reasoning": "brief explanation of why this persona would choose this option based on their traits",
+  "reasoning": "one short sentence under 20 words explaining the choice",
   "confidence": 0.85
 }
 
-The confidence should be 0.7-0.95 based on how clear the choice is given the traits.`;
+Requirements:
+- chosenOptionId must exactly match one of the option IDs above
+- reasoning must be a single concise sentence
+- confidence should be 0.7-0.95 based on how clear the choice is given the traits
+- do not include markdown or any extra keys`;
   }
 
   private describePsychologyModifiers(
@@ -470,33 +582,30 @@ The confidence should be 0.7-0.95 based on how clear the choice is given the tra
     decisionNode: DecisionNode,
     complexity: number
   ): LLMEvaluation {
-    try {
-      const parsed = JSON.parse(content);
+    const parsed = parseJsonResponse<ParsedForkResponse>(content);
 
-      const chosenOptionId = parsed.chosenOptionId ||
-        parsed.option ||
-        parsed.choice ||
-        decisionNode.options[0].id;
+    const candidateOptionId = parsed.chosenOptionId ?? parsed.option ?? parsed.choice;
+    const chosenOptionId = typeof candidateOptionId === 'string'
+      ? candidateOptionId
+      : decisionNode.options[0].id;
 
-      const validOption = decisionNode.options.find(o => o.id === chosenOptionId);
-      const finalOptionId = validOption ? chosenOptionId : decisionNode.options[0].id;
+    const validOption = decisionNode.options.find(o => o.id === chosenOptionId);
+    const finalOptionId = validOption ? chosenOptionId : decisionNode.options[0].id;
+    const reasoning = typeof parsed.reasoning === 'string'
+      ? parsed.reasoning
+      : typeof parsed.explanation === 'string'
+        ? parsed.explanation
+        : 'No reasoning provided';
+    const rawConfidence = typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence)
+      ? parsed.confidence
+      : 0.8;
 
-      return {
-        chosenOptionId: finalOptionId,
-        reasoning: parsed.reasoning || parsed.explanation || 'No reasoning provided',
-        confidence: Math.min(0.95, Math.max(0.7, parsed.confidence || 0.8)),
-        complexity,
-      };
-    } catch (error) {
-      logger.warn({ content, error }, 'Failed to parse LLM response');
-
-      return {
-        chosenOptionId: decisionNode.options[0].id,
-        reasoning: 'Parsing failed, defaulting to first option',
-        confidence: 0.5,
-        complexity,
-      };
-    }
+    return {
+      chosenOptionId: finalOptionId,
+      reasoning,
+      confidence: Math.min(0.95, Math.max(0.7, rawConfidence)),
+      complexity,
+    };
   }
 
   private async heuristicEvaluation(

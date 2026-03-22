@@ -997,9 +997,30 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       );
     }
     
-    // Update progress
-    const progress = Math.round(((cloneBatchIndex + 1) / totalBatches) * 100);
-    const completedBatches = cloneBatchIndex + 1;
+    // Update progress using persisted batch completion, not enqueue order.
+    const progressState = await runWriteSingle<{
+      completedBatches: number;
+      totalBatches: number;
+      status: string;
+      progress: number;
+    }>(
+      `MATCH (s:Simulation {id: $simulationId})
+       SET s.completedBatches = coalesce(s.completedBatches, 0) + 1
+       WITH s, s.completedBatches as completedBatches
+       SET s.progress = toInteger(round((toFloat(completedBatches) / $totalBatches) * 100)),
+           s.status = CASE
+             WHEN completedBatches >= $totalBatches THEN coalesce(s.status, 'pending')
+             ELSE 'running'
+           END
+       RETURN s.completedBatches as completedBatches,
+              $totalBatches as totalBatches,
+              s.status as status,
+              s.progress as progress`,
+      { simulationId, totalBatches }
+    );
+
+    const completedBatches = progressState?.completedBatches ?? 0;
+    const progress = progressState?.progress ?? 0;
 
     // Publish real-time progress to Redis for SSE streaming
     const redis = await getRedisClient();
@@ -1013,15 +1034,28 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         totalBatches,
         currentBatch: cloneBatchIndex,
         processedClones: results.length,
-        status: cloneBatchIndex === totalBatches - 1 ? 'completed' : 'running',
+        status: completedBatches >= totalBatches ? 'completed' : 'running',
         lastUpdated: new Date().toISOString(),
       })
     );
 
-    // Check if this is the final batch
-    const isFinalBatch = cloneBatchIndex === totalBatches - 1;
+    // Finalize only once all persisted batches have completed.
+    const isFinalBatch = completedBatches >= totalBatches;
     
     if (isFinalBatch) {
+      const finalized = await runWriteSingle<{ id: string }>(
+        `MATCH (s:Simulation {id: $simulationId})
+         WHERE coalesce(s.status, 'pending') <> 'completed'
+         SET s.status = 'aggregating'
+         RETURN s.id as id`,
+        { simulationId }
+      );
+
+      if (!finalized) {
+        logger.info({ simulationId, cloneBatchIndex, completedBatches, totalBatches }, 'Simulation already finalized by another batch');
+        return;
+      }
+
       // Aggregate all results
       const aggregator = createAggregator(scenarioType);
       
@@ -1100,14 +1134,6 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         successRate: finalResults.statistics.successRate,
         llmUsage: engine.getLLMUsage(),
       }, 'Simulation completed');
-    } else {
-      // Update progress only
-      await runWriteSingle(
-        `MATCH (s:Simulation {id: $simulationId})
-         SET s.progress = $progress, s.completedBatches = $completedBatches
-         RETURN s.id as id`,
-        { simulationId, progress, completedBatches: cloneBatchIndex + 1 }
-      );
     }
     
   } catch (err) {
