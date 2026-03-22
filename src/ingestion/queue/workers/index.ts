@@ -28,7 +28,12 @@ import { parseTimestamp, detectSequences } from '../../extractors/temporalUtils.
 import { SimulationEngine } from '../../../simulation/engine.js';
 import { compileScenario } from '../../../simulation/scenarioCompiler.js';
 import { createAggregator } from '../../../simulation/resultAggregator.js';
-import { CloneResult } from '../../../simulation/types.js';
+import { buildRerunComparison } from '../../../simulation/evidenceLoop.js';
+import {
+  AggregatedResults,
+  CloneResult,
+  EvidenceResult,
+} from '../../../simulation/types.js';
 import { calculateKelly } from '../../../simulation/kellyCalculator.js';
 import { calculateSimulationProgress, estimateTimeRemainingSeconds } from '../../../simulation/progress.js';
 import { RateLimiter, createConcurrencyLimiter, detectProviderRPM } from '../../../utils/rateLimiter.js';
@@ -899,11 +904,24 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     const simulationParameters = simulation.parameters
       ? JSON.parse(simulation.parameters)
       : {};
+    const acceptedEvidence = Array.isArray(simulationParameters.evidence)
+      ? simulationParameters.evidence as EvidenceResult[]
+      : [];
+    const sourceSimulationId = typeof simulationParameters.sourceSimulationId === 'string'
+      ? simulationParameters.sourceSimulationId
+      : undefined;
+    const sanitizedScenarioParameters = {
+      ...simulationParameters,
+    };
+    delete sanitizedScenarioParameters.evidence;
+    delete sanitizedScenarioParameters.sourceSimulationId;
+    delete sanitizedScenarioParameters.rerunMode;
     const scenario = compileScenario({
       scenarioType,
       name: simulation.name,
-      parameters: simulationParameters,
+      parameters: sanitizedScenarioParameters,
       capitalAtRisk: simulation.capitalAtRisk,
+      evidence: acceptedEvidence,
     });
     
     // Calculate batch size (100 clones per batch by default)
@@ -1234,6 +1252,25 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       
       aggregator.addResults(aggregatedResults);
       const finalResults = aggregator.aggregate();
+      finalResults.appliedEvidence = acceptedEvidence;
+
+      if (sourceSimulationId && acceptedEvidence.length > 0) {
+        const sourceSimulation = await runQuerySingle<{ results: string | null }>(
+          `MATCH (s:Simulation {id: $sourceSimulationId})
+           RETURN s.results as results`,
+          { sourceSimulationId }
+        );
+
+        if (sourceSimulation?.results) {
+          const baselineResults = JSON.parse(sourceSimulation.results) as AggregatedResults;
+          finalResults.rerunComparison = buildRerunComparison(
+            sourceSimulationId,
+            baselineResults,
+            finalResults,
+            acceptedEvidence,
+          );
+        }
+      }
 
       if (typeof simulation.capitalAtRisk === 'number' && simulation.capitalAtRisk > 0) {
         const persona = await runQuerySingle<{ behavioralFingerprint: string | null }>(

@@ -61,6 +61,37 @@ export const api = {
   getSimulationResults: (id: string, options?: { narrative?: boolean }) =>
     makeRequest(`/simulation/${id}/results${options?.narrative ? '?narrative=true' : ''}`),
   getSimulationProgress: (id: string) => makeRequest(`/stream/simulation/${id}/progress-rest`),
+  recordSimulationEvidence: (
+    id: string,
+    payload: {
+      recommendationIndex?: number;
+      uncertainty?: string;
+      focusMetric?: string;
+      recommendedExperiment?: string;
+      result: 'positive' | 'negative' | 'mixed' | 'inconclusive';
+      confidence?: number;
+      observedSignal: string;
+      notes?: string;
+      causalTargets?: string[];
+      beliefTargets?: string[];
+    }
+  ) =>
+    makeRequest(`/simulation/${id}/evidence`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  rerunSimulationWithEvidence: (
+    id: string,
+    payload?: {
+      name?: string;
+      cloneCount?: number;
+      evidenceIds?: string[];
+    }
+  ) =>
+    makeRequest(`/simulation/${id}/rerun`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }),
   deleteSimulation: (id: string) =>
     makeRequest(`/simulation/${id}`, { method: 'DELETE' }),
   listScenarios: () => makeRequest('/simulation/scenarios'),

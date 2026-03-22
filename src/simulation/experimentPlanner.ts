@@ -1,4 +1,5 @@
 import type {
+  CausalState,
   CloneResult,
   DecisionFrame,
   DecisionIntelligence,
@@ -9,6 +10,8 @@ type Lens = {
   key: string;
   label: string;
   betterDirection: 'higher' | 'lower';
+  causalTargets: Array<keyof CausalState>;
+  beliefTargets: ExperimentRecommendation['beliefTargets'];
   whyItMatters: (gap: number, frame?: DecisionFrame) => string;
   recommendedExperiment: (frame?: DecisionFrame, uncertainty?: string) => string;
   successSignal: string;
@@ -78,6 +81,8 @@ const lenses: Lens[] = [
     key: 'evidenceQuality',
     label: 'evidence quality',
     betterDirection: 'higher',
+    causalTargets: ['demandStrength', 'evidenceMomentum', 'marketTailwind'],
+    beliefTargets: ['thesisConfidence', 'uncertaintyLevel', 'evidenceClarity'],
     whyItMatters: (gap, frame) =>
       `Durable outcomes were separated most by better evidence quality${frame ? ` on "${frame.title}"` : ''}; the success/failure gap was ${(gap * 100).toFixed(0)} points.`,
     recommendedExperiment: (frame, uncertainty) =>
@@ -89,6 +94,8 @@ const lenses: Lens[] = [
     key: 'executionQuality',
     label: 'execution reliability',
     betterDirection: 'higher',
+    causalTargets: ['executionCapacity', 'runwayStress'],
+    beliefTargets: ['thesisConfidence', 'uncertaintyLevel', 'learningVelocity'],
     whyItMatters: (gap) =>
       `Success was strongly linked to higher execution quality; the branch gap was ${(gap * 100).toFixed(0)} points.`,
     recommendedExperiment: (frame, uncertainty) =>
@@ -100,6 +107,8 @@ const lenses: Lens[] = [
     key: 'burnRate',
     label: 'runway durability',
     betterDirection: 'lower',
+    causalTargets: ['runwayStress', 'reversibilityPressure'],
+    beliefTargets: ['downsideSalience', 'uncertaintyLevel', 'reversibilityConfidence'],
     whyItMatters: (gap) =>
       `Failures burned runway much faster than wins; the burn gap was ${(gap * 100).toFixed(0)} points.`,
     recommendedExperiment: (frame) =>
@@ -111,6 +120,8 @@ const lenses: Lens[] = [
     key: 'optionalityPreserved',
     label: 'optionality / reversibility',
     betterDirection: 'higher',
+    causalTargets: ['reversibilityPressure', 'executionCapacity'],
+    beliefTargets: ['reversibilityConfidence', 'commitmentLockIn', 'uncertaintyLevel'],
     whyItMatters: (gap) =>
       `The strongest paths kept more optionality alive; the reversibility gap was ${(gap * 100).toFixed(0)} points.`,
     recommendedExperiment: (frame) =>
@@ -122,6 +133,8 @@ const lenses: Lens[] = [
     key: 'socialPressureLoad',
     label: 'social pressure contamination',
     betterDirection: 'lower',
+    causalTargets: ['socialLegitimacy', 'reversibilityPressure'],
+    beliefTargets: ['socialPressureLoad', 'thesisConfidence', 'uncertaintyLevel'],
     whyItMatters: (gap) =>
       `Collapses were more socially distorted than wins; the pressure gap was ${(gap * 100).toFixed(0)} points.`,
     recommendedExperiment: (frame) =>
@@ -133,6 +146,8 @@ const lenses: Lens[] = [
     key: 'beliefUncertainty',
     label: 'belief uncertainty',
     betterDirection: 'lower',
+    causalTargets: ['evidenceMomentum', 'demandStrength'],
+    beliefTargets: ['uncertaintyLevel', 'thesisConfidence', 'evidenceClarity'],
     whyItMatters: (gap) =>
       `The best paths collapsed uncertainty faster than the failures; the divergence was ${(gap * 100).toFixed(0)} points.`,
     recommendedExperiment: (_frame, uncertainty) =>
@@ -162,12 +177,15 @@ const createGenericRecommendation = (
 ): ExperimentRecommendation => {
   return {
     priority,
+    focusMetric: 'unknown',
     uncertainty,
     whyItMatters: `This remains one of the load-bearing unknowns behind the current decision${frame ? ` for "${frame.title}"` : ''}.`,
     recommendedExperiment: `Design the smallest behaviorally binding test that resolves "${uncertainty}" before making the next irreversible move.${frame ? ` Preserve ${frame.fallbackPlan} while running it.` : ''}`,
     successSignal: 'The test produces outside-world evidence that survives contact with cost, friction, or commitment.',
     stopSignal: 'The thesis only survives when evidence is soft, delayed, or easy to rationalize.',
     learningValue,
+    causalTargets: ['evidenceMomentum', 'demandStrength'],
+    beliefTargets: ['uncertaintyLevel', 'thesisConfidence', 'evidenceClarity'],
   };
 };
 
@@ -221,12 +239,15 @@ export function buildDecisionIntelligence(
     const uncertainty = dominantUncertainties[index];
     return {
       priority: index === 0 ? 'highest' : index === 1 ? 'high' : 'medium',
+      focusMetric: entry.lens.key,
       uncertainty,
       whyItMatters: entry.lens.whyItMatters(entry.gap, decisionFrame),
       recommendedExperiment: entry.lens.recommendedExperiment(decisionFrame, uncertainty),
       successSignal: entry.lens.successSignal,
       stopSignal: entry.lens.stopSignal,
       learningValue: entry.learningValue,
+      causalTargets: entry.lens.causalTargets,
+      beliefTargets: entry.lens.beliefTargets,
     } satisfies ExperimentRecommendation;
   });
 

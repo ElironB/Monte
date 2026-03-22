@@ -2,7 +2,12 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { runQuery, runQuerySingle, runWriteSingle } from '../../config/neo4j.js';
 import { NarrativeGenerator } from '../../simulation/narrativeGenerator.js';
-import { AggregatedResults } from '../../simulation/types.js';
+import {
+  AggregatedResults,
+  EvidenceResult,
+  ExperimentRecommendation,
+} from '../../simulation/types.js';
+import { deriveEvidenceAdjustments } from '../../simulation/evidenceLoop.js';
 import { BehavioralSignal } from '../../ingestion/types.js';
 import { DimensionMapper } from '../../persona/dimensionMapper.js';
 import { getDimensionConceptEmbeddings } from '../../embeddings/dimensionConcepts.js';
@@ -14,6 +19,32 @@ import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const SCENARIOS = ['day_trading', 'startup_founding', 'career_change', 'advanced_degree', 'geographic_relocation', 'real_estate_purchase', 'health_fitness_goal', 'custom'] as const;
+const EVIDENCE_RESULTS = ['positive', 'negative', 'mixed', 'inconclusive'] as const;
+const CAUSAL_TARGETS = [
+  'demandStrength',
+  'executionCapacity',
+  'runwayStress',
+  'marketTailwind',
+  'socialLegitimacy',
+  'reversibilityPressure',
+  'evidenceMomentum',
+] as const;
+const BELIEF_TARGETS = [
+  'thesisConfidence',
+  'uncertaintyLevel',
+  'evidenceClarity',
+  'reversibilityConfidence',
+  'commitmentLockIn',
+  'socialPressureLoad',
+  'downsideSalience',
+  'learningVelocity',
+] as const;
+const DEFAULT_MANUAL_CAUSAL_TARGETS: EvidenceResult['causalTargets'] = ['evidenceMomentum', 'demandStrength'];
+const DEFAULT_MANUAL_BELIEF_TARGETS: EvidenceResult['beliefTargets'] = [
+  'uncertaintyLevel',
+  'thesisConfidence',
+  'evidenceClarity',
+];
 
 const createSchema = z.object({
   scenarioType: z.enum(SCENARIOS),
@@ -21,6 +52,32 @@ const createSchema = z.object({
   parameters: z.record(z.unknown()).optional(),
   cloneCount: z.number().int().min(10).max(10000).default(1000),
   capitalAtRisk: z.number().positive().optional(),
+});
+
+const evidenceSchema = z.object({
+  recommendationIndex: z.number().int().min(1).optional(),
+  uncertainty: z.string().min(1).max(300).optional(),
+  focusMetric: z.string().min(1).max(100).optional(),
+  recommendedExperiment: z.string().min(1).max(1000).optional(),
+  result: z.enum(EVIDENCE_RESULTS),
+  confidence: z.number().min(0).max(1).default(0.75),
+  observedSignal: z.string().min(1).max(2000),
+  notes: z.string().max(4000).optional(),
+  causalTargets: z.array(z.enum(CAUSAL_TARGETS)).max(7).optional(),
+  beliefTargets: z.array(z.enum(BELIEF_TARGETS)).max(8).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.recommendationIndex && (!value.uncertainty || !value.recommendedExperiment)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Provide recommendationIndex or supply uncertainty plus recommendedExperiment.',
+    });
+  }
+});
+
+const rerunSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  cloneCount: z.number().int().min(10).max(10000).optional(),
+  evidenceIds: z.array(z.string().min(1)).optional(),
 });
 
 const listQuerySchema = z.object({
@@ -33,6 +90,52 @@ const listQuerySchema = z.object({
 });
 
 const CACHE_TTL = 60; // 1 minute for simulation lists
+
+const parseJson = <T>(value: string | null | undefined, fallback: T): T => {
+  if (!value) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const parseEvidenceRow = (row: {
+  id: string;
+  uncertainty: string;
+  focusMetric: string;
+  recommendationIndex?: number | null;
+  recommendedExperiment: string;
+  result: EvidenceResult['result'];
+  confidence: number;
+  observedSignal: string;
+  notes?: string | null;
+  createdAt: string;
+  causalTargets?: string[] | null;
+  beliefTargets?: string[] | null;
+  causalAdjustments?: string | null;
+  beliefAdjustments?: string | null;
+}): EvidenceResult => {
+  return {
+    id: row.id,
+    uncertainty: row.uncertainty,
+    focusMetric: row.focusMetric,
+    recommendationIndex: row.recommendationIndex ?? undefined,
+    recommendedExperiment: row.recommendedExperiment,
+    result: row.result,
+    confidence: row.confidence,
+    observedSignal: row.observedSignal,
+    notes: row.notes ?? undefined,
+    createdAt: row.createdAt,
+    causalTargets: (row.causalTargets ?? []) as EvidenceResult['causalTargets'],
+    beliefTargets: (row.beliefTargets ?? []) as EvidenceResult['beliefTargets'],
+    causalAdjustments: parseJson(row.causalAdjustments, {}),
+    beliefAdjustments: parseJson(row.beliefAdjustments, {}),
+  };
+};
 
 async function simulationRoutes(fastify: FastifyInstance) {
   // List simulations with pagination and filtering
@@ -215,6 +318,290 @@ async function simulationRoutes(fastify: FastifyInstance) {
     },
   });
 
+  fastify.post('/:id/evidence', {
+    preHandler: [fastify.authenticate],
+    schema: { description: 'Record experiment evidence for a completed simulation', tags: ['simulation'], security: [{ bearerAuth: [] }] },
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = evidenceSchema.parse(request.body);
+
+      const simulation = await runQuerySingle<{
+        status: string;
+        results: string | null;
+      }>(
+        `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
+         RETURN s.status as status, s.results as results`,
+        { userId: request.user.userId, simId: id }
+      );
+
+      if (!simulation) {
+        throw new NotFoundError('Simulation');
+      }
+
+      if (simulation.status !== 'completed') {
+        throw new ValidationError('Evidence can only be recorded once the base simulation has completed.');
+      }
+
+      const results = parseJson<AggregatedResults | null>(simulation.results, null);
+      let recommendation: ExperimentRecommendation | undefined;
+
+      if (body.recommendationIndex) {
+        recommendation = results?.decisionIntelligence?.recommendedExperiments[body.recommendationIndex - 1];
+        if (!recommendation) {
+          throw new ValidationError(`Recommendation ${body.recommendationIndex} was not found on this simulation.`);
+        }
+      }
+
+      const uncertainty = recommendation?.uncertainty ?? body.uncertainty ?? '';
+      const focusMetric = recommendation?.focusMetric ?? body.focusMetric ?? 'manual_evidence';
+      const recommendedExperiment = recommendation?.recommendedExperiment ?? body.recommendedExperiment ?? '';
+      const causalTargets = recommendation?.causalTargets ?? (body.causalTargets as EvidenceResult['causalTargets'] | undefined) ?? DEFAULT_MANUAL_CAUSAL_TARGETS;
+      const beliefTargets = recommendation?.beliefTargets ?? (body.beliefTargets as EvidenceResult['beliefTargets'] | undefined) ?? DEFAULT_MANUAL_BELIEF_TARGETS;
+      const evidenceId = uuidv4();
+      const adjustments = deriveEvidenceAdjustments(body.result, body.confidence, causalTargets, beliefTargets);
+
+      const created = await runWriteSingle<{
+        id: string;
+        uncertainty: string;
+        focusMetric: string;
+        recommendationIndex: number | null;
+        recommendedExperiment: string;
+        result: EvidenceResult['result'];
+        confidence: number;
+        observedSignal: string;
+        notes: string | null;
+        createdAt: string;
+        causalTargets: string[];
+        beliefTargets: string[];
+        causalAdjustments: string;
+        beliefAdjustments: string;
+        evidenceCount: number;
+      }>(
+        `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
+         CREATE (e:SimulationEvidence {
+           id: $evidenceId,
+           uncertainty: $uncertainty,
+           focusMetric: $focusMetric,
+           recommendationIndex: $recommendationIndex,
+           recommendedExperiment: $recommendedExperiment,
+           result: $result,
+           confidence: $confidence,
+           observedSignal: $observedSignal,
+           notes: $notes,
+           causalTargets: $causalTargets,
+           beliefTargets: $beliefTargets,
+           causalAdjustments: $causalAdjustments,
+           beliefAdjustments: $beliefAdjustments,
+           createdAt: datetime()
+         })
+         CREATE (s)-[:HAS_EVIDENCE]->(e)
+         WITH s, e
+         MATCH (s)-[:HAS_EVIDENCE]->(allEvidence:SimulationEvidence)
+         RETURN e.id as id,
+                e.uncertainty as uncertainty,
+                e.focusMetric as focusMetric,
+                e.recommendationIndex as recommendationIndex,
+                e.recommendedExperiment as recommendedExperiment,
+                e.result as result,
+                e.confidence as confidence,
+                e.observedSignal as observedSignal,
+                e.notes as notes,
+                toString(e.createdAt) as createdAt,
+                e.causalTargets as causalTargets,
+                e.beliefTargets as beliefTargets,
+                e.causalAdjustments as causalAdjustments,
+                e.beliefAdjustments as beliefAdjustments,
+                count(allEvidence) as evidenceCount`,
+        {
+          userId: request.user.userId,
+          simId: id,
+          evidenceId,
+          uncertainty,
+          focusMetric,
+          recommendationIndex: body.recommendationIndex ?? null,
+          recommendedExperiment,
+          result: body.result,
+          confidence: body.confidence,
+          observedSignal: body.observedSignal,
+          notes: body.notes ?? null,
+          causalTargets,
+          beliefTargets,
+          causalAdjustments: JSON.stringify(adjustments.causalAdjustments),
+          beliefAdjustments: JSON.stringify(adjustments.beliefAdjustments),
+        }
+      );
+
+      reply.status(201);
+      return {
+        evidence: created ? parseEvidenceRow(created) : null,
+        evidenceCount: created?.evidenceCount ?? 0,
+      };
+    },
+  });
+
+  fastify.post('/:id/rerun', {
+    preHandler: [fastify.authenticate],
+    schema: { description: 'Create an evidence-adjusted rerun from a completed simulation', tags: ['simulation'], security: [{ bearerAuth: [] }] },
+    handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = rerunSchema.parse(request.body);
+
+      const sourceSimulation = await runQuerySingle<{
+        personaId: string;
+        name: string;
+        scenarioType: string;
+        status: string;
+        parameters: string;
+        cloneCount: number;
+        capitalAtRisk: number | null;
+      }>(
+        `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
+         RETURN p.id as personaId,
+                s.name as name,
+                s.scenarioType as scenarioType,
+                s.status as status,
+                s.parameters as parameters,
+                s.cloneCount as cloneCount,
+                s.capitalAtRisk as capitalAtRisk`,
+        { userId: request.user.userId, simId: id }
+      );
+
+      if (!sourceSimulation) {
+        throw new NotFoundError('Simulation');
+      }
+
+      if (sourceSimulation.status !== 'completed') {
+        throw new ValidationError('Evidence-adjusted reruns require a completed source simulation.');
+      }
+
+      const evidenceRows = await runQuery<{
+        id: string;
+        uncertainty: string;
+        focusMetric: string;
+        recommendationIndex: number | null;
+        recommendedExperiment: string;
+        result: EvidenceResult['result'];
+        confidence: number;
+        observedSignal: string;
+        notes: string | null;
+        createdAt: string;
+        causalTargets: string[];
+        beliefTargets: string[];
+        causalAdjustments: string;
+        beliefAdjustments: string;
+      }>(
+        `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
+         MATCH (s)-[:HAS_EVIDENCE]->(e:SimulationEvidence)
+         RETURN e.id as id,
+                e.uncertainty as uncertainty,
+                e.focusMetric as focusMetric,
+                e.recommendationIndex as recommendationIndex,
+                e.recommendedExperiment as recommendedExperiment,
+                e.result as result,
+                e.confidence as confidence,
+                e.observedSignal as observedSignal,
+                e.notes as notes,
+                toString(e.createdAt) as createdAt,
+                e.causalTargets as causalTargets,
+                e.beliefTargets as beliefTargets,
+                e.causalAdjustments as causalAdjustments,
+                e.beliefAdjustments as beliefAdjustments
+         ORDER BY e.createdAt ASC`,
+        { userId: request.user.userId, simId: id }
+      );
+
+      const allEvidence = evidenceRows.map((row) => parseEvidenceRow(row));
+      if (allEvidence.length === 0) {
+        throw new ValidationError('Record at least one experiment result before creating an evidence-adjusted rerun.');
+      }
+
+      const selectedEvidence = body.evidenceIds?.length
+        ? allEvidence.filter((entry) => body.evidenceIds?.includes(entry.id))
+        : allEvidence;
+
+      if (body.evidenceIds?.length && selectedEvidence.length !== body.evidenceIds.length) {
+        throw new ValidationError('One or more evidenceIds were not found on this simulation.');
+      }
+
+      if (selectedEvidence.length === 0) {
+        throw new ValidationError('No evidence results were selected for the rerun.');
+      }
+
+      const simulationId = uuidv4();
+      const cloneCount = body.cloneCount ?? sourceSimulation.cloneCount;
+      const rerunName = body.name ?? `${sourceSimulation.name} (evidence rerun)`;
+      const rerunParameters = {
+        ...parseJson<Record<string, unknown>>(sourceSimulation.parameters, {}),
+        evidence: selectedEvidence,
+        sourceSimulationId: id,
+        rerunMode: 'evidence_adjusted',
+      };
+
+      await runWriteSingle(
+        `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona {id: $personaId})
+         MATCH (source:Simulation {id: $sourceSimulationId})
+         CREATE (s:Simulation {
+           id: $simulationId,
+           name: $name,
+           scenarioType: $scenarioType,
+           status: 'pending',
+           parameters: $parameters,
+           cloneCount: $cloneCount,
+           capitalAtRisk: $capitalAtRisk,
+           progress: 0,
+           completedBatches: 0,
+           sourceSimulationId: $sourceSimulationId,
+           evidenceCount: $evidenceCount,
+           rerunMode: 'evidence_adjusted',
+           createdAt: datetime()
+         })
+         CREATE (p)-[:HAS_SIMULATION]->(s)
+         CREATE (s)-[:RERUN_OF]->(source)
+         WITH s
+         UNWIND $evidenceIds AS evidenceId
+         MATCH (e:SimulationEvidence {id: evidenceId})
+         CREATE (s)-[:USES_EVIDENCE]->(e)
+         RETURN s.id as id`,
+        {
+          userId: request.user.userId,
+          personaId: sourceSimulation.personaId,
+          sourceSimulationId: id,
+          simulationId,
+          name: rerunName,
+          scenarioType: sourceSimulation.scenarioType,
+          parameters: JSON.stringify(rerunParameters),
+          cloneCount,
+          capitalAtRisk: sourceSimulation.capitalAtRisk ?? null,
+          evidenceCount: selectedEvidence.length,
+          evidenceIds: selectedEvidence.map((entry) => entry.id),
+        }
+      );
+
+      const batchSize = 100;
+      const totalBatches = Math.ceil(cloneCount / batchSize);
+      for (let i = 0; i < totalBatches; i++) {
+        await scheduleSimulationBatch({
+          simulationId,
+          userId: request.user.userId,
+          personaId: sourceSimulation.personaId,
+          scenarioType: sourceSimulation.scenarioType,
+          cloneBatchIndex: i,
+          totalBatches,
+        });
+      }
+
+      reply.status(202);
+      return {
+        simulationId,
+        name: rerunName,
+        status: 'pending',
+        cloneCount,
+        sourceSimulationId: id,
+        evidenceCount: selectedEvidence.length,
+      };
+    },
+  });
+
   // Get simulation with caching
   fastify.get('/:id', {
     preHandler: [fastify.authenticate],
@@ -353,7 +740,8 @@ async function simulationRoutes(fastify: FastifyInstance) {
       await runWriteSingle(
         `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
          OPTIONAL MATCH (s)-[:HAS_RESULT]->(cr:CloneResult)
-         DETACH DELETE s, cr`,
+         OPTIONAL MATCH (s)-[:HAS_EVIDENCE]->(e:SimulationEvidence)
+         DETACH DELETE s, cr, e`,
         { userId: request.user.userId, simId: id }
       );
       reply.status(204);

@@ -67,6 +67,7 @@ describe('report command', () => {
           recommendedExperiments: [
             {
               priority: 'highest',
+              focusMetric: 'evidenceQuality',
               uncertainty: 'Will design partners pay to pilot OpenClaw?',
               whyItMatters: 'Durable outcomes were separated most by better evidence quality.',
               recommendedExperiment: 'Run a two-week evidence sprint with direct pilot asks.',
@@ -75,6 +76,36 @@ describe('report command', () => {
               learningValue: 0.84,
             },
           ],
+        },
+        appliedEvidence: [
+          {
+            id: 'evidence-1',
+            uncertainty: 'Will design partners pay to pilot OpenClaw?',
+            focusMetric: 'evidenceQuality',
+            recommendationIndex: 1,
+            recommendedExperiment: 'Run a two-week evidence sprint with direct pilot asks.',
+            result: 'positive',
+            confidence: 0.86,
+            observedSignal: 'Three design partners agreed to paid pilots within 10 days.',
+            createdAt: '2026-03-22T00:00:00.000Z',
+          },
+        ],
+        rerunComparison: {
+          sourceSimulationId: 'sim_001',
+          evidenceCount: 1,
+          summary: 'Confidence increased by 8.0 points and uncertainty dropped by 11.0 points after applying 1 evidence result.',
+          beliefDelta: {
+            thesisConfidence: 0.08,
+            uncertaintyLevel: -0.11,
+            downsideSalience: -0.05,
+          },
+          recommendationDelta: {
+            changed: true,
+            previousTopUncertainty: 'Will design partners pay to pilot OpenClaw?',
+            newTopUncertainty: 'Can you ship every week under pressure?',
+            previousTopExperiment: 'Run a two-week evidence sprint with direct pilot asks.',
+            newTopExperiment: 'Design a one- to two-week execution drill that forces a concrete deliverable.',
+          },
         },
       },
       null,
@@ -86,5 +117,7 @@ describe('report command', () => {
     expect(markdown).toContain('Should you commit the next 18 months to OpenClaw?');
     expect(markdown).toContain('Will design partners pay to pilot OpenClaw?');
     expect(markdown).toContain('Highest priority');
+    expect(markdown).toContain('## Applied Evidence');
+    expect(markdown).toContain('## Evidence Loop Delta');
   });
 });

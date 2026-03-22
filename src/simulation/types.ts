@@ -104,18 +104,67 @@ export interface CausalState {
 
 export interface ExperimentRecommendation {
   priority: 'highest' | 'high' | 'medium';
+  focusMetric: string;
   uncertainty: string;
   whyItMatters: string;
   recommendedExperiment: string;
   successSignal: string;
   stopSignal: string;
   learningValue: number;
+  causalTargets: Array<keyof CausalState>;
+  beliefTargets: Array<
+    'thesisConfidence'
+    | 'uncertaintyLevel'
+    | 'evidenceClarity'
+    | 'reversibilityConfidence'
+    | 'commitmentLockIn'
+    | 'socialPressureLoad'
+    | 'downsideSalience'
+    | 'learningVelocity'
+  >;
 }
 
 export interface DecisionIntelligence {
   summary: string;
   dominantUncertainties: string[];
   recommendedExperiments: ExperimentRecommendation[];
+}
+
+export type EvidenceResultStatus = 'positive' | 'negative' | 'mixed' | 'inconclusive';
+
+export interface EvidenceResult {
+  id: string;
+  uncertainty: string;
+  focusMetric: string;
+  recommendationIndex?: number;
+  recommendedExperiment: string;
+  result: EvidenceResultStatus;
+  confidence: number;
+  observedSignal: string;
+  notes?: string;
+  createdAt: string;
+  causalTargets: Array<keyof CausalState>;
+  beliefTargets: ExperimentRecommendation['beliefTargets'];
+  causalAdjustments: Partial<Record<keyof CausalState, number>>;
+  beliefAdjustments: Partial<Record<ExperimentRecommendation['beliefTargets'][number], number>>;
+}
+
+export interface RerunComparison {
+  sourceSimulationId: string;
+  evidenceCount: number;
+  summary: string;
+  beliefDelta: {
+    thesisConfidence: number;
+    uncertaintyLevel: number;
+    downsideSalience: number;
+  };
+  recommendationDelta: {
+    changed: boolean;
+    previousTopUncertainty?: string;
+    newTopUncertainty?: string;
+    previousTopExperiment?: string;
+    newTopExperiment?: string;
+  };
 }
 
 // Scenario definition
@@ -264,6 +313,8 @@ export interface AggregatedResults {
   stratifiedBreakdown: StratifiedBreakdown;
   decisionFrame?: DecisionFrame;
   decisionIntelligence?: DecisionIntelligence;
+  appliedEvidence?: EvidenceResult[];
+  rerunComparison?: RerunComparison;
   narrative?: NarrativeResult;
   kelly?: KellyOutput;
 }
