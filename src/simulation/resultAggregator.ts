@@ -13,27 +13,17 @@ import type {
   DecisionFrame,
 } from './types.js';
 import { logger } from '../utils/logger.js';
-import { getInitialState } from './decisionGraph.js';
+import { categorizeOutcome } from './decisionGraph.js';
 import { buildDecisionIntelligence } from './experimentPlanner.js';
 
 export class ResultAggregator {
   private cloneResults: CloneResult[] = [];
   private scenarioId: string = '';
-  private initialCapital: number = 0;
-  private initialHappiness: number = 0.7;
   private decisionFrame?: DecisionFrame;
 
   constructor(scenarioId: string, decisionFrame?: DecisionFrame) {
     this.scenarioId = scenarioId;
     this.decisionFrame = decisionFrame;
-    try {
-      const initialState = getInitialState(scenarioId);
-      this.initialCapital = initialState.capital;
-      this.initialHappiness = initialState.happiness;
-    } catch {
-      this.initialCapital = 0;
-      this.initialHappiness = 0.7;
-    }
   }
 
   // Add a clone result
@@ -223,70 +213,7 @@ export class ResultAggregator {
 
   // Categorize a single result
   private categorizeResult(result: CloneResult): 'success' | 'failure' | 'neutral' {
-    const { finalState, metrics } = result;
-    const outcomeValue = String(finalState.outcome || metrics.outcome || '');
-    const capitalPreservation = this.calculateCapitalPreservation(finalState.capital);
-    const happinessThreshold = this.getSuccessHappinessThreshold(capitalPreservation);
-    const happinessGood = finalState.happiness >= happinessThreshold;
-    const capitalGood = capitalPreservation >= 0.8;
-
-    // Failure criteria
-    const happinessBad = finalState.happiness < Math.max(0.35, this.initialHappiness - 0.3);
-    const capitalBad = capitalPreservation < 0.5;
-    const outcomeFailure = outcomeValue === 'failure' ||
-                          outcomeValue === 'shutdown' ||
-                          outcomeValue === 'significant_loss' ||
-                          outcomeValue === 'dropout' ||
-                          outcomeValue === 'bust' ||
-                          outcomeValue === 'abandoned';
-
-    const outcomeNeutral = outcomeValue === 'early_exit';
-    if (outcomeFailure || happinessBad || capitalBad) {
-      return 'failure';
-    }
-
-    if (outcomeNeutral) {
-      return 'neutral';
-    }
-
-    if (capitalGood && happinessGood) {
-      return 'success';
-    }
-
-    return 'neutral';
-  }
-
-  private calculateCapitalPreservation(finalCapital: number): number {
-    if (this.initialCapital > 0) {
-      return finalCapital / this.initialCapital;
-    }
-
-    if (this.initialCapital < 0) {
-      if (finalCapital >= this.initialCapital) {
-        return 1;
-      }
-
-      const additionalDebt = Math.abs(finalCapital) - Math.abs(this.initialCapital);
-      return Math.max(0, 1 - (additionalDebt / Math.abs(this.initialCapital)));
-    }
-
-    return finalCapital >= 0 ? 1 : 0;
-  }
-
-  private getSuccessHappinessThreshold(capitalPreservation: number): number {
-    if (capitalPreservation >= 1) {
-      return Math.max(0.55, this.initialHappiness - 0.15);
-    }
-
-    if (capitalPreservation >= 0.9) {
-      return Math.max(0.6, this.initialHappiness - 0.1);
-    }
-
-    if (capitalPreservation >= 0.8) {
-      return Math.max(0.65, this.initialHappiness - 0.05);
-    }
-
-    return Number.POSITIVE_INFINITY;
+    return categorizeOutcome(result.finalState, this.scenarioId);
   }
 
   // Generate timeline data

@@ -7,8 +7,11 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "benchmark": "tsx src/benchmarks/runHarness.ts --json",
+    "benchmark:pretty": "tsx src/benchmarks/runHarness.ts",
     "start": "node dist/index.js",
     "test": "vitest",
+    "test:benchmarks": "vitest run tests/benchmarks/*.test.ts",
     "test:e2e": "tests/e2e/smoke-test.sh",
     "cli": "node dist/cli/index.js",
     "cli:dev": "tsx src/cli/index.ts"

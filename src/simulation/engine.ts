@@ -179,6 +179,7 @@ export class SimulationEngine {
     }
 
     const duration = Date.now() - startTime;
+    const outcomeBucket = categorizeOutcome(context.state, this.scenario.id);
 
     // Create result
     const result: CloneResult = {
@@ -189,8 +190,7 @@ export class SimulationEngine {
       finalState: context.state,
       metrics: {
         ...context.state.metrics,
-        outcomeValue: categorizeOutcome(context.state, this.scenario.id) === 'success' ? 1 : 
-                     categorizeOutcome(context.state, this.scenario.id) === 'failure' ? 0 : 0.5,
+        outcomeValue: outcomeBucket === 'success' ? 1 : outcomeBucket === 'failure' ? 0 : 0.5,
         totalDecisions: context.state.decisions.length,
         totalEvents: context.state.events.length,
         finalCapital: context.state.capital,

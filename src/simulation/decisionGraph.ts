@@ -219,6 +219,7 @@ function buildDayTradingGraph(): GraphNode[] {
       ],
     } as EventNode,
 
+
     // Active trading path
     {
       id: 'month1_active',
@@ -484,6 +485,38 @@ function buildStartupFoundingGraph(): GraphNode[] {
     } as EventNode,
 
     {
+      id: 'month3_fundraising',
+      type: 'event',
+      name: 'Seed Fundraising Sprint',
+      description: 'Early investor meetings while the thesis is still mostly narrative.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'warm_investor_interest',
+          label: 'A few investors lean in and extend the runway slightly',
+          effects: [
+            { target: 'capital', delta: 15000, type: 'absolute' },
+            { target: 'metrics.investorInterest', delta: 0.35, type: 'absolute' },
+            { target: 'metrics.runway', delta: 2, type: 'absolute' },
+            { target: 'happiness', delta: 0.08, type: 'absolute' },
+          ],
+          nextNodeId: 'month6_traction',
+        },
+        {
+          id: 'cold_fundraise',
+          label: 'Investors pass and the team must prove demand the hard way',
+          effects: [
+            { target: 'capital', delta: -12000, type: 'absolute' },
+            { target: 'metrics.runway', delta: -2, type: 'absolute' },
+            { target: 'metrics.burnoutRisk', delta: 0.12, type: 'absolute' },
+            { target: 'happiness', delta: -0.08, type: 'absolute' },
+          ],
+          nextNodeId: 'month6_traction',
+        },
+      ],
+    } as EventNode,
+
+    {
       id: 'month3_validation',
       type: 'event',
       name: 'Idea Validation',
@@ -699,6 +732,36 @@ function buildCareerChangeGraph(): GraphNode[] {
             { target: 'happiness', delta: -0.15, type: 'absolute' },
           ],
           nextNodeId: 'month3_reconsider',
+        },
+      ],
+    } as EventNode,
+
+    {
+      id: 'month3_job_search',
+      type: 'event',
+      name: 'Early Market Test',
+      description: 'Testing whether the first wave of learning already creates interview momentum.',
+      probability: 1.0,
+      outcomes: [
+        {
+          id: 'early_positive_signal',
+          label: 'Recruiters respond and confidence builds',
+          effects: [
+            { target: 'metrics.networkStrength', delta: 0.15, type: 'absolute' },
+            { target: 'metrics.confidenceLevel', delta: 0.15, type: 'absolute' },
+            { target: 'happiness', delta: 0.1, type: 'absolute' },
+          ],
+          nextNodeId: 'month9_job_search',
+        },
+        {
+          id: 'still_too_early',
+          label: 'The market says the story is not strong enough yet',
+          effects: [
+            { target: 'capital', delta: -3000, type: 'absolute' },
+            { target: 'metrics.confidenceLevel', delta: -0.08, type: 'absolute' },
+            { target: 'happiness', delta: -0.08, type: 'absolute' },
+          ],
+          nextNodeId: 'month6_skills',
         },
       ],
     } as EventNode,
@@ -1987,6 +2050,7 @@ function buildCustomGraph(): GraphNode[] {
         },
       ],
     } as EventNode,
+
     {
       id: 'final_resolution',
       type: 'event',
@@ -2164,113 +2228,71 @@ export function isTerminalNode(node: GraphNode): boolean {
 export function applyEffects(state: SimulationState, effects: OutcomeEffect[]): SimulationState {
   return applyEffectsToState(state, effects);
 }
+function calculateCapitalPreservation(finalCapital: number, initialCapital: number): number {
+  if (initialCapital > 0) {
+    return finalCapital / initialCapital;
+  }
+
+  if (initialCapital < 0) {
+    if (finalCapital >= initialCapital) {
+      return 1;
+    }
+
+    const additionalDebt = Math.abs(finalCapital) - Math.abs(initialCapital);
+    return Math.max(0, 1 - (additionalDebt / Math.abs(initialCapital)));
+  }
+
+  return finalCapital >= 0 ? 1 : 0;
+}
+
+function getSuccessHappinessThreshold(capitalPreservation: number, initialHappiness: number): number {
+  if (capitalPreservation >= 1) {
+    return Math.max(0.55, initialHappiness - 0.15);
+  }
+
+  if (capitalPreservation >= 0.9) {
+    return Math.max(0.6, initialHappiness - 0.1);
+  }
+
+  if (capitalPreservation >= 0.8) {
+    return Math.max(0.65, initialHappiness - 0.05);
+  }
+
+  return Number.POSITIVE_INFINITY;
+}
 
 // Determine outcome category based on final state
 export function categorizeOutcome(state: SimulationState, scenarioType: string): 'success' | 'failure' | 'neutral' {
-  switch (scenarioType) {
-    case ScenarioType.DAY_TRADING:
-      // Success if capital increased or happiness maintained
-      if (state.capital > 50000 || state.happiness > 0.6) return 'success';
-      if (state.capital < 30000 || state.happiness < 0.3) return 'failure';
-      return 'neutral';
-    
-    case ScenarioType.STARTUP_FOUNDING:
-      // Success if positive metrics or maintained capital
-      const revenue = typeof state.metrics.revenue === 'number' ? state.metrics.revenue : 0;
-      if (revenue > 10000 || state.capital > 80000) return 'success';
-      if (state.capital < 20000 && revenue === 0) return 'failure';
-      return 'neutral';
-    
-    case ScenarioType.CAREER_CHANGE:
-      // Success based on happiness and skill progress
-      const confidence = typeof state.metrics.confidenceLevel === 'number' ? state.metrics.confidenceLevel : 0;
-      if (state.happiness > 0.6 || confidence > 0.7) return 'success';
-      if (state.happiness < 0.3) return 'failure';
-      return 'neutral';
-    
-    case ScenarioType.ADVANCED_DEGREE:
-      // Success if completion progress good or salary increase
-      const completion = typeof state.metrics.completionProgress === 'number' ? state.metrics.completionProgress : 0;
-      const newSalary = typeof state.metrics.newSalary === 'number' ? state.metrics.newSalary : 0;
-      if (completion > 0.7 || newSalary > 80000) return 'success';
-      if (completion < 0.3 && state.capital < -40000) return 'failure';
-      return 'neutral';
-    
-    case ScenarioType.GEOGRAPHIC_RELOCATION:
-      // Success based on happiness and adaptation
-      const adaptation = typeof state.metrics.adaptationProgress === 'number' ? state.metrics.adaptationProgress : 0;
-      if (state.happiness > 0.6 || adaptation > 0.5) return 'success';
-      if (state.happiness < 0.3 && adaptation < 0.2) return 'failure';
-      return 'neutral';
-    
-    case ScenarioType.REAL_ESTATE_PURCHASE:
-      // Success if property value increased or happiness good
-      const propertyValue = typeof state.metrics.propertyValue === 'number' ? state.metrics.propertyValue : 0;
-      if (propertyValue > 310000 || state.happiness > 0.6) return 'success';
-      if (state.capital < 20000 && state.happiness < 0.4) return 'failure';
-      return 'neutral';
-    
-    case ScenarioType.HEALTH_FITNESS_GOAL:
-      // Success based on fitness level and health
-      const fitnessLevel = typeof state.metrics.fitnessLevel === 'number' ? state.metrics.fitnessLevel : 0;
-      const consistency = typeof state.metrics.consistency === 'number' ? state.metrics.consistency : 0;
-      if (fitnessLevel > 0.6 || state.health > 0.8) return 'success';
-      if (fitnessLevel < 0.3 && consistency < 0.2) return 'failure';
-      return 'neutral';
+  const initialState = getInitialState(scenarioType);
+  const outcomeValue = String(state.outcome || state.metrics.outcome || '');
+  const capitalPreservation = calculateCapitalPreservation(state.capital, initialState.capital);
+  const happinessThreshold = getSuccessHappinessThreshold(capitalPreservation, initialState.happiness);
+  const happinessGood = state.happiness >= happinessThreshold;
+  const capitalGood = capitalPreservation >= 0.8;
 
-    case ScenarioType.CUSTOM: {
-      const initialState = getInitialState(ScenarioType.CUSTOM);
-      const capitalPreservation = initialState.capital > 0
-        ? state.capital / initialState.capital
-        : state.capital >= 0 ? 1 : 0;
-      const happinessDrop = initialState.happiness - state.happiness;
-      const progressRate = typeof state.metrics.progressRate === 'number' ? state.metrics.progressRate : 0;
-      const adaptationScore = typeof state.metrics.adaptationScore === 'number' ? state.metrics.adaptationScore : 0;
-      const optionalityPreserved = typeof state.metrics.optionalityPreserved === 'number'
-        ? state.metrics.optionalityPreserved
-        : 0;
-      const evidenceQuality = typeof state.metrics.evidenceQuality === 'number' ? state.metrics.evidenceQuality : 0;
-      const executionQuality = typeof state.metrics.executionQuality === 'number' ? state.metrics.executionQuality : 0;
-      const burnRate = typeof state.metrics.burnRate === 'number' ? state.metrics.burnRate : 0;
-      const setbackCount = typeof state.metrics.setbackCount === 'number' ? state.metrics.setbackCount : 0;
-      const reversibility = typeof state.metrics.reversibility === 'number' ? state.metrics.reversibility : 0;
+  const happinessBad = state.happiness < Math.max(0.35, initialState.happiness - 0.3);
+  const capitalBad = capitalPreservation < 0.5;
+  const outcomeFailure = outcomeValue === 'failure'
+    || outcomeValue === 'shutdown'
+    || outcomeValue === 'significant_loss'
+    || outcomeValue === 'dropout'
+    || outcomeValue === 'bust'
+    || outcomeValue === 'abandoned'
+    || outcomeValue === 'exhausted_collapse';
 
-      if (state.outcome === 'exhausted_collapse') return 'failure';
-      if (state.outcome === 'durable_success') return 'success';
-      if (state.outcome === 'contained_failure' && adaptationScore >= 0.6 && optionalityPreserved >= 0.7) {
-        return 'neutral';
-      }
-
-      if (
-        capitalPreservation <= 0.55 ||
-        state.happiness <= 0.42 ||
-        state.health <= 0.45 ||
-        happinessDrop >= 0.22 ||
-        (burnRate >= 0.7 && progressRate <= 0.3) ||
-        (setbackCount >= 3 && optionalityPreserved <= 0.4)
-      ) {
-        return 'failure';
-      }
-
-      if (
-        capitalPreservation >= 0.8 &&
-        state.happiness >= 0.62 &&
-        progressRate >= 0.45 &&
-        (adaptationScore >= 0.55 || evidenceQuality >= 0.6) &&
-        (executionQuality >= 0.58 || optionalityPreserved >= 0.72) &&
-        reversibility >= 0.35
-      ) {
-        return 'success';
-      }
-
-      return 'neutral';
-    }
-    
-    default:
-      if (state.capital < 0 || state.happiness < 0.3) return 'failure';
-      if (state.capital > 0 && state.happiness > 0.6) return 'success';
-      return 'neutral';
+  if (outcomeFailure || happinessBad || capitalBad) {
+    return 'failure';
   }
+
+  if (outcomeValue === 'early_exit') {
+    return 'neutral';
+  }
+
+  if (capitalGood && happinessGood) {
+    return 'success';
+  }
+
+  return 'neutral';
 }
 
 // Export scenario type enum for external use
