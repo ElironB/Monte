@@ -2,7 +2,6 @@
 // Phase 4: Simulation Engine
 
 import type { CloneParameters } from '../persona/cloneGenerator.js';
-import type { NarrativeResult } from './narrativeGenerator.js';
 import type { KellyOutput } from './kellyCalculator.js';
 
 // Re-export CloneParameters for convenience
@@ -181,6 +180,16 @@ export interface CloneResult {
   finalState: SimulationState;
   metrics: Record<string, number>;
   duration: number; // ms
+}
+
+// Narrative result — defined here (not in narrativeGenerator.ts) to avoid circular imports
+export interface NarrativeResult {
+  executiveSummary: string;
+  outcomeAnalysis: string;
+  behavioralDrivers: string;
+  riskFactors: string;
+  contradictionInsights: string;
+  recommendation: string;
 }
 
 // Aggregated simulation results

@@ -1,18 +1,9 @@
 import OpenAI from 'openai';
-import { AggregatedResults } from './types.js';
+import { AggregatedResults, NarrativeResult } from './types.js';
 import { BehavioralSignal } from '../ingestion/types.js';
 import { BehavioralDimensions } from '../persona/dimensionMapper.js';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-
-export interface NarrativeResult {
-  executiveSummary: string;
-  outcomeAnalysis: string;
-  behavioralDrivers: string;
-  riskFactors: string;
-  contradictionInsights: string;
-  recommendation: string;
-}
 
 interface SignalSummary {
   value: string;

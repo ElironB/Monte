@@ -1,8 +1,7 @@
-version: '3.8'
 
 services:
   neo4j:
-    image: neo4j:5.27-community
+    image: neo4j:5
     container_name: monte-neo4j
     ports:
       - "7474:7474"

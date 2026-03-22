@@ -1,7 +1,7 @@
 // Result Aggregator - Histogram generation, outcome distributions, timeline data
 // Aggregates 1000 clone results into probability distributions
 
-import { 
+import type { 
   CloneResult, 
   AggregatedResults, 
   Histogram, 
@@ -568,4 +568,4 @@ export function compareDistributions(
 }
 
 // Export types
-export { AggregatedResults, Histogram, OutcomeDistribution };
+export type { AggregatedResults, Histogram, OutcomeDistribution };
