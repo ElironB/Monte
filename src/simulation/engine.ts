@@ -38,7 +38,7 @@ import { CareerWorldAgent } from './worldAgents/career.js';
 import { EducationWorldAgent } from './worldAgents/education.js';
 import { SocialWorldAgent } from './worldAgents/social.js';
 import { logger } from '../utils/logger.js';
-import { type RateLimiter } from '../utils/rateLimiter.js';
+import { createConcurrencyLimiter, type RateLimiter } from '../utils/rateLimiter.js';
 import { type MasterPersona } from '../persona/personaCompressor.js';
 import { buildSimulationPersonaRuntimeProfile } from './personaRuntime.js';
 
@@ -231,17 +231,20 @@ export class SimulationEngine {
                                this.config.useLLM;
 
     if (requiresEvaluation && this.config.useLLM) {
+      const request = {
+        cloneParams: context.parameters,
+        decisionNode: node,
+        state: context.state,
+        scenario: this.scenario,
+        masterPersona: this.masterPersona,
+      };
+      const complexity = this.evaluator.calculateComplexity(node, context.parameters, context.state);
+
       try {
         const availableLLMCalls = this.config.maxLLMCalls - this.llmCallsUsed;
         
         const evaluation: LLMEvaluation = await this.evaluator.evaluateFork(
-          {
-            cloneParams: context.parameters,
-            decisionNode: node,
-            state: context.state,
-            scenario: this.scenario,
-            masterPersona: this.masterPersona,
-          },
+          request,
           availableLLMCalls
         );
 
@@ -266,7 +269,7 @@ export class SimulationEngine {
         }
       } catch (error) {
         // Fall back to heuristic
-        const heuristic = this.heuristicDecision(context, node);
+        const heuristic = await this.evaluator.heuristicEvaluation(request, complexity);
         chosenOptionId = heuristic.chosenOptionId;
         reasoning = heuristic.reasoning;
         confidence = heuristic.confidence;
@@ -651,15 +654,21 @@ export async function simulateBatch(
 ): Promise<CloneResult[]> {
   const engine = new SimulationEngine(scenario, config);
   const results: CloneResult[] = [];
+  const concurrency = 10;
+  const limit = createConcurrencyLimiter(concurrency);
 
-  for (const clone of clones) {
-    const result = await engine.executeClone(
-      clone.cloneId,
-      clone.parameters,
-      clone.stratification
-    );
-    results.push(result);
-  }
+  await Promise.all(
+    clones.map((clone) =>
+      limit(async () => {
+        const result = await engine.executeClone(
+          clone.cloneId,
+          clone.parameters,
+          clone.stratification
+        );
+        results.push(result);
+      })
+    )
+  );
 
   return results;
 }

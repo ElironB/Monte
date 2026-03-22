@@ -617,7 +617,7 @@ Respond with JSON containing exactly these three keys:
     };
   }
 
-  private async heuristicEvaluation(
+  public async heuristicEvaluation(
     request: ForkEvaluationRequest,
     complexity: number
   ): Promise<LLMEvaluation> {
