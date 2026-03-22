@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { writeFileSync } from 'fs';
 import { api } from '../api.js';
+import { DIMENSION_DISPLAY, DIMENSION_LABELS } from '../dimensionMetadata.js';
 import { icons, infoLabel, sectionHeader, valueText } from '../styles.js';
 
 interface Bin {
@@ -166,23 +167,6 @@ interface ResultsResponse {
   distributions: AggregatedResults;
 }
 
-const DIMENSION_LABELS: Record<string, { low: string; high: string }> = {
-  riskTolerance: { low: 'Low', high: 'High' },
-  timePreference: { low: 'Low', high: 'High' },
-  socialDependency: { low: 'Low', high: 'High' },
-  learningStyle: { low: 'Experiential', high: 'Theoretical' },
-  decisionSpeed: { low: 'Deliberate', high: 'Impulsive' },
-  emotionalVolatility: { low: 'Stable', high: 'High' },
-};
-
-const DIMENSION_DISPLAY: Record<string, string> = {
-  riskTolerance: 'Risk Tolerance',
-  timePreference: 'Time Preference',
-  socialDependency: 'Social Dependency',
-  learningStyle: 'Learning Style',
-  decisionSpeed: 'Decision Speed',
-  emotionalVolatility: 'Emotional Volatility',
-};
 
 function formatNumber(n: number): string {
   return n.toLocaleString('en-US');

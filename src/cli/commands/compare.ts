@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'fs';
 import { join, extname, basename, resolve } from 'path';
 import { api, MonteAPIError } from '../api.js';
+import { DIMENSION_DISPLAY, DIMENSION_KEYS } from '../dimensionMetadata.js';
 import OpenAI from 'openai';
 import { dimText, icons, infoLabel, sectionHeader, valueText } from '../styles.js';
 import type { AggregatedResults, OutcomeDistribution, StratifiedBreakdown, SimulationStatistics, Histogram } from '../../simulation/types.js';
@@ -69,23 +70,6 @@ interface DivergentSignal {
   delta: number;
 }
 
-const DIMENSION_DISPLAY: Record<string, string> = {
-  riskTolerance: 'Risk Tolerance',
-  timePreference: 'Time Preference',
-  emotionalVolatility: 'Emotional Volatility',
-  decisionSpeed: 'Decision Speed',
-  socialDependency: 'Social Dependency',
-  learningStyle: 'Learning Style',
-};
-
-const DIMENSION_KEYS = [
-  'riskTolerance',
-  'timePreference',
-  'emotionalVolatility',
-  'decisionSpeed',
-  'socialDependency',
-  'learningStyle',
-];
 
 function walkDirectory(dirPath: string): DiscoveredFile[] {
   const files: DiscoveredFile[] = [];

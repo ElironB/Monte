@@ -53,6 +53,51 @@ npm run cli:dev -- generate "25 year old crypto trader, YOLO mentality, high ris
 
 Then ingest/build/simulate each persona separately, or use `compare` for an A/B-style workflow.
 
+## What the CLI output looks like
+
+Here is a realistic example of the kind of output Monte produces from a completed simulation:
+
+```bash
+$ npm run cli:dev -- simulate "should I quit my job to start a company?" --wait
+Parsed simulation:
+  Scenario: startup_founding
+  Name: Should I quit my job to start a company?
+
+Creating simulation "Should I quit my job to start a company?" with 1000 clones...
+✓ Simulation created
+  Simulation ID: 8d1f9b2e-2a4f-4d9f-8b7a-1d6af9d3b4c2
+  Status: pending
+  Clones: 1000
+
+Waiting for completion...
+Progress: [████████████████████████████████████████] 100% (1000/1000 clones, 10/10 batches)
+✓ Simulation complete!
+  Success Rate: 41.2%
+
+$ npm run cli:dev -- simulate results 8d1f9b2e-2a4f-4d9f-8b7a-1d6af9d3b4c2
+
+Simulation Results
+
+Outcome Distribution
+  Success: 41.2%
+  Failure: 34.7%
+  Neutral: 24.1%
+
+Statistics
+  Success Rate: 41.2%
+  Mean Capital: $184000
+  Mean Health: 73.0%
+  Mean Happiness: 68.0%
+  Avg Duration: 38.4 months
+
+Stratified Breakdown
+  Edge Cases: 100 clones avg outcome: 0.61
+  Typical: 700 clones avg outcome: 0.24
+  Central: 200 clones avg outcome: 0.31
+```
+
+If you record evidence and rerun the simulation, Monte also prints deltas showing how the recommendation changed after new information came in.
+
 ## What Monte does
 
 - Ingests exported files and notes from multiple personal data sources

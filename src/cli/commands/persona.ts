@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { api } from '../api.js';
+import { DIMENSION_KEYS } from '../dimensionMetadata.js';
 import {
   dimText,
   dimensionColor,
@@ -11,14 +12,7 @@ import {
   valueText,
 } from '../styles.js';
 
-const DIMENSION_NAMES = new Set([
-  'riskTolerance',
-  'timePreference',
-  'socialDependency',
-  'learningStyle',
-  'decisionSpeed',
-  'emotionalVolatility',
-]);
+const DIMENSION_NAMES = new Set(DIMENSION_KEYS);
 
 function divider(width: number): string {
   return chalk.dim('─'.repeat(width));
