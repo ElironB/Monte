@@ -35,7 +35,9 @@ interface DoctorRuntimeSettings {
   apiUrl: string;
   batchSize: number;
   workerConcurrency: number;
+  decisionConcurrency: number;
   cloneConcurrency: number;
+  activeFrontier: number;
   decisionBatchSize: number;
   decisionBatchFlushMs: number;
   llmRpmLimit: number | null;
@@ -137,7 +139,9 @@ export function getDoctorRuntimeSettings(): DoctorRuntimeSettings {
     apiUrl,
     batchSize: runtime.batchSize,
     workerConcurrency: runtime.workerConcurrency,
+    decisionConcurrency: runtime.decisionConcurrency,
     cloneConcurrency: runtime.cloneConcurrency,
+    activeFrontier: runtime.activeFrontier,
     decisionBatchSize: runtime.decisionBatchSize,
     decisionBatchFlushMs: runtime.decisionBatchFlushMs,
     llmRpmLimit: runtime.llmRpmLimit ?? null,
@@ -299,7 +303,9 @@ function renderRuntimeSettings(runtime: DoctorRuntimeSettings): void {
   console.log(`  ${infoLabel('API URL:')} ${runtime.apiUrl}`);
   console.log(`  ${infoLabel('Batch Size:')} ${runtime.batchSize}`);
   console.log(`  ${infoLabel('Worker Concurrency:')} ${runtime.workerConcurrency}`);
+  console.log(`  ${infoLabel('Decision Concurrency:')} ${runtime.decisionConcurrency}`);
   console.log(`  ${infoLabel('Clone Concurrency:')} ${runtime.cloneConcurrency}`);
+  console.log(`  ${infoLabel('Active Frontier:')} ${runtime.activeFrontier}`);
   console.log(`  ${infoLabel('Decision Batch Size:')} ${runtime.decisionBatchSize}`);
   console.log(`  ${infoLabel('Decision Flush:')} ${runtime.decisionBatchFlushMs}ms`);
   console.log(`  ${infoLabel('LLM RPM Limit:')} ${rpmText}`);

@@ -44,6 +44,7 @@ export function buildProgressResponse(options: {
     progress?: number;
     completedBatches?: number;
     cloneCount: number;
+    batchSizeUsed?: number | null;
     error?: string;
   };
   parsed: Record<string, unknown> | null;
@@ -81,7 +82,9 @@ export function buildProgressResponse(options: {
     aggregationStage: snapshot?.aggregationStage ?? aggregationStage,
     progress: getNumberField(parsed, 'progress') ?? snapshot?.progress ?? simulation.progress ?? 0,
     completedBatches: getNumberField(parsed, 'completedBatches') ?? simulation.completedBatches ?? 0,
-    totalBatches: Math.ceil(simulation.cloneCount / config.simulation.batchSize),
+    totalBatches: Math.ceil(
+      simulation.cloneCount / Math.max(1, simulation.batchSizeUsed ?? config.simulation.batchSize),
+    ),
     cloneCount: simulation.cloneCount,
     processedClones: liveProcessedClones ?? 0,
     error: getStringField(parsed, 'error') ?? simulation.error,
@@ -89,6 +92,11 @@ export function buildProgressResponse(options: {
     batchProcessedClones: getNumberField(parsed, 'batchProcessedClones'),
     batchCloneCount: getNumberField(parsed, 'batchCloneCount'),
     estimatedTimeRemaining: getNumberField(parsed, 'estimatedTimeRemaining'),
+    activeFrontier: getNumberField(parsed, 'activeFrontier'),
+    waitingDecisions: getNumberField(parsed, 'waitingDecisions'),
+    resolvedDecisions: getNumberField(parsed, 'resolvedDecisions'),
+    estimatedDecisionCount: getNumberField(parsed, 'estimatedDecisionCount'),
+    localStepDurationMs: getNumberField(parsed, 'localStepDurationMs'),
     lastUpdated: getStringField(parsed, 'lastUpdated'),
   };
 }
@@ -187,10 +195,17 @@ async function streamRoutes(fastify: FastifyInstance) {
         progress: number;
         completedBatches: number;
         cloneCount: number;
+        batchSizeUsed: number | null;
         error?: string;
       }>(
         `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
-         RETURN s.id as id, s.status as status, s.progress as progress, s.completedBatches as completedBatches, s.cloneCount as cloneCount, s.error as error`,
+         RETURN s.id as id,
+                s.status as status,
+                s.progress as progress,
+                s.completedBatches as completedBatches,
+                s.cloneCount as cloneCount,
+                s.batchSizeUsed as batchSizeUsed,
+                s.error as error`,
         { userId, simId: id }
       );
 
@@ -243,7 +258,9 @@ async function streamRoutes(fastify: FastifyInstance) {
         phaseProgress: fallbackSnapshot.phaseProgress,
         progress: simulation.progress ?? fallbackSnapshot.progress,
         completedBatches: simulation.completedBatches ?? 0,
-        totalBatches: Math.ceil(simulation.cloneCount / config.simulation.batchSize),
+        totalBatches: Math.ceil(
+          simulation.cloneCount / Math.max(1, simulation.batchSizeUsed ?? config.simulation.batchSize),
+        ),
         cloneCount: simulation.cloneCount,
         error: simulation.error,
       };

@@ -1,5 +1,8 @@
-import { describe, expect, test } from 'vitest';
-import { ForkEvaluator } from '../src/simulation/forkEvaluator.js';
+import { describe, expect, test, vi } from 'vitest';
+import {
+  BatchEvaluationItem,
+  ForkEvaluator,
+} from '../src/simulation/forkEvaluator.js';
 import { DecisionNode } from '../src/simulation/types.js';
 
 const decisionNode: DecisionNode = {
@@ -13,6 +16,38 @@ const decisionNode: DecisionNode = {
 };
 
 describe('ForkEvaluator JSON parsing', () => {
+  function createBatchItems(count: number): BatchEvaluationItem[] {
+    return Array.from({ length: count }, (_, index) => ({
+      index,
+      requestId: `case_${index + 1}`,
+      request: {
+        cloneParams: {} as any,
+        decisionNode,
+        state: {
+          capital: 10000,
+          health: 0.8,
+          happiness: 0.7,
+          timeElapsed: 1,
+          metrics: {},
+          decisions: [],
+        } as any,
+        scenario: {
+          id: 'custom',
+          name: 'Custom',
+          graph: [],
+          initialState: {} as any,
+          timeframe: 'x',
+          description: 'x',
+          entryNodeId: 'start',
+        },
+      },
+      complexity: 0.4 + (index * 0.1),
+      useReasoning: false,
+      nodeId: decisionNode.id,
+      batchWaitMs: 0,
+    }));
+  }
+
   test('extracts the first complete JSON object from noisy content', () => {
     const evaluator = new ForkEvaluator();
 
@@ -40,42 +75,84 @@ describe('ForkEvaluator JSON parsing', () => {
     expect(result.confidence).toBe(0.7);
   });
 
-  test('parses batched decisions keyed by request id', () => {
+  test('parses compact batched decisions in case order', () => {
     const evaluator = new ForkEvaluator();
+    const items = createBatchItems(2);
 
     const result = (evaluator as any).parseBatchLLMResponse(
-      '{"decisions":[{"requestId":"case_1","chosenOptionId":"partial_commit","reasoning":"Balanced persona hedges exposure.","confidence":0.91},{"requestId":"case_2","chosenOptionId":"adapt","reasoning":"Adaptive profile prefers flexibility.","confidence":0.82}]}',
-      [
-        {
-          requestId: 'case_1',
-          request: {
-            cloneParams: {} as any,
-            decisionNode,
-            state: { metrics: {} } as any,
-            scenario: { id: 'custom', name: 'Custom', graph: [], initialState: {} as any, timeframe: 'x', description: 'x', entryNodeId: 'start' },
-          },
-          complexity: 0.4,
-        },
-        {
-          requestId: 'case_2',
-          request: {
-            cloneParams: {} as any,
-            decisionNode,
-            state: { metrics: {} } as any,
-            scenario: { id: 'custom', name: 'Custom', graph: [], initialState: {} as any, timeframe: 'x', description: 'x', entryNodeId: 'start' },
-          },
-          complexity: 0.5,
-        },
-      ],
+      '{"d":[{"o":1,"c":0.91,"r":"Balanced persona hedges exposure."},{"o":0,"c":0.82,"r":"Adaptive profile prefers flexibility."}]}',
+      items,
     );
 
-    expect(result.get('case_1')).toMatchObject({
+    expect(result.get(0)).toMatchObject({
       chosenOptionId: 'partial_commit',
       confidence: 0.91,
     });
-    expect(result.get('case_2')).toMatchObject({
+    expect(result.get(1)).toMatchObject({
       chosenOptionId: 'adapt',
       confidence: 0.82,
     });
+  });
+
+  test('parses legacy batched decisions keyed by request id', () => {
+    const evaluator = new ForkEvaluator();
+    const items = createBatchItems(2);
+
+    const result = (evaluator as any).parseBatchLLMResponse(
+      '{"decisions":[{"requestId":"case_1","chosenOptionId":"partial_commit","reasoning":"Balanced persona hedges exposure.","confidence":0.91},{"requestId":"case_2","chosenOptionId":"adapt","reasoning":"Adaptive profile prefers flexibility.","confidence":0.82}]}',
+      items,
+    );
+
+    expect(result.get(0)).toMatchObject({
+      chosenOptionId: 'partial_commit',
+      confidence: 0.91,
+    });
+    expect(result.get(1)).toMatchObject({
+      chosenOptionId: 'adapt',
+      confidence: 0.82,
+    });
+  });
+
+  test('keeps partial valid batched decisions and skips malformed entries', () => {
+    const evaluator = new ForkEvaluator();
+    const items = createBatchItems(2);
+
+    const result = (evaluator as any).parseBatchLLMResponse(
+      '{"d":[{"o":1,"c":0.91,"r":"Balanced persona hedges exposure."},"not-an-object"]}',
+      items,
+    );
+
+    expect(result.size).toBe(1);
+    expect(result.get(0)).toMatchObject({
+      chosenOptionId: 'partial_commit',
+      confidence: 0.91,
+    });
+    expect(result.has(1)).toBe(false);
+  });
+
+  test('retries, splits, and only falls back to single calls for unresolved leaf batches', async () => {
+    const evaluator = new ForkEvaluator();
+    const items = createBatchItems(2);
+
+    const batchSpy = vi.spyOn(evaluator as any, 'callBatchLLM')
+      .mockRejectedValue(new Error('LLM returned an empty batched decision payload'));
+    const singleSpy = vi.spyOn(evaluator as any, 'callSingleLLM')
+      .mockImplementation(async (_request: unknown, complexity: number) => ({
+        chosenOptionId: 'adapt',
+        reasoning: 'single fallback',
+        confidence: 0.81,
+        complexity,
+      }));
+
+    const result = await (evaluator as any).resolveBatchItems(items, 0);
+    const telemetry = evaluator.getTelemetry().llm;
+
+    expect(result.size).toBe(2);
+    expect(batchSpy).toHaveBeenCalledTimes(2);
+    expect(singleSpy).toHaveBeenCalledTimes(2);
+    expect(telemetry.batchRetryCount).toBe(1);
+    expect(telemetry.splitBatchCount).toBe(1);
+    expect(telemetry.singleFallbackFromBatchCount).toBe(2);
+    expect(evaluator.getPreferredBatchSize('custom', false, 20)).toBe(1);
   });
 });

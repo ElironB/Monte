@@ -134,6 +134,11 @@ export type SimulationProgressResult = {
   batchProcessedClones?: number;
   batchCloneCount?: number;
   estimatedTimeRemaining?: number;
+  activeFrontier?: number;
+  waitingDecisions?: number;
+  resolvedDecisions?: number;
+  estimatedDecisionCount?: number;
+  localStepDurationMs?: number;
   lastUpdated?: string;
   error?: string;
 };
@@ -362,6 +367,10 @@ simulationCommands
       if (currentBatch) {
         console.log(`  ${infoLabel('Live batch:')} ${dimText(currentBatch)}`);
       }
+      const frontierDetails = formatFrontierDetails(progress);
+      if (frontierDetails) {
+        console.log(`  ${infoLabel('Frontier:')} ${dimText(frontierDetails)}`);
+      }
       if (progress.estimatedTimeRemaining) {
         console.log(`  ${infoLabel('ETA:')} ${dimText(formatDuration(progress.estimatedTimeRemaining))}`);
       }
@@ -442,12 +451,17 @@ simulationCommands
         console.log(`  ${infoLabel('Execution work:')} ${dimText(formatDurationMs(telemetry.executionDurationMs))}`);
         console.log(`  ${infoLabel('Persistence work:')} ${dimText(formatDurationMs(telemetry.persistenceDurationMs))}`);
         console.log(`  ${infoLabel('Aggregation:')} ${dimText(formatDurationMs(telemetry.aggregationDurationMs))}`);
+        console.log(`  ${infoLabel('Decision concurrency:')} ${valueText(telemetry.decisionConcurrency)}`);
+        console.log(`  ${infoLabel('Active frontier:')} ${valueText(telemetry.activeFrontier)} ${dimText(`(peak ${telemetry.peakActiveFrontier}, waiting peak ${telemetry.peakWaitingDecisions})`)}`);
+        console.log(`  ${infoLabel('Configured batch:')} ${valueText(`${telemetry.decisionBatchSize} clones`)} ${dimText(`(flush ${telemetry.decisionBatchFlushMs}ms)`)}`);
         console.log(`  ${infoLabel('LLM decisions:')} ${valueText(telemetry.llm.totalDecisionEvaluations)} ${dimText(`(${telemetry.llm.batchCalls} batched calls, ${telemetry.llm.singleCalls} single calls)`)}`);
         console.log(`  ${infoLabel('Avg batch size:')} ${valueText(averageBatchSize > 0 ? averageBatchSize.toFixed(1) : 'n/a')}`);
         console.log(`  ${infoLabel('LLM chat time:')} ${dimText(formatDurationMs(telemetry.llm.totalChatDurationMs))}`);
+        console.log(`  ${infoLabel('Local step time:')} ${dimText(formatDurationMs(telemetry.localStepDurationMs))}`);
         console.log(`  ${infoLabel('Limiter wait:')} ${dimText(formatDurationMs(telemetry.rateLimiter.totalWaitMs))}`);
         console.log(`  ${infoLabel('Embedding time:')} ${dimText(formatDurationMs(telemetry.embeddings.totalDurationMs))}`);
         console.log(`  ${infoLabel('Retries / 429s:')} ${valueText(`${telemetry.llm.rateLimitRetries}/${telemetry.llm.rateLimitErrors}`)}`);
+        console.log(`  ${infoLabel('Batch recovery:')} ${valueText(`${telemetry.llm.batchRetryCount} retries, ${telemetry.llm.splitBatchCount} splits, ${telemetry.llm.singleFallbackFromBatchCount} leaf fallbacks`)}`);
 
         if (telemetry.llm.nodeStats.length > 0) {
           console.log(`  ${infoLabel('Slow nodes:')} ${dimText(telemetry.llm.nodeStats.slice(0, 3).map((node) =>
@@ -698,6 +712,9 @@ export async function waitForSimulationData(
           progress.completedBatches,
           progress.currentBatch ?? '',
           progress.batchProcessedClones ?? '',
+          progress.activeFrontier ?? '',
+          progress.waitingDecisions ?? '',
+          progress.resolvedDecisions ?? '',
         ].join(':');
 
         if (currentMarker === lastMarker) {
@@ -760,8 +777,16 @@ function formatProgressSummary(progress: SimulationProgressResult): string {
   const cloneSummary = processedClones === undefined
     ? `${progress.cloneCount} clones`
     : `${processedClones}/${progress.cloneCount} clones`;
+  const parts = [
+    cloneSummary,
+    `${progress.completedBatches}/${progress.totalBatches} batches`,
+  ];
+  const frontierDetails = formatFrontierDetails(progress);
+  if (frontierDetails) {
+    parts.push(frontierDetails);
+  }
 
-  return `${cloneSummary}, ${progress.completedBatches}/${progress.totalBatches} batches`;
+  return parts.join(', ');
 }
 
 function formatPhaseLabel(progress: SimulationProgressResult): string {
@@ -782,6 +807,9 @@ function formatPhaseLabel(progress: SimulationProgressResult): string {
 
 function buildStallMessage(progress: SimulationProgressResult, stagnantPolls: number): string {
   const stallDuration = stagnantPolls * 2;
+  const waitingDetail = typeof progress.waitingDecisions === 'number' && progress.waitingDecisions > 0
+    ? ` ${progress.waitingDecisions} batched decision${progress.waitingDecisions === 1 ? '' : 's'} ${progress.waitingDecisions === 1 ? 'is' : 'are'} still in flight.`
+    : '';
 
   switch (progress.phase) {
     case 'aggregating':
@@ -792,7 +820,7 @@ function buildStallMessage(progress: SimulationProgressResult, stagnantPolls: nu
       return `No progress update for ~${stallDuration}s. The simulation is still queued for execution.`;
     case 'executing':
     default:
-      return `No progress update for ~${stallDuration}s. Simulation may be waiting on workers or queued LLM calls.`;
+      return `No progress update for ~${stallDuration}s. Simulation may be waiting on workers or queued LLM calls.${waitingDetail}`;
   }
 }
 
@@ -807,4 +835,26 @@ function formatCurrentBatch(progress: SimulationProgressResult): string | null {
   }
 
   return batchLabel;
+}
+
+function formatFrontierDetails(progress: SimulationProgressResult): string | null {
+  const details: string[] = [];
+
+  if (typeof progress.activeFrontier === 'number') {
+    details.push(`${progress.activeFrontier} active`);
+  }
+
+  if (typeof progress.waitingDecisions === 'number') {
+    details.push(`${progress.waitingDecisions} waiting`);
+  }
+
+  if (
+    typeof progress.resolvedDecisions === 'number'
+    && typeof progress.estimatedDecisionCount === 'number'
+    && progress.estimatedDecisionCount > 0
+  ) {
+    details.push(`${progress.resolvedDecisions}/${progress.estimatedDecisionCount} decisions`);
+  }
+
+  return details.length > 0 ? details.join(' · ') : null;
 }

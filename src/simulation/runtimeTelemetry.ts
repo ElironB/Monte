@@ -15,9 +15,13 @@ export function createEmptyNodeTelemetry(nodeId: string): SimulationNodeRuntimeT
     singleCalls: 0,
     standardCalls: 0,
     reasoningCalls: 0,
+    splitRetries: 0,
     cloneDecisions: 0,
     totalDurationMs: 0,
+    totalModelDurationMs: 0,
+    totalLocalStepDurationMs: 0,
     totalBatchWaitMs: 0,
+    totalBatchSize: 0,
     maxBatchSize: 0,
   };
 }
@@ -29,11 +33,20 @@ export function createEmptyLlmTelemetry(): SimulationLlmRuntimeTelemetry {
     singleCalls: 0,
     standardCalls: 0,
     reasoningCalls: 0,
+    batchRetryCount: 0,
+    splitBatchCount: 0,
+    singleFallbackFromBatchCount: 0,
+    invalidBatchPayloadCount: 0,
+    batchParseFailureCount: 0,
     repairCalls: 0,
     fallbackHeuristicCount: 0,
     rateLimitErrors: 0,
     rateLimitRetries: 0,
     totalTokens: 0,
+    batchPromptTokens: 0,
+    batchResponseTokens: 0,
+    singlePromptTokens: 0,
+    singleResponseTokens: 0,
     totalChatDurationMs: 0,
     totalRepairDurationMs: 0,
     totalBatchWaitMs: 0,
@@ -71,7 +84,12 @@ export function createEmptySimulationRuntimeTelemetry(): SimulationRuntimeTeleme
     aggregationDurationMs: 0,
     cloneCount: 0,
     batchCount: 0,
+    decisionConcurrency: 0,
     cloneConcurrency: 0,
+    activeFrontier: 0,
+    peakActiveFrontier: 0,
+    peakWaitingDecisions: 0,
+    localStepDurationMs: 0,
     decisionBatchSize: 0,
     decisionBatchFlushMs: 0,
     llmRpmLimit: 0,
@@ -87,9 +105,13 @@ function mergeNodeTelemetry(target: MutableNodeMap, source: SimulationNodeRuntim
   current.singleCalls += source.singleCalls;
   current.standardCalls += source.standardCalls;
   current.reasoningCalls += source.reasoningCalls;
+  current.splitRetries += source.splitRetries;
   current.cloneDecisions += source.cloneDecisions;
   current.totalDurationMs += source.totalDurationMs;
+  current.totalModelDurationMs += source.totalModelDurationMs;
+  current.totalLocalStepDurationMs += source.totalLocalStepDurationMs;
   current.totalBatchWaitMs += source.totalBatchWaitMs;
+  current.totalBatchSize += source.totalBatchSize;
   current.maxBatchSize = Math.max(current.maxBatchSize, source.maxBatchSize);
   target.set(source.nodeId, current);
 }
@@ -119,7 +141,12 @@ export function mergeSimulationRuntimeTelemetry(
     merged.aggregationDurationMs = Math.max(merged.aggregationDurationMs, item.aggregationDurationMs);
     merged.cloneCount += item.cloneCount;
     merged.batchCount += item.batchCount;
+    merged.decisionConcurrency = Math.max(merged.decisionConcurrency, item.decisionConcurrency);
     merged.cloneConcurrency = Math.max(merged.cloneConcurrency, item.cloneConcurrency);
+    merged.activeFrontier = Math.max(merged.activeFrontier, item.activeFrontier);
+    merged.peakActiveFrontier = Math.max(merged.peakActiveFrontier, item.peakActiveFrontier);
+    merged.peakWaitingDecisions = Math.max(merged.peakWaitingDecisions, item.peakWaitingDecisions);
+    merged.localStepDurationMs += item.localStepDurationMs;
     merged.decisionBatchSize = Math.max(merged.decisionBatchSize, item.decisionBatchSize);
     merged.decisionBatchFlushMs = Math.max(merged.decisionBatchFlushMs, item.decisionBatchFlushMs);
     merged.llmRpmLimit = Math.max(merged.llmRpmLimit, item.llmRpmLimit);
@@ -129,11 +156,20 @@ export function mergeSimulationRuntimeTelemetry(
     merged.llm.singleCalls += item.llm.singleCalls;
     merged.llm.standardCalls += item.llm.standardCalls;
     merged.llm.reasoningCalls += item.llm.reasoningCalls;
+    merged.llm.batchRetryCount += item.llm.batchRetryCount;
+    merged.llm.splitBatchCount += item.llm.splitBatchCount;
+    merged.llm.singleFallbackFromBatchCount += item.llm.singleFallbackFromBatchCount;
+    merged.llm.invalidBatchPayloadCount += item.llm.invalidBatchPayloadCount;
+    merged.llm.batchParseFailureCount += item.llm.batchParseFailureCount;
     merged.llm.repairCalls += item.llm.repairCalls;
     merged.llm.fallbackHeuristicCount += item.llm.fallbackHeuristicCount;
     merged.llm.rateLimitErrors += item.llm.rateLimitErrors;
     merged.llm.rateLimitRetries += item.llm.rateLimitRetries;
     merged.llm.totalTokens += item.llm.totalTokens;
+    merged.llm.batchPromptTokens += item.llm.batchPromptTokens;
+    merged.llm.batchResponseTokens += item.llm.batchResponseTokens;
+    merged.llm.singlePromptTokens += item.llm.singlePromptTokens;
+    merged.llm.singleResponseTokens += item.llm.singleResponseTokens;
     merged.llm.totalChatDurationMs += item.llm.totalChatDurationMs;
     merged.llm.totalRepairDurationMs += item.llm.totalRepairDurationMs;
     merged.llm.totalBatchWaitMs += item.llm.totalBatchWaitMs;

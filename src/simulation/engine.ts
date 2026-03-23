@@ -1,23 +1,18 @@
 // Monte Carlo Simulation Engine
 // Executes clones through decision graphs with world agents and chaos injection
 
-import { 
+import {
+  CloneExecutionContext,
   CloneParameters,
-  Scenario,
-  SimulationState,
+  CloneResult,
   DecisionNode,
   EventNode,
-  OutcomeNode,
-  GraphNode,
-  CloneExecutionContext,
-  CloneResult,
   LLMEvaluation,
+  OutcomeNode,
+  Scenario,
+  SimulationState,
 } from './types.js';
-import { 
-  findNode, 
-  isTerminalNode, 
-  categorizeOutcome,
-} from './decisionGraph.js';
+import { categorizeOutcome, findNode } from './decisionGraph.js';
 import {
   applyEffectsToState,
   applyOutcomeNodeResults,
@@ -31,14 +26,21 @@ import {
   calculateEventProbability,
   selectEventOutcome,
 } from './causalModel.js';
-import { createForkEvaluator, type ForkEvaluator } from './forkEvaluator.js';
-import { chaosInjector, createChaosInjector } from './chaosInjector.js';
+import {
+  createForkEvaluator,
+  type BatchEvaluationItem,
+  type ForkEvaluator,
+} from './forkEvaluator.js';
+import { type ChaosInjector, createChaosInjector } from './chaosInjector.js';
 import { FinancialWorldAgent } from './worldAgents/financial.js';
 import { CareerWorldAgent } from './worldAgents/career.js';
 import { EducationWorldAgent } from './worldAgents/education.js';
 import { SocialWorldAgent } from './worldAgents/social.js';
 import { logger } from '../utils/logger.js';
-import { createConcurrencyLimiter, type RateLimiter } from '../utils/rateLimiter.js';
+import {
+  type ConcurrencyLimiter,
+  type RateLimiter,
+} from '../utils/rateLimiter.js';
 import { type MasterPersona } from '../persona/personaCompressor.js';
 import { buildSimulationPersonaRuntimeProfile } from './personaRuntime.js';
 
@@ -49,22 +51,81 @@ interface WorldAgents {
   social: SocialWorldAgent;
 }
 
-interface SimulationConfig {
+export interface SimulationConfig {
   useLLM: boolean;
   useChaos: boolean;
   maxLLMCalls: number;
   logDecisions: boolean;
-  rateLimiter?: RateLimiter;
-  /** Persona master data — supplies psychology risk flags and llmContextSummary to ForkEvaluator */
+  rateLimiter?: RateLimiter | null;
+  requestLimiter?: ConcurrencyLimiter | null;
   masterPersona?: MasterPersona;
 }
 
+export interface CloneStratification {
+  percentile: number;
+  category: 'edge' | 'central' | 'typical';
+}
+
+export interface SimulationCloneInput {
+  cloneId: string;
+  parameters: CloneParameters;
+  stratification: CloneStratification;
+  startingState?: SimulationState;
+}
+
+interface WaitingDecision {
+  session: ActiveCloneSession;
+  node: DecisionNode;
+  request: {
+    cloneParams: CloneParameters;
+    decisionNode: DecisionNode;
+    state: SimulationState;
+    scenario: Scenario;
+    masterPersona?: MasterPersona;
+  };
+  complexity: number;
+  useReasoning: boolean;
+}
+
+export interface ActiveCloneSession {
+  cloneId: string;
+  stratification: CloneStratification;
+  startedAtMs: number;
+  iterations: number;
+  context: CloneExecutionContext;
+  worldAgents: WorldAgents;
+  chaos: ChaosInjector;
+  waitingDecision: WaitingDecision | null;
+}
+
+interface SessionAdvanceResult {
+  waitingDecision: WaitingDecision | null;
+  completed: boolean;
+  localStepDurationMs: number;
+}
+
+export interface SimulationExecutionProgress {
+  completedClones: number;
+  totalClones: number;
+  activeFrontier: number;
+  waitingDecisions: number;
+  resolvedDecisions: number;
+  estimatedDecisionCount: number;
+  localStepDurationMs: number;
+}
+
+const MAX_ITERATIONS = 100;
+
 export class SimulationEngine {
-  private scenario: Scenario;
-  private config: SimulationConfig;
-  private llmCallsUsed: number = 0;
-  private evaluator: ForkEvaluator;
-  private masterPersona?: MasterPersona;
+  private readonly scenario: Scenario;
+  private readonly config: SimulationConfig;
+  private llmCallsUsed = 0;
+  private readonly evaluator: ForkEvaluator;
+  private readonly masterPersona?: MasterPersona;
+  private localStepDurationMs = 0;
+  private peakActiveFrontier = 0;
+  private peakWaitingDecisions = 0;
+  private readonly decisionNodeCount: number;
 
   constructor(scenario: Scenario, config: Partial<SimulationConfig> = {}) {
     this.scenario = scenario;
@@ -75,258 +136,512 @@ export class SimulationEngine {
       logDecisions: false,
       ...config,
     };
-    this.evaluator = createForkEvaluator({ rateLimiter: this.config.rateLimiter ?? null });
+    this.evaluator = createForkEvaluator({
+      rateLimiter: this.config.rateLimiter ?? null,
+      requestLimiter: this.config.requestLimiter ?? null,
+    });
     this.masterPersona = config.masterPersona;
+    this.decisionNodeCount = Math.max(
+      1,
+      this.scenario.graph.filter((node) => node.type === 'decision').length,
+    );
   }
 
-  // Execute a single clone through the simulation
   async executeClone(
     cloneId: string,
     parameters: CloneParameters,
-    stratification: { percentile: number; category: 'edge' | 'central' | 'typical' },
-    startingState?: SimulationState
+    stratification: CloneStratification,
+    startingState?: SimulationState,
   ): Promise<CloneResult> {
-    const startTime = Date.now();
-    
-    // Initialize world agents based on scenario type
-    const worldAgents = this.initializeWorldAgents(parameters);
-    
-    // Initialize state
-    const state: SimulationState = refreshBeliefState(
-      cloneSimulationState(startingState ?? this.scenario.initialState),
-    );
-    
-    // Create execution context
-    const context: CloneExecutionContext = {
-      cloneId,
-      parameters,
-      scenario: this.scenario,
-      state,
-      currentNodeId: this.scenario.entryNodeId,
-      path: [],
-      complete: false,
-    };
-
-    // Initialize chaos injector for this clone
-    const chaos = this.config.useChaos ? createChaosInjector(true) : createChaosInjector(false);
-
-    // Execute simulation loop
-    let iterations = 0;
-    const maxIterations = 100;
-
-    while (!context.complete && iterations < maxIterations) {
-      iterations++;
-      
-      // Get current node
-      const currentNode = findNode(this.scenario.graph, context.currentNodeId);
-      if (!currentNode) {
-        logger.error({ nodeId: context.currentNodeId }, 'Node not found, ending simulation');
-        break;
-      }
-
-      this.syncWorldAgentMetrics(context, worldAgents);
-
-      // Add to path
-      context.path.push(context.currentNodeId);
-
-      // Execute node
-      if (currentNode.type === 'decision') {
-        await this.executeDecisionNode(context, currentNode as DecisionNode, worldAgents);
-      } else if (currentNode.type === 'event') {
-        this.executeEventNode(context, currentNode as EventNode, worldAgents);
-      } else if (currentNode.type === 'outcome') {
-        this.executeOutcomeNode(context, currentNode as OutcomeNode);
-      }
-
-      // Apply world agent effects
-      this.applyWorldAgents(context, worldAgents);
-      this.syncWorldAgentMetrics(context, worldAgents);
-
-      // Check for chaos events
-      if (this.config.useChaos) {
-        const chaosResult = chaos.inject(context);
-        if (chaosResult.occurred && chaosResult.event) {
-          context.state = chaos.applyEvent(context.state, chaosResult.event);
-          context.state.events.push({
-            nodeId: `chaos:${chaosResult.event.id}`,
-            occurred: true,
-            outcomeId: chaosResult.event.id,
-            timestamp: Date.now(),
-            source: 'chaos',
-            description: chaosResult.event.description,
-          });
-          
-          if (this.config.logDecisions) {
-            logger.debug({
-              cloneId,
-              event: chaosResult.event.id,
-              probability: chaosResult.modifiedProbability,
-            }, 'Chaos event applied');
-          }
-        }
-      }
-
-      // Advance time if needed (simplified - advance 1 month per decision)
-      if (currentNode.type === 'decision') {
-        context.state.timeElapsed += 1;
-        
-        // Advance world agents
-        worldAgents.financial.advanceTime(1);
-        worldAgents.career.advanceTime(1);
-        worldAgents.education.advanceTime(1);
-        worldAgents.social.advanceTime(1);
-      }
-    }
-
-    const duration = Date.now() - startTime;
-    const outcomeBucket = categorizeOutcome(context.state, this.scenario.id);
-
-    // Create result
-    const result: CloneResult = {
+    const session = this.createSession({
       cloneId,
       parameters,
       stratification,
-      path: context.path,
-      finalState: context.state,
+      startingState,
+    });
+
+    while (!session.context.complete) {
+      const advance = this.advanceSessionToDecision(session);
+      this.localStepDurationMs += advance.localStepDurationMs;
+
+      if (!advance.waitingDecision) {
+        if (advance.completed) {
+          break;
+        }
+        continue;
+      }
+
+      if (!this.config.useLLM) {
+        this.applyDecisionEvaluation(session, {
+          ...this.heuristicDecision(session.context, advance.waitingDecision.node),
+          complexity: advance.waitingDecision.complexity,
+        }, false);
+        continue;
+      }
+
+      let evaluation: LLMEvaluation;
+      let evaluatedByLLM = true;
+      try {
+        evaluation = await this.evaluator.evaluateForkBatch([
+          this.createBatchItem(advance.waitingDecision, 0),
+        ]).then((result) => result.get(0) as LLMEvaluation);
+      } catch (error) {
+        evaluatedByLLM = false;
+        const waitingDecision = advance.waitingDecision;
+        evaluation = await this.evaluator
+          .heuristicEvaluation(
+            waitingDecision.request,
+            waitingDecision.complexity,
+          )
+          .catch(() => ({
+            ...this.heuristicDecision(session.context, waitingDecision.node),
+            complexity: waitingDecision.complexity,
+          }));
+
+        logger.warn(
+          {
+            cloneId,
+            nodeId: waitingDecision.node.id,
+            error: (error as Error).message,
+          },
+          'LLM evaluation failed, using heuristic',
+        );
+      }
+
+      this.applyDecisionEvaluation(session, evaluation, evaluatedByLLM);
+    }
+
+    return this.finalizeSession(session);
+  }
+
+  async executeFrontierBatch(
+    clones: SimulationCloneInput[],
+    options: {
+      activeFrontier?: number;
+      decisionBatchSize?: number;
+      onProgress?: (progress: SimulationExecutionProgress) => Promise<void> | void;
+    } = {},
+  ): Promise<CloneResult[]> {
+    const results: CloneResult[] = [];
+    const pending = [...clones];
+    const activeSessions: ActiveCloneSession[] = [];
+    const frontierSize = Math.max(
+      1,
+      Math.min(
+        clones.length,
+        options.activeFrontier ?? clones.length,
+      ),
+    );
+    const decisionBatchSize = Math.max(1, options.decisionBatchSize ?? clones.length);
+    const estimatedDecisionCount = Math.max(1, clones.length * this.decisionNodeCount);
+    let resolvedDecisions = 0;
+
+    const fillFrontier = (): void => {
+      while (activeSessions.length < frontierSize && pending.length > 0) {
+        const nextClone = pending.shift();
+        if (!nextClone) {
+          break;
+        }
+        activeSessions.push(this.createSession(nextClone));
+      }
+      this.peakActiveFrontier = Math.max(this.peakActiveFrontier, activeSessions.length);
+    };
+
+    const emitProgress = async (waitingDecisions: number): Promise<void> => {
+      this.peakWaitingDecisions = Math.max(this.peakWaitingDecisions, waitingDecisions);
+      await options.onProgress?.({
+        completedClones: results.length,
+        totalClones: clones.length,
+        activeFrontier: activeSessions.length,
+        waitingDecisions,
+        resolvedDecisions,
+        estimatedDecisionCount,
+        localStepDurationMs: this.localStepDurationMs,
+      });
+    };
+
+    fillFrontier();
+    await emitProgress(0);
+
+    while (activeSessions.length > 0) {
+      const waitingDecisions: WaitingDecision[] = [];
+
+      for (let index = activeSessions.length - 1; index >= 0; index -= 1) {
+        const session = activeSessions[index];
+        const advance = this.advanceSessionToDecision(session);
+        this.localStepDurationMs += advance.localStepDurationMs;
+
+        if (advance.waitingDecision) {
+          waitingDecisions.push(advance.waitingDecision);
+        }
+
+        if (advance.completed) {
+          results.push(this.finalizeSession(session));
+          activeSessions.splice(index, 1);
+        }
+      }
+
+      fillFrontier();
+      await emitProgress(waitingDecisions.length);
+
+      if (waitingDecisions.length === 0) {
+        continue;
+      }
+
+      if (!this.config.useLLM) {
+        for (const waitingDecision of waitingDecisions) {
+          this.applyDecisionEvaluation(waitingDecision.session, {
+            ...this.heuristicDecision(waitingDecision.session.context, waitingDecision.node),
+            complexity: waitingDecision.complexity,
+          }, false);
+          resolvedDecisions += 1;
+        }
+        await emitProgress(0);
+        continue;
+      }
+
+      const grouped = new Map<string, WaitingDecision[]>();
+      for (const waitingDecision of waitingDecisions) {
+        const key = [
+          waitingDecision.request.scenario.id,
+          waitingDecision.node.id,
+          waitingDecision.useReasoning ? 'reasoning' : 'standard',
+        ].join(':');
+        const group = grouped.get(key);
+        if (group) {
+          group.push(waitingDecision);
+        } else {
+          grouped.set(key, [waitingDecision]);
+        }
+      }
+
+      const chunks = Array.from(grouped.values()).flatMap((group) => {
+        const entries: WaitingDecision[][] = [];
+        const preferredBatchSize = this.evaluator.getPreferredBatchSize(
+          group[0].request.scenario.id,
+          group[0].useReasoning,
+          decisionBatchSize,
+        );
+        for (let index = 0; index < group.length; index += preferredBatchSize) {
+          entries.push(group.slice(index, index + preferredBatchSize));
+        }
+        return entries;
+      });
+
+      const chunkResults = await Promise.all(
+        chunks.map(async (chunk) => {
+          try {
+            const evaluations = await this.evaluator.evaluateForkBatch(
+              chunk.map((waitingDecision, index) =>
+                this.createBatchItem(waitingDecision, index)),
+            );
+            return { chunk, evaluations };
+          } catch (error) {
+            logger.warn(
+              {
+                nodeId: chunk[0]?.node.id,
+                batchSize: chunk.length,
+                error: (error as Error).message,
+              },
+              'Batch evaluation failed at the scheduler level, falling back to heuristics',
+            );
+
+            return { chunk, evaluations: new Map<number, LLMEvaluation>() };
+          }
+        }),
+      );
+
+      for (const { chunk, evaluations } of chunkResults) {
+        for (let index = 0; index < chunk.length; index += 1) {
+          const waitingDecision = chunk[index];
+          const evaluation = evaluations.get(index)
+            ?? await this.evaluator
+              .heuristicEvaluation(waitingDecision.request, waitingDecision.complexity)
+              .catch(() => ({
+                ...this.heuristicDecision(waitingDecision.session.context, waitingDecision.node),
+                complexity: waitingDecision.complexity,
+              }));
+
+          this.applyDecisionEvaluation(
+            waitingDecision.session,
+            evaluation,
+            evaluations.has(index),
+          );
+          resolvedDecisions += 1;
+        }
+      }
+
+      await emitProgress(0);
+    }
+
+    return results;
+  }
+
+  getDecisionNodeCount(): number {
+    return this.decisionNodeCount;
+  }
+
+  private createSession(input: SimulationCloneInput): ActiveCloneSession {
+    const worldAgents = this.initializeWorldAgents(input.parameters);
+    const state = refreshBeliefState(
+      cloneSimulationState(input.startingState ?? this.scenario.initialState),
+    );
+
+    return {
+      cloneId: input.cloneId,
+      stratification: input.stratification,
+      startedAtMs: Date.now(),
+      iterations: 0,
+      context: {
+        cloneId: input.cloneId,
+        parameters: input.parameters,
+        scenario: this.scenario,
+        state,
+        currentNodeId: this.scenario.entryNodeId,
+        path: [],
+        complete: false,
+      },
+      worldAgents,
+      chaos: this.config.useChaos ? createChaosInjector(true) : createChaosInjector(false),
+      waitingDecision: null,
+    };
+  }
+
+  private advanceSessionToDecision(session: ActiveCloneSession): SessionAdvanceResult {
+    const startedAt = Date.now();
+
+    while (!session.context.complete && session.iterations < MAX_ITERATIONS) {
+      if (session.waitingDecision) {
+        break;
+      }
+
+      session.iterations += 1;
+      const currentNode = findNode(this.scenario.graph, session.context.currentNodeId);
+      if (!currentNode) {
+        logger.error({ nodeId: session.context.currentNodeId }, 'Node not found, ending simulation');
+        session.context.complete = true;
+        break;
+      }
+
+      this.syncWorldAgentMetrics(session.context, session.worldAgents);
+      session.context.path.push(session.context.currentNodeId);
+
+      if (currentNode.type === 'decision') {
+        session.waitingDecision = this.prepareWaitingDecision(session, currentNode);
+        break;
+      }
+
+      if (currentNode.type === 'event') {
+        this.executeEventNode(session.context, currentNode);
+      } else if (currentNode.type === 'outcome') {
+        this.executeOutcomeNode(session.context, currentNode);
+      }
+
+      this.finalizeNodeStep(session, currentNode.type);
+    }
+
+    if (session.iterations >= MAX_ITERATIONS && !session.context.complete && !session.waitingDecision) {
+      logger.warn({ cloneId: session.cloneId }, 'Clone reached max iterations, ending simulation');
+      session.context.complete = true;
+    }
+
+    return {
+      waitingDecision: session.waitingDecision,
+      completed: session.context.complete,
+      localStepDurationMs: Date.now() - startedAt,
+    };
+  }
+
+  private prepareWaitingDecision(
+    session: ActiveCloneSession,
+    node: DecisionNode,
+  ): WaitingDecision {
+    const request = {
+      cloneParams: session.context.parameters,
+      decisionNode: node,
+      state: session.context.state,
+      scenario: this.scenario,
+      masterPersona: this.masterPersona,
+    };
+
+    if (!this.config.useLLM) {
+      return {
+        session,
+        node,
+        request,
+        complexity: this.evaluator.calculateComplexity(
+          node,
+          session.context.parameters,
+          session.context.state,
+        ),
+        useReasoning: false,
+      };
+    }
+
+    const availableReasoningCalls = Math.max(0, this.config.maxLLMCalls - this.llmCallsUsed);
+    const plan = this.evaluator.createEvaluationPlan(request, availableReasoningCalls);
+
+    if (plan.useReasoning) {
+      this.llmCallsUsed += 1;
+    }
+
+    return {
+      session,
+      node,
+      request,
+      complexity: plan.complexity,
+      useReasoning: plan.useReasoning,
+    };
+  }
+
+  private createBatchItem(
+    waitingDecision: WaitingDecision,
+    index: number,
+  ): BatchEvaluationItem {
+    return {
+      index,
+      requestId: `case_${waitingDecision.session.cloneId}_${waitingDecision.node.id}_${index}`,
+      request: waitingDecision.request,
+      complexity: waitingDecision.complexity,
+      useReasoning: waitingDecision.useReasoning,
+      nodeId: waitingDecision.node.id,
+      batchWaitMs: 0,
+    };
+  }
+
+  private applyDecisionEvaluation(
+    session: ActiveCloneSession,
+    evaluation: LLMEvaluation,
+    evaluatedByLLM: boolean,
+  ): void {
+    const waitingDecision = session.waitingDecision;
+    if (!waitingDecision) {
+      return;
+    }
+
+    const { node } = waitingDecision;
+    const chosenOption = node.options.find((option) => option.id === evaluation.chosenOptionId)
+      ?? node.options[0];
+
+    if (!chosenOption) {
+      logger.error({ nodeId: node.id }, 'Decision node has no options, ending simulation');
+      session.context.complete = true;
+      session.waitingDecision = null;
+      return;
+    }
+
+    session.context.currentNodeId = chosenOption.nextNodeId;
+    applyDecisionCausalTransition(session.context.state, this.scenario.id, node.id, chosenOption.id);
+    session.context.state.decisions.push({
+      nodeId: node.id,
+      choice: chosenOption.id,
+      timestamp: Date.now(),
+      evaluatedByLLM,
+      reasoning: evaluation.reasoning,
+      confidence: evaluation.confidence,
+    });
+    session.context.state = refreshBeliefState(session.context.state);
+    session.context.state.beliefState.updateNarrative = evaluation.reasoning;
+    session.waitingDecision = null;
+
+    if (this.config.logDecisions) {
+      logger.debug(
+        {
+          cloneId: session.cloneId,
+          nodeId: node.id,
+          chosenOption: chosenOption.id,
+          complexity: evaluation.complexity,
+          confidence: evaluation.confidence,
+          reasoning: evaluation.reasoning,
+          evaluatedByLLM,
+        },
+        'Decision applied',
+      );
+    }
+
+    this.finalizeNodeStep(session, 'decision');
+  }
+
+  private finalizeNodeStep(
+    session: ActiveCloneSession,
+    nodeType: 'decision' | 'event' | 'outcome',
+  ): void {
+    this.applyWorldAgents(session.context, session.worldAgents);
+    this.syncWorldAgentMetrics(session.context, session.worldAgents);
+
+    if (this.config.useChaos) {
+      const chaosResult = session.chaos.inject(session.context);
+      if (chaosResult.occurred && chaosResult.event) {
+        session.context.state = session.chaos.applyEvent(session.context.state, chaosResult.event);
+        session.context.state.events.push({
+          nodeId: `chaos:${chaosResult.event.id}`,
+          occurred: true,
+          outcomeId: chaosResult.event.id,
+          timestamp: Date.now(),
+          source: 'chaos',
+          description: chaosResult.event.description,
+        });
+
+        if (this.config.logDecisions) {
+          logger.debug(
+            {
+              cloneId: session.cloneId,
+              event: chaosResult.event.id,
+              probability: chaosResult.modifiedProbability,
+            },
+            'Chaos event applied',
+          );
+        }
+      }
+    }
+
+    if (nodeType === 'decision') {
+      session.context.state.timeElapsed += 1;
+      session.worldAgents.financial.advanceTime(1);
+      session.worldAgents.career.advanceTime(1);
+      session.worldAgents.education.advanceTime(1);
+      session.worldAgents.social.advanceTime(1);
+    }
+  }
+
+  private finalizeSession(session: ActiveCloneSession): CloneResult {
+    const duration = Date.now() - session.startedAtMs;
+    const outcomeBucket = categorizeOutcome(session.context.state, this.scenario.id);
+
+    return {
+      cloneId: session.cloneId,
+      parameters: session.context.parameters,
+      stratification: session.stratification,
+      path: session.context.path,
+      finalState: session.context.state,
       metrics: {
-        ...context.state.metrics,
+        ...session.context.state.metrics,
         outcomeValue: outcomeBucket === 'success' ? 1 : outcomeBucket === 'failure' ? 0 : 0.5,
-        totalDecisions: context.state.decisions.length,
-        totalEvents: context.state.events.length,
-        finalCapital: context.state.capital,
-        finalHealth: context.state.health,
-        finalHappiness: context.state.happiness,
-        beliefConfidence: context.state.beliefState.thesisConfidence,
-        beliefUncertainty: context.state.beliefState.uncertaintyLevel,
-        beliefEvidenceClarity: context.state.beliefState.evidenceClarity,
-        beliefCommitmentLockIn: context.state.beliefState.commitmentLockIn,
-        beliefDownsideSalience: context.state.beliefState.downsideSalience,
-        demandStrength: context.state.causalState.demandStrength,
-        executionCapacity: context.state.causalState.executionCapacity,
-        runwayStress: context.state.causalState.runwayStress,
-        marketTailwind: context.state.causalState.marketTailwind,
-        socialLegitimacy: context.state.causalState.socialLegitimacy,
-        reversibilityPressure: context.state.causalState.reversibilityPressure,
-        evidenceMomentum: context.state.causalState.evidenceMomentum,
+        totalDecisions: session.context.state.decisions.length,
+        totalEvents: session.context.state.events.length,
+        finalCapital: session.context.state.capital,
+        finalHealth: session.context.state.health,
+        finalHappiness: session.context.state.happiness,
+        beliefConfidence: session.context.state.beliefState.thesisConfidence,
+        beliefUncertainty: session.context.state.beliefState.uncertaintyLevel,
+        beliefEvidenceClarity: session.context.state.beliefState.evidenceClarity,
+        beliefCommitmentLockIn: session.context.state.beliefState.commitmentLockIn,
+        beliefDownsideSalience: session.context.state.beliefState.downsideSalience,
+        demandStrength: session.context.state.causalState.demandStrength,
+        executionCapacity: session.context.state.causalState.executionCapacity,
+        runwayStress: session.context.state.causalState.runwayStress,
+        marketTailwind: session.context.state.causalState.marketTailwind,
+        socialLegitimacy: session.context.state.causalState.socialLegitimacy,
+        reversibilityPressure: session.context.state.causalState.reversibilityPressure,
+        evidenceMomentum: session.context.state.causalState.evidenceMomentum,
       },
       duration,
     };
-
-    return result;
   }
 
-  // Execute a decision node
-  private async executeDecisionNode(
-    context: CloneExecutionContext,
-    node: DecisionNode,
-    worldAgents: WorldAgents
-  ): Promise<void> {
-    let chosenOptionId: string;
-    let evaluatedByLLM = false;
-    let reasoning = 'Decision record unavailable.';
-    let confidence = 0.6;
-
-    // Check if LLM evaluation is needed
-    const requiresEvaluation = node.options.some(o => o.requiresEvaluation) || 
-                               this.config.useLLM;
-
-    if (requiresEvaluation && this.config.useLLM) {
-      const request = {
-        cloneParams: context.parameters,
-        decisionNode: node,
-        state: context.state,
-        scenario: this.scenario,
-        masterPersona: this.masterPersona,
-      };
-      const complexity = this.evaluator.calculateComplexity(node, context.parameters, context.state);
-
-      try {
-        // Optimistically reserve a reasoning call before the await so concurrent
-        // clones see an up-to-date budget (avoids race on llmCallsUsed).
-        this.llmCallsUsed++;
-        const availableLLMCalls = this.config.maxLLMCalls - this.llmCallsUsed + 1;
-        
-        const evaluation: LLMEvaluation = await this.evaluator.evaluateFork(
-          request,
-          availableLLMCalls
-        );
-
-        chosenOptionId = evaluation.chosenOptionId;
-        evaluatedByLLM = true;
-        reasoning = evaluation.reasoning;
-        confidence = evaluation.confidence;
-
-        // Release the reservation if a reasoning call was not actually used.
-        if (evaluation.complexity <= 0.6) {
-          this.llmCallsUsed--;
-        }
-
-        if (this.config.logDecisions) {
-          logger.debug({
-            cloneId: context.cloneId,
-            nodeId: node.id,
-            chosenOption: chosenOptionId,
-            complexity: evaluation.complexity,
-            confidence: evaluation.confidence,
-            reasoning: evaluation.reasoning,
-          }, 'LLM decision');
-        }
-      } catch (error) {
-        // Undo the optimistic reservation on failure.
-        this.llmCallsUsed--;
-
-        // Fall back to evaluator's semantic heuristic, then to the engine's
-        // keyword heuristic if the semantic path also fails.
-        const heuristic = await this.evaluator.heuristicEvaluation(request, complexity)
-          .catch(() => this.heuristicDecision(context, node));
-        chosenOptionId = heuristic.chosenOptionId;
-        reasoning = heuristic.reasoning;
-        confidence = heuristic.confidence;
-        evaluatedByLLM = false;
-        
-        logger.warn({
-          cloneId: context.cloneId,
-          nodeId: node.id,
-          error: (error as Error).message,
-        }, 'LLM evaluation failed, using heuristic');
-      }
-    } else {
-      // Heuristic decision
-      const heuristic = this.heuristicDecision(context, node);
-      chosenOptionId = heuristic.chosenOptionId;
-      reasoning = heuristic.reasoning;
-      confidence = heuristic.confidence;
-    }
-
-    // Find chosen option
-    const chosenOption = node.options.find(o => o.id === chosenOptionId);
-    if (!chosenOption) {
-      logger.error({ chosenOptionId, nodeId: node.id }, 'Chosen option not found');
-      // Fall back to first option
-      context.currentNodeId = node.options[0].nextNodeId;
-    } else {
-      context.currentNodeId = chosenOption.nextNodeId;
-    }
-    applyDecisionCausalTransition(context.state, this.scenario.id, node.id, chosenOptionId);
-
-    // Record decision
-    context.state.decisions.push({
-      nodeId: node.id,
-      choice: chosenOptionId,
-      timestamp: Date.now(),
-      evaluatedByLLM,
-      reasoning,
-      confidence,
-    });
-    context.state = refreshBeliefState(context.state);
-    context.state.beliefState.updateNarrative = reasoning;
-  }
-
-  // Execute an event node
   private executeEventNode(
     context: CloneExecutionContext,
     node: EventNode,
-    worldAgents: WorldAgents
   ): void {
     const probability = calculateEventProbability(context, node);
     const eventOccurred = Math.random() < probability;
@@ -337,7 +652,6 @@ export class SimulationEngine {
       context.state = applyEffectsToState(context.state, outcome.effects);
       context.currentNodeId = outcome.nextNodeId;
 
-      // Record event
       context.state.events.push({
         nodeId: node.id,
         occurred: true,
@@ -346,159 +660,129 @@ export class SimulationEngine {
         source: 'graph',
         description: outcome.label,
       });
-    } else {
-      if (node.outcomes.length === 1) {
-        context.currentNodeId = node.outcomes[0].nextNodeId;
-      } else {
-        context.currentNodeId = node.outcomes[0]?.nextNodeId || context.currentNodeId;
-      }
-
-      context.state.events.push({
-        nodeId: node.id,
-        occurred: false,
-        timestamp: Date.now(),
-        source: 'graph',
-        description: node.description,
-      });
+      return;
     }
+
+    context.currentNodeId = node.outcomes[0]?.nextNodeId || context.currentNodeId;
+    context.state.events.push({
+      nodeId: node.id,
+      occurred: false,
+      timestamp: Date.now(),
+      source: 'graph',
+      description: node.description,
+    });
   }
 
-  // Execute an outcome node
   private executeOutcomeNode(
     context: CloneExecutionContext,
-    node: OutcomeNode
+    node: OutcomeNode,
   ): void {
-    // Mark as complete
     context.complete = true;
-    
     context.state = applyOutcomeNodeResults(context.state, node.results);
   }
 
-  // Heuristic decision when LLM unavailable
   private heuristicDecision(
     context: CloneExecutionContext,
     node: DecisionNode,
   ): { chosenOptionId: string; reasoning: string; confidence: number } {
     const { parameters, state } = context;
-    
+
     let bestOption = node.options[0];
     let bestScore = -Infinity;
     let secondBestScore = -Infinity;
-    let bestReasons: string[] = [];
+    const bestReasons: string[] = [];
 
     for (const option of node.options) {
       let score = 0;
       const reasons: string[] = [];
       const label = option.label.toLowerCase();
 
-      // Risk matching
       if (parameters.riskTolerance > 0.7) {
-        if (label.includes('aggressive') || label.includes('bold') || 
-            label.includes('all-in') || label.includes('high')) {
+        if (label.includes('aggressive') || label.includes('bold') || label.includes('all-in') || label.includes('high')) {
           score += 2;
           reasons.push('high risk tolerance matched a more aggressive branch');
         }
       } else if (parameters.riskTolerance < 0.3) {
-        if (label.includes('safe') || label.includes('cautious') || 
-            label.includes('preserve') || label.includes('low')) {
+        if (label.includes('safe') || label.includes('cautious') || label.includes('preserve') || label.includes('low')) {
           score += 2;
           reasons.push('low risk tolerance favored preserving downside');
         }
       }
 
-      // Decision speed
       if (parameters.decisionSpeed > 0.7) {
-        if (label.includes('now') || label.includes('immediate') || 
-            label.includes('start') || label.includes('quick')) {
+        if (label.includes('now') || label.includes('immediate') || label.includes('start') || label.includes('quick')) {
           score += 1;
           reasons.push('fast decision speed favored immediate action');
         }
       } else if (parameters.decisionSpeed < 0.3) {
-        if (label.includes('plan') || label.includes('analyze') || 
-            label.includes('research') || label.includes('study')) {
+        if (label.includes('plan') || label.includes('analyze') || label.includes('research') || label.includes('study')) {
           score += 1;
           reasons.push('deliberate decision speed favored more analysis');
         }
       }
 
-      // Social dependency
       if (parameters.socialDependency > 0.7) {
-        if (label.includes('partner') || label.includes('team') || 
-            label.includes('network') || label.includes('collaborate')) {
+        if (label.includes('partner') || label.includes('team') || label.includes('network') || label.includes('collaborate')) {
           score += 1;
           reasons.push('social orientation favored collaborative support');
         }
       } else if (parameters.socialDependency < 0.3) {
-        if (label.includes('independent') || label.includes('solo') || 
-            label.includes('alone') || label.includes('self')) {
+        if (label.includes('independent') || label.includes('solo') || label.includes('alone') || label.includes('self')) {
           score += 1;
           reasons.push('independent orientation favored self-directed options');
         }
       }
 
-      // Time preference (patience)
       if (parameters.timePreference < 0.3) {
-        if (label.includes('long') || label.includes('patient') || 
-            label.includes('future') || label.includes('invest')) {
+        if (label.includes('long') || label.includes('patient') || label.includes('future') || label.includes('invest')) {
           score += 1;
           reasons.push('patient time preference favored longer-horizon payoff');
         }
       } else if (parameters.timePreference > 0.7) {
-        if (label.includes('now') || label.includes('immediate') || 
-            label.includes('quick') || label.includes('fast')) {
+        if (label.includes('now') || label.includes('immediate') || label.includes('quick') || label.includes('fast')) {
           score += 1;
           reasons.push('present bias favored faster payoff');
         }
       }
 
-      // Emotional volatility (seek excitement or safety)
       if (parameters.emotionalVolatility > 0.7) {
-        if (label.includes('exciting') || label.includes('passion') || 
-            label.includes('dream') || label.includes('change')) {
+        if (label.includes('exciting') || label.includes('passion') || label.includes('dream') || label.includes('change')) {
           score += 1;
           reasons.push('emotional volatility leaned toward more charged options');
         }
       }
 
-      // Learning style
       if (parameters.learningStyle > 0.7) {
-        if (label.includes('learn') || label.includes('study') || 
-            label.includes('degree') || label.includes('education')) {
+        if (label.includes('learn') || label.includes('study') || label.includes('degree') || label.includes('education')) {
           score += 1;
           reasons.push('theoretical learning style favored explicit learning paths');
         }
       } else if (parameters.learningStyle < 0.3) {
-        if (label.includes('experience') || label.includes('practice') || 
-            label.includes('do') || label.includes('try')) {
+        if (label.includes('experience') || label.includes('practice') || label.includes('do') || label.includes('try')) {
           score += 1;
           reasons.push('experiential learning style favored action-first paths');
         }
       }
 
-      // State-based adjustments
       if (state.capital < 10000) {
-        if (label.includes('quit') || label.includes('stop') || 
-            label.includes('preserve') || label.includes('safe')) {
-          score += 2; // Prefer exit when broke
+        if (label.includes('quit') || label.includes('stop') || label.includes('preserve') || label.includes('safe')) {
+          score += 2;
           reasons.push('low capital pushed the clone toward preserving runway');
         }
-        if (label.includes('double') || label.includes('risk') || 
-            label.includes('aggressive')) {
-          score -= 2; // Avoid more risk when broke
+        if (label.includes('double') || label.includes('risk') || label.includes('aggressive')) {
+          score -= 2;
         }
       }
 
       if (state.health < 0.5) {
-        if (label.includes('health') || label.includes('rest') || 
-            label.includes('medical') || label.includes('recover')) {
+        if (label.includes('health') || label.includes('rest') || label.includes('medical') || label.includes('recover')) {
           score += 2;
           reasons.push('poor health favored recovery over escalation');
         }
       }
 
       if (state.happiness < 0.3) {
-        if (label.includes('happiness') || label.includes('joy') || 
-            label.includes('fulfillment') || label.includes('passion')) {
+        if (label.includes('happiness') || label.includes('joy') || label.includes('fulfillment') || label.includes('passion')) {
           score += 1;
           reasons.push('low happiness increased the pull toward emotional relief');
         }
@@ -508,7 +792,7 @@ export class SimulationEngine {
         secondBestScore = bestScore;
         bestScore = score;
         bestOption = option;
-        bestReasons = reasons;
+        bestReasons.splice(0, bestReasons.length, ...reasons);
       } else if (score > secondBestScore) {
         secondBestScore = score;
       }
@@ -527,7 +811,6 @@ export class SimulationEngine {
     };
   }
 
-  // Initialize world agents based on scenario type
   private initializeWorldAgents(parameters: CloneParameters): WorldAgents {
     const initialCapital = this.scenario.initialState.capital;
     const personaRuntime = buildSimulationPersonaRuntimeProfile(parameters, this.masterPersona);
@@ -535,25 +818,22 @@ export class SimulationEngine {
     const salary = typeof salaryMetric === 'number' ? salaryMetric : 75000;
     const monthlySavings = Math.max(0, (salary * personaRuntime.savingsRate) / 12);
 
-    // Financial agent
     const financial = new FinancialWorldAgent();
     financial.initialize(
       initialCapital,
       monthlySavings,
       personaRuntime.investmentAggressiveness,
-      personaRuntime
+      personaRuntime,
     );
 
-    // Career agent
     const career = new CareerWorldAgent();
     career.initialize(
       salary,
       personaRuntime.careerStability,
       personaRuntime.careerSkillLevel,
-      personaRuntime
+      personaRuntime,
     );
 
-    // Education agent (for relevant scenarios)
     const education = new EducationWorldAgent();
     if (this.scenario.id === 'advanced_degree') {
       education.initialize('masters', personaRuntime);
@@ -561,36 +841,41 @@ export class SimulationEngine {
       education.initialize('bootcamp', personaRuntime);
     }
 
-    // Social agent
     const social = new SocialWorldAgent();
     social.initialize(
       personaRuntime.supportNetworkSize,
       personaRuntime.relationshipSatisfaction,
       personaRuntime.hasPartner,
-      personaRuntime
+      personaRuntime,
     );
 
     return { financial, career, education, social };
   }
 
-  // Apply world agent effects
   private applyWorldAgents(context: CloneExecutionContext, worldAgents: WorldAgents): void {
-    const agents = [worldAgents.financial, worldAgents.career, worldAgents.education, worldAgents.social];
+    const agents = [
+      worldAgents.financial,
+      worldAgents.career,
+      worldAgents.education,
+      worldAgents.social,
+    ];
 
     for (const agent of agents) {
       const event = agent.evaluate(context);
-      if (event) {
-        applyExternalCausalTransition(context.state, event.type);
-        context.state = applyEffectsToState(context.state, event.impact);
-        context.state.events.push({
-          nodeId: `world:${agent.type}:${event.type}`,
-          occurred: true,
-          outcomeId: event.type,
-          timestamp: Date.now(),
-          source: 'world',
-          description: event.description,
-        });
+      if (!event) {
+        continue;
       }
+
+      applyExternalCausalTransition(context.state, event.type);
+      context.state = applyEffectsToState(context.state, event.impact);
+      context.state.events.push({
+        nodeId: `world:${agent.type}:${event.type}`,
+        occurred: true,
+        outcomeId: event.type,
+        timestamp: Date.now(),
+        source: 'world',
+        description: event.description,
+      });
     }
   }
 
@@ -620,11 +905,7 @@ export class SimulationEngine {
     context.state = refreshBeliefState(context.state);
   }
 
-  // Get LLM usage stats
-  getLLMUsage(): {
-    llmCallsUsed: number;
-    maxLLMCalls: number;
-  } {
+  getLLMUsage(): { llmCallsUsed: number; maxLLMCalls: number } {
     return {
       llmCallsUsed: this.llmCallsUsed,
       maxLLMCalls: this.config.maxLLMCalls,
@@ -643,6 +924,9 @@ export class SimulationEngine {
       totalWaitMs: number;
       maxWaitMs: number;
     };
+    localStepDurationMs: number;
+    peakActiveFrontier: number;
+    peakWaitingDecisions: number;
   } {
     const evaluatorTelemetry = this.evaluator.getTelemetry();
     const limiterStats = this.config.rateLimiter?.getStats?.() ?? {
@@ -659,66 +943,44 @@ export class SimulationEngine {
       llm: evaluatorTelemetry.llm,
       embeddings: evaluatorTelemetry.embeddings,
       rateLimiter: limiterStats,
+      localStepDurationMs: this.localStepDurationMs,
+      peakActiveFrontier: this.peakActiveFrontier,
+      peakWaitingDecisions: this.peakWaitingDecisions,
     };
   }
 }
 
-// Create engine factory
 export function createEngine(
   scenario: Scenario,
-  config?: Partial<SimulationConfig>
+  config?: Partial<SimulationConfig>,
 ): SimulationEngine {
   return new SimulationEngine(scenario, config);
 }
 
-// Quick simulation function for a single clone
 export async function simulateClone(
   scenario: Scenario,
   cloneId: string,
   parameters: CloneParameters,
-  stratification: { percentile: number; category: 'edge' | 'central' | 'typical' }
+  stratification: CloneStratification,
 ): Promise<CloneResult> {
   const engine = new SimulationEngine(scenario, { useLLM: true, useChaos: true });
-  return await engine.executeClone(cloneId, parameters, stratification);
+  return engine.executeClone(cloneId, parameters, stratification);
 }
 
-// Batch simulation for multiple clones
 export async function simulateBatch(
   scenario: Scenario,
   clones: Array<{
     cloneId: string;
     parameters: CloneParameters;
-    stratification: { percentile: number; category: 'edge' | 'central' | 'typical' };
+    stratification: CloneStratification;
   }>,
-  config?: Partial<SimulationConfig>
+  config?: Partial<SimulationConfig>,
 ): Promise<CloneResult[]> {
   const engine = new SimulationEngine(scenario, config);
-  const results: CloneResult[] = new Array(clones.length);
-  const concurrency = 10;
-  const limit = createConcurrencyLimiter(concurrency);
-
-  await Promise.all(
-    clones.map((clone, index) =>
-      limit(async () => {
-        try {
-          const result = await engine.executeClone(
-            clone.cloneId,
-            clone.parameters,
-            clone.stratification
-          );
-          results[index] = result;
-        } catch (error) {
-          logger.error(
-            { cloneId: clone.cloneId, error: (error as Error).message },
-            'Clone execution failed in batch, skipping'
-          );
-        }
-      })
-    )
-  );
-
-  return results.filter(Boolean);
+  return engine.executeFrontierBatch(clones, {
+    activeFrontier: clones.length,
+    decisionBatchSize: clones.length,
+  });
 }
 
-// Export types
-export { SimulationConfig, WorldAgents };
+export { WorldAgents };

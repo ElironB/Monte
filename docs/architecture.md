@@ -170,7 +170,7 @@ The causal and belief layers are central to how Monte reasons about uncertainty,
 The runtime path is:
 
 1. compile a scenario
-2. execute clones in batches
+2. execute clones in batches through a node-frontier scheduler
 3. batch concurrent LLM decisions for clones waiting on the same decision node inside a worker batch
 4. persist each finished batch with a single Neo4j `UNWIND` write
 5. aggregate clone results into:
@@ -182,12 +182,17 @@ The runtime path is:
    - optional narrative output
    - rerun comparison data when evidence is present
 
-The runtime optimization matters in two places:
+The runtime optimization matters in three places:
 
+- the scheduler advances clones locally until they block on a decision, so LLM concurrency is spent on fork evaluation rather than whole-clone lifecycles
 - decision batching reduces remote LLM round trips without replacing the decision layer with local heuristics
 - batch persistence removes the old per-clone Neo4j write tail that made simulations appear stuck near the end
 
-Decision batching is keyed by shared decision node and model mode. Multiple clones waiting on the same fork can be packaged into one structured LLM request, then mapped back to per-clone choices.
+Decision batching is keyed by shared decision node and model mode. Multiple clones waiting on the same fork can be packaged into one structured LLM request, then mapped back to per-clone choices. Worker processes share one provider limiter and one in-flight request limiter for simulation batches, so throughput tuning happens at the process level instead of per-batch ad hoc queues.
+
+If repeated invalid batched payloads force retries and splits, the evaluator now lowers the preferred batch size for the rest of that scenario and mode. This prevents later decision waves from reusing a request size the provider has already demonstrated it cannot handle reliably.
+
+Each `Simulation` also stores `batchSizeUsed` at creation time so progress math and batch accounting remain stable even if `SIMULATION_BATCH_SIZE` changes between creation and polling.
 
 ### Live progress architecture
 
@@ -205,6 +210,11 @@ Simulation progress is published to Redis and exposed through `/stream/simulatio
 - `batchCloneCount`
 - `estimatedTimeRemaining`
 - `lastUpdated`
+- `activeFrontier`
+- `waitingDecisions`
+- `resolvedDecisions`
+- `estimatedDecisionCount`
+- `localStepDurationMs`
 
 Current phase model:
 
@@ -244,6 +254,15 @@ Completed simulations persist runtime telemetry alongside the aggregated results
 - per-node timing hotspots
 
 This gives operators a concrete breakdown of where simulation time is going and makes throughput tuning measurable rather than anecdotal.
+
+New scheduler-oriented telemetry includes:
+
+- decision concurrency
+- active frontier and peak active frontier
+- peak waiting decisions
+- local step time
+- batch retry / split / single-fallback counts
+- batch vs single prompt and response token splits
 
 ### Outcome semantics
 

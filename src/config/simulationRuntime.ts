@@ -1,5 +1,7 @@
 export interface SimulationRuntimeConfig {
   batchSize: number;
+  decisionConcurrency: number;
+  activeFrontier: number;
   cloneConcurrency: number;
   workerConcurrency: number;
   decisionBatchSize: number;
@@ -21,13 +23,21 @@ export function parsePositiveIntEnv(value: string | undefined): number | undefin
 }
 
 export function resolveSimulationRuntimeConfig(nodeEnv: string = process.env.NODE_ENV || 'development'): SimulationRuntimeConfig {
+  const batchSize = parsePositiveIntEnv(process.env.SIMULATION_BATCH_SIZE) || 100;
+  const decisionConcurrency =
+    parsePositiveIntEnv(process.env.SIMULATION_DECISION_CONCURRENCY)
+    || parsePositiveIntEnv(process.env.SIMULATION_CONCURRENCY)
+    || 10;
+
   return {
-    batchSize: parsePositiveIntEnv(process.env.SIMULATION_BATCH_SIZE) || 100,
-    cloneConcurrency: parsePositiveIntEnv(process.env.SIMULATION_CONCURRENCY) || 10,
+    batchSize,
+    decisionConcurrency,
+    activeFrontier: parsePositiveIntEnv(process.env.SIMULATION_ACTIVE_FRONTIER) || batchSize,
+    cloneConcurrency: decisionConcurrency,
     workerConcurrency: parsePositiveIntEnv(process.env.SIMULATION_WORKER_CONCURRENCY)
       || (nodeEnv === 'production' ? 20 : 5),
-    decisionBatchSize: parsePositiveIntEnv(process.env.SIMULATION_DECISION_BATCH_SIZE) || 10,
-    decisionBatchFlushMs: parsePositiveIntEnv(process.env.SIMULATION_DECISION_BATCH_FLUSH_MS) || 15,
+    decisionBatchSize: parsePositiveIntEnv(process.env.SIMULATION_DECISION_BATCH_SIZE) || 20,
+    decisionBatchFlushMs: parsePositiveIntEnv(process.env.SIMULATION_DECISION_BATCH_FLUSH_MS) || 40,
     llmRpmLimit: parsePositiveIntEnv(process.env.LLM_RPM_LIMIT),
   };
 }

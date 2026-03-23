@@ -103,7 +103,9 @@ export class RateLimiter {
   }
 }
 
-export function createConcurrencyLimiter(concurrency: number) {
+export type ConcurrencyLimiter = <T>(fn: () => Promise<T>) => Promise<T>;
+
+export function createConcurrencyLimiter(concurrency: number): ConcurrencyLimiter {
   const safeConcurrency = Math.max(1, Math.floor(concurrency));
   let active = 0;
   const queue: Array<{ resolve: () => void }> = [];

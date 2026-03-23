@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   calculateExecutionPhaseProgress,
+  calculateExecutionPhaseProgressFromFrontier,
   calculateOverallProgress,
   calculatePersistingPhaseProgress,
   calculateSimulationProgress,
@@ -16,6 +17,16 @@ describe('simulation progress helpers', () => {
     expect(calculateSimulationProgress(1_000, 1_000, 'running')).toBe(90);
     expect(calculateSimulationProgress(1_000, 1_000, 'aggregating')).toBe(99);
     expect(calculateSimulationProgress(1_000, 1_000, 'completed')).toBe(100);
+  });
+
+  test('advances execution progress from frontier decision work before clones fully complete', () => {
+    expect(calculateExecutionPhaseProgressFromFrontier({
+      processedClones: 0,
+      totalClones: 100,
+      resolvedDecisions: 20,
+      waitingDecisions: 20,
+      estimatedDecisionCount: 100,
+    })).toBe(30);
   });
 
   test('creates phase-aware snapshots for persistence and aggregation', () => {
@@ -84,6 +95,11 @@ describe('simulation progress helpers', () => {
         currentBatch: 1,
         batchProcessedClones: 100,
         batchCloneCount: 100,
+        activeFrontier: 50,
+        waitingDecisions: 12,
+        resolvedDecisions: 88,
+        estimatedDecisionCount: 400,
+        localStepDurationMs: 800,
       },
       processedClones: 200,
     });
@@ -99,6 +115,11 @@ describe('simulation progress helpers', () => {
       currentBatch: 1,
       batchProcessedClones: 100,
       batchCloneCount: 100,
+      activeFrontier: 50,
+      waitingDecisions: 12,
+      resolvedDecisions: 88,
+      estimatedDecisionCount: 400,
+      localStepDurationMs: 800,
     });
   });
 
