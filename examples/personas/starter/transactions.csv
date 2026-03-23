@@ -1,0 +1,27 @@
+date,description,amount,category
+2026-01-03,Payroll Deposit,4100.00,income
+2026-01-04,Rent Payment,-1650.00,housing
+2026-01-05,Whole Foods,-86.42,groceries
+2026-01-06,Gym Membership,-68.00,health
+2026-01-08,OpenRouter API Credits,-25.00,software
+2026-01-10,ETF Auto-Invest,-600.00,investing
+2026-01-12,Coffee Meets Bagel Premium,-34.99,personal
+2026-01-14,Uber,-19.40,transport
+2026-01-17,Product Meetup Ticket,-18.00,networking
+2026-01-22,Amazon Marketplace,-74.16,shopping
+2026-02-01,Payroll Deposit,4100.00,income
+2026-02-02,Rent Payment,-1650.00,housing
+2026-02-05,High Yield Savings Transfer,-500.00,savings
+2026-02-08,Robinhood Transfer,-250.00,investing
+2026-02-13,Notion Subscription,-12.00,software
+2026-02-15,Trader Joe's,-72.31,groceries
+2026-02-20,Weekend Flight to Austin,-312.55,travel
+2026-03-01,Payroll Deposit,4100.00,income
+2026-03-02,Rent Payment,-1650.00,housing
+2026-03-03,OpenAI Credits,-20.00,software
+2026-03-04,Index Fund Auto-Invest,-650.00,investing
+2026-03-08,DoorDash Late Night,-28.77,food
+2026-03-11,Indie Hacker Meetup,-24.00,networking
+2026-03-16,Apple Store Purchase,-249.00,electronics
+2026-03-18,Emergency Fund Transfer,-600.00,savings
+2026-03-22,Amtrak Weekend Trip,-94.00,travel

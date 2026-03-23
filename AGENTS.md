@@ -29,6 +29,8 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - The batched evaluator can now learn smaller preferred batch sizes after repeated provider-side batch failures; do not remove that adaptive recovery without replacing the performance guardrail.
 - The benchmark harness is a first-class regression surface and must stay deterministic.
 - The npm package is `monte-engine`; the installed executable is `monte`.
+- The globally installed CLI can store provider credentials in `~/.monte/config.json`.
+- A bundled starter persona is shipped in `examples/personas/starter` and exposed by `monte example`.
 
 ## High-leverage files
 
@@ -106,6 +108,7 @@ npm run cli:dev -- persona psychology
 Installed CLI:
 
 ```bash
+monte example ingest starter
 monte ingest ./path/to/data
 monte persona build
 monte persona status
@@ -134,6 +137,9 @@ monte simulate results <simulation-id> -f json
 
 ```bash
 monte config set-api http://localhost:3000
+monte config set-provider openrouter
+monte config set-api-key <key>
+monte example ingest starter
 monte doctor --json
 monte decide "should I make this move?" --mode standard --wait --json
 ```

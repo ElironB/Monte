@@ -1,0 +1,507 @@
+{
+  "version": "phase3-v2",
+  "generatedAt": "2026-03-23T18:19:41.779Z",
+  "fixtureCount": 3,
+  "caseSummaries": [
+    {
+      "id": "startup_founding_seeded_corpus",
+      "title": "Startup founding — seeded market variance",
+      "run": {
+        "successRate": 0.5714,
+        "meanCapital": 1000436.41,
+        "meanHealth": 0.9857,
+        "meanHappiness": 0.9214,
+        "meanBeliefConfidence": 0.4279,
+        "meanBeliefUncertainty": 0.7355,
+        "meanDownsideSalience": 0.4885,
+        "utilityScore": 0.7893,
+        "topFocusMetric": "beliefUncertainty",
+        "topUncertainty": "Will demand support the bet?",
+        "topExperiment": "Run a falsification test specifically designed to break Will demand support the bet? instead of confirm it."
+      },
+      "expectedSuccessRate": 0.5714285714285714,
+      "calibrationError": 0,
+      "staticPolicyRegret": 0.145,
+      "bestStaticBaseline": {
+        "id": "always_seed_raise",
+        "label": "Always seek seed funding immediately",
+        "run": {
+          "successRate": 0.8571,
+          "meanCapital": 747920.7,
+          "meanHealth": 1,
+          "meanHappiness": 0.9929,
+          "meanBeliefConfidence": 0.4874,
+          "meanBeliefUncertainty": 0.6796,
+          "meanDownsideSalience": 0.4418,
+          "utilityScore": 0.9343,
+          "topFocusMetric": "evidenceQuality",
+          "topUncertainty": "Will demand support the bet?",
+          "topExperiment": "Run a two-week evidence sprint for Will demand support the bet? with direct user/customer conversations plus one behaviorally binding pilot before increasing commitment. Fallback path: fall back to the current Startup Founding baseline."
+        }
+      },
+      "policyBaselines": [
+        {
+          "id": "always_bootstrap",
+          "label": "Always bootstrap immediately",
+          "run": {
+            "successRate": 0.4286,
+            "meanCapital": 353362.07,
+            "meanHealth": 1,
+            "meanHappiness": 0.9714,
+            "meanBeliefConfidence": 0.4302,
+            "meanBeliefUncertainty": 0.7353,
+            "meanDownsideSalience": 0.5044,
+            "utilityScore": 0.7371,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "Will demand support the bet?",
+            "topExperiment": "Run a falsification test specifically designed to break Will demand support the bet? instead of confirm it."
+          }
+        },
+        {
+          "id": "always_seed_raise",
+          "label": "Always seek seed funding immediately",
+          "run": {
+            "successRate": 0.8571,
+            "meanCapital": 747920.7,
+            "meanHealth": 1,
+            "meanHappiness": 0.9929,
+            "meanBeliefConfidence": 0.4874,
+            "meanBeliefUncertainty": 0.6796,
+            "meanDownsideSalience": 0.4418,
+            "utilityScore": 0.9343,
+            "topFocusMetric": "evidenceQuality",
+            "topUncertainty": "Will demand support the bet?",
+            "topExperiment": "Run a two-week evidence sprint for Will demand support the bet? with direct user/customer conversations plus one behaviorally binding pilot before increasing commitment. Fallback path: fall back to the current Startup Founding baseline."
+          }
+        },
+        {
+          "id": "always_validate_first",
+          "label": "Always validate before quitting",
+          "run": {
+            "successRate": 0.7143,
+            "meanCapital": 362802.91,
+            "meanHealth": 1,
+            "meanHappiness": 0.8357,
+            "meanBeliefConfidence": 0.4238,
+            "meanBeliefUncertainty": 0.7322,
+            "meanDownsideSalience": 0.4761,
+            "utilityScore": 0.8386,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "Will demand support the bet?",
+            "topExperiment": "Run a falsification test specifically designed to break Will demand support the bet? instead of confirm it."
+          }
+        }
+      ],
+      "evidenceCases": [
+        {
+          "id": "startup_paid_pilot_signal",
+          "title": "Positive paid-pilot demand evidence",
+          "baseline": {
+            "successRate": 0.5714,
+            "meanCapital": 1000436.41,
+            "meanHealth": 0.9857,
+            "meanHappiness": 0.9214,
+            "meanBeliefConfidence": 0.4279,
+            "meanBeliefUncertainty": 0.7355,
+            "meanDownsideSalience": 0.4885,
+            "utilityScore": 0.7893,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "Will demand support the bet?",
+            "topExperiment": "Run a falsification test specifically designed to break Will demand support the bet? instead of confirm it."
+          },
+          "rerun": {
+            "successRate": 0.4286,
+            "meanCapital": 692287.49,
+            "meanHealth": 1,
+            "meanHappiness": 0.9643,
+            "meanBeliefConfidence": 0.4878,
+            "meanBeliefUncertainty": 0.6587,
+            "meanDownsideSalience": 0.5304,
+            "utilityScore": 0.7357,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "Can you keep shipping without burning out?",
+            "topExperiment": "Run a falsification test specifically designed to break Can you keep shipping without burning out? instead of confirm it."
+          },
+          "uncertaintyReduction": 0.0768,
+          "confidenceShift": 0.0599,
+          "downsideShift": 0.0419,
+          "utilityShift": -0.0536,
+          "topRecommendationChanged": true,
+          "pass": true,
+          "failures": []
+        }
+      ],
+      "stability": {
+        "repeats": 3,
+        "maxDrift": 0,
+        "identical": true,
+        "repeatedRuns": [
+          {
+            "successRate": 0.5714,
+            "meanCapital": 1000436.41,
+            "meanHealth": 0.9857,
+            "meanHappiness": 0.9214,
+            "meanBeliefConfidence": 0.4279,
+            "meanBeliefUncertainty": 0.7355,
+            "meanDownsideSalience": 0.4885,
+            "utilityScore": 0.7893,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "Will demand support the bet?",
+            "topExperiment": "Run a falsification test specifically designed to break Will demand support the bet? instead of confirm it."
+          },
+          {
+            "successRate": 0.5714,
+            "meanCapital": 1000436.41,
+            "meanHealth": 0.9857,
+            "meanHappiness": 0.9214,
+            "meanBeliefConfidence": 0.4279,
+            "meanBeliefUncertainty": 0.7355,
+            "meanDownsideSalience": 0.4885,
+            "utilityScore": 0.7893,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "Will demand support the bet?",
+            "topExperiment": "Run a falsification test specifically designed to break Will demand support the bet? instead of confirm it."
+          }
+        ]
+      },
+      "pass": true,
+      "failures": []
+    },
+    {
+      "id": "real_estate_purchase_carry_costs",
+      "title": "Real estate purchase — carrying-cost stress",
+      "run": {
+        "successRate": 0.4286,
+        "meanCapital": 68515.16,
+        "meanHealth": 1,
+        "meanHappiness": 0.8286,
+        "meanBeliefConfidence": 0.4144,
+        "meanBeliefUncertainty": 0.7512,
+        "meanDownsideSalience": 0.4594,
+        "utilityScore": 0.6065,
+        "topFocusMetric": "burnRate",
+        "topUncertainty": "Can the monthly carrying cost survive a bad regime?",
+        "topExperiment": "Stress-test the downside with a conservative runway model. Cut fixed burn, pre-sell where possible, and do not escalate until the plan survives 16 months of bad variance."
+      },
+      "expectedSuccessRate": 0.42857142857142855,
+      "calibrationError": 0,
+      "staticPolicyRegret": 0.3019,
+      "bestStaticBaseline": {
+        "id": "always_rent_invest",
+        "label": "Always keep renting and invest instead",
+        "run": {
+          "successRate": 1,
+          "meanCapital": 105870.93,
+          "meanHealth": 1,
+          "meanHappiness": 0.7857,
+          "meanBeliefConfidence": 0.433,
+          "meanBeliefUncertainty": 0.7194,
+          "meanDownsideSalience": 0.405,
+          "utilityScore": 0.9084,
+          "topFocusMetric": "unknown",
+          "topUncertainty": "Can the monthly carrying cost survive a bad regime?",
+          "topExperiment": "Design the smallest behaviorally binding test that resolves \"Can the monthly carrying cost survive a bad regime?\" before making the next irreversible move. Preserve fall back to the current Real Estate Purchase baseline while running it."
+        }
+      },
+      "policyBaselines": [
+        {
+          "id": "always_buy_now",
+          "label": "Always buy immediately",
+          "run": {
+            "successRate": 0.5714,
+            "meanCapital": 85824.45,
+            "meanHealth": 1,
+            "meanHappiness": 0.9286,
+            "meanBeliefConfidence": 0.4562,
+            "meanBeliefUncertainty": 0.7123,
+            "meanDownsideSalience": 0.4478,
+            "utilityScore": 0.7155,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "Can the monthly carrying cost survive a bad regime?",
+            "topExperiment": "Run a falsification test specifically designed to break Can the monthly carrying cost survive a bad regime? instead of confirm it."
+          }
+        },
+        {
+          "id": "always_save_more",
+          "label": "Always wait and save more",
+          "run": {
+            "successRate": 0.8571,
+            "meanCapital": 108741.66,
+            "meanHealth": 1,
+            "meanHappiness": 0.8071,
+            "meanBeliefConfidence": 0.4315,
+            "meanBeliefUncertainty": 0.7236,
+            "meanDownsideSalience": 0.4077,
+            "utilityScore": 0.8525,
+            "topFocusMetric": "unknown",
+            "topUncertainty": "Can the monthly carrying cost survive a bad regime?",
+            "topExperiment": "Design the smallest behaviorally binding test that resolves \"Can the monthly carrying cost survive a bad regime?\" before making the next irreversible move. Preserve fall back to the current Real Estate Purchase baseline while running it."
+          }
+        },
+        {
+          "id": "always_rent_invest",
+          "label": "Always keep renting and invest instead",
+          "run": {
+            "successRate": 1,
+            "meanCapital": 105870.93,
+            "meanHealth": 1,
+            "meanHappiness": 0.7857,
+            "meanBeliefConfidence": 0.433,
+            "meanBeliefUncertainty": 0.7194,
+            "meanDownsideSalience": 0.405,
+            "utilityScore": 0.9084,
+            "topFocusMetric": "unknown",
+            "topUncertainty": "Can the monthly carrying cost survive a bad regime?",
+            "topExperiment": "Design the smallest behaviorally binding test that resolves \"Can the monthly carrying cost survive a bad regime?\" before making the next irreversible move. Preserve fall back to the current Real Estate Purchase baseline while running it."
+          }
+        }
+      ],
+      "evidenceCases": [
+        {
+          "id": "real_estate_downside_model",
+          "title": "Negative mortgage downside evidence",
+          "baseline": {
+            "successRate": 0.4286,
+            "meanCapital": 68515.16,
+            "meanHealth": 1,
+            "meanHappiness": 0.8286,
+            "meanBeliefConfidence": 0.4144,
+            "meanBeliefUncertainty": 0.7512,
+            "meanDownsideSalience": 0.4594,
+            "utilityScore": 0.6065,
+            "topFocusMetric": "burnRate",
+            "topUncertainty": "Can the monthly carrying cost survive a bad regime?",
+            "topExperiment": "Stress-test the downside with a conservative runway model. Cut fixed burn, pre-sell where possible, and do not escalate until the plan survives 16 months of bad variance."
+          },
+          "rerun": {
+            "successRate": 0.5714,
+            "meanCapital": 87792.46,
+            "meanHealth": 1,
+            "meanHappiness": 0.9357,
+            "meanBeliefConfidence": 0.4626,
+            "meanBeliefUncertainty": 0.7039,
+            "meanDownsideSalience": 0.4895,
+            "utilityScore": 0.7197,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "How much optionality does the purchase remove?",
+            "topExperiment": "Run a falsification test specifically designed to break How much optionality does the purchase remove? instead of confirm it."
+          },
+          "uncertaintyReduction": 0.0473,
+          "confidenceShift": 0.0482,
+          "downsideShift": 0.0301,
+          "utilityShift": 0.1132,
+          "topRecommendationChanged": true,
+          "pass": true,
+          "failures": []
+        }
+      ],
+      "stability": {
+        "repeats": 3,
+        "maxDrift": 0,
+        "identical": true,
+        "repeatedRuns": [
+          {
+            "successRate": 0.4286,
+            "meanCapital": 68515.16,
+            "meanHealth": 1,
+            "meanHappiness": 0.8286,
+            "meanBeliefConfidence": 0.4144,
+            "meanBeliefUncertainty": 0.7512,
+            "meanDownsideSalience": 0.4594,
+            "utilityScore": 0.6065,
+            "topFocusMetric": "burnRate",
+            "topUncertainty": "Can the monthly carrying cost survive a bad regime?",
+            "topExperiment": "Stress-test the downside with a conservative runway model. Cut fixed burn, pre-sell where possible, and do not escalate until the plan survives 16 months of bad variance."
+          },
+          {
+            "successRate": 0.4286,
+            "meanCapital": 68515.16,
+            "meanHealth": 1,
+            "meanHappiness": 0.8286,
+            "meanBeliefConfidence": 0.4144,
+            "meanBeliefUncertainty": 0.7512,
+            "meanDownsideSalience": 0.4594,
+            "utilityScore": 0.6065,
+            "topFocusMetric": "burnRate",
+            "topUncertainty": "Can the monthly carrying cost survive a bad regime?",
+            "topExperiment": "Stress-test the downside with a conservative runway model. Cut fixed burn, pre-sell where possible, and do not escalate until the plan survives 16 months of bad variance."
+          }
+        ]
+      },
+      "pass": true,
+      "failures": []
+    },
+    {
+      "id": "day_trading_edge_discipline",
+      "title": "Day trading — edge durability and drawdown discipline",
+      "run": {
+        "successRate": 0.5714,
+        "meanCapital": 43388.62,
+        "meanHealth": 0.8429,
+        "meanHappiness": 0.9429,
+        "meanBeliefConfidence": 0.4199,
+        "meanBeliefUncertainty": 0.748,
+        "meanDownsideSalience": 0.4829,
+        "utilityScore": 0.6961,
+        "topFocusMetric": "unknown",
+        "topUncertainty": "Is there a real edge?",
+        "topExperiment": "Design the smallest behaviorally binding test that resolves \"Is there a real edge?\" before making the next irreversible move. Preserve fall back to the current Day Trading baseline while running it."
+      },
+      "expectedSuccessRate": 0.5714285714285714,
+      "calibrationError": 0,
+      "staticPolicyRegret": 0.2503,
+      "bestStaticBaseline": {
+        "id": "always_cautious",
+        "label": "Always start cautiously",
+        "run": {
+          "successRate": 1,
+          "meanCapital": 57994.83,
+          "meanHealth": 0.8714,
+          "meanHappiness": 1,
+          "meanBeliefConfidence": 0.4875,
+          "meanBeliefUncertainty": 0.6868,
+          "meanDownsideSalience": 0.4144,
+          "utilityScore": 0.9464,
+          "topFocusMetric": "unknown",
+          "topUncertainty": "Is there a real edge?",
+          "topExperiment": "Design the smallest behaviorally binding test that resolves \"Is there a real edge?\" before making the next irreversible move. Preserve fall back to the current Day Trading baseline while running it."
+        }
+      },
+      "policyBaselines": [
+        {
+          "id": "always_cautious",
+          "label": "Always start cautiously",
+          "run": {
+            "successRate": 1,
+            "meanCapital": 57994.83,
+            "meanHealth": 0.8714,
+            "meanHappiness": 1,
+            "meanBeliefConfidence": 0.4875,
+            "meanBeliefUncertainty": 0.6868,
+            "meanDownsideSalience": 0.4144,
+            "utilityScore": 0.9464,
+            "topFocusMetric": "unknown",
+            "topUncertainty": "Is there a real edge?",
+            "topExperiment": "Design the smallest behaviorally binding test that resolves \"Is there a real edge?\" before making the next irreversible move. Preserve fall back to the current Day Trading baseline while running it."
+          }
+        },
+        {
+          "id": "always_moderate",
+          "label": "Always start with the moderate live-trading path",
+          "run": {
+            "successRate": 0.7143,
+            "meanCapital": 52386.92,
+            "meanHealth": 0.8143,
+            "meanHappiness": 1,
+            "meanBeliefConfidence": 0.4771,
+            "meanBeliefUncertainty": 0.6947,
+            "meanDownsideSalience": 0.4347,
+            "utilityScore": 0.7932,
+            "topFocusMetric": "unknown",
+            "topUncertainty": "Is there a real edge?",
+            "topExperiment": "Design the smallest behaviorally binding test that resolves \"Is there a real edge?\" before making the next irreversible move. Preserve fall back to the current Day Trading baseline while running it."
+          }
+        },
+        {
+          "id": "always_aggressive",
+          "label": "Always start aggressively",
+          "run": {
+            "successRate": 0.4286,
+            "meanCapital": 46720.78,
+            "meanHealth": 0.85,
+            "meanHappiness": 0.7429,
+            "meanBeliefConfidence": 0.4065,
+            "meanBeliefUncertainty": 0.7419,
+            "meanDownsideSalience": 0.4757,
+            "utilityScore": 0.6024,
+            "topFocusMetric": "beliefUncertainty",
+            "topUncertainty": "Is there a real edge?",
+            "topExperiment": "Run a falsification test specifically designed to break Is there a real edge? instead of confirm it."
+          }
+        }
+      ],
+      "evidenceCases": [
+        {
+          "id": "day_trading_edge_validation",
+          "title": "Positive live-edge validation",
+          "baseline": {
+            "successRate": 0.5714,
+            "meanCapital": 43388.62,
+            "meanHealth": 0.8429,
+            "meanHappiness": 0.9429,
+            "meanBeliefConfidence": 0.4199,
+            "meanBeliefUncertainty": 0.748,
+            "meanDownsideSalience": 0.4829,
+            "utilityScore": 0.6961,
+            "topFocusMetric": "unknown",
+            "topUncertainty": "Is there a real edge?",
+            "topExperiment": "Design the smallest behaviorally binding test that resolves \"Is there a real edge?\" before making the next irreversible move. Preserve fall back to the current Day Trading baseline while running it."
+          },
+          "rerun": {
+            "successRate": 0.8571,
+            "meanCapital": 62477.64,
+            "meanHealth": 0.8571,
+            "meanHappiness": 0.9786,
+            "meanBeliefConfidence": 0.5485,
+            "meanBeliefUncertainty": 0.6318,
+            "meanDownsideSalience": 0.4279,
+            "utilityScore": 0.8885,
+            "topFocusMetric": "unknown",
+            "topUncertainty": "Can you execute under volatility?",
+            "topExperiment": "Design the smallest behaviorally binding test that resolves \"Can you execute under volatility?\" before making the next irreversible move. Preserve fall back to the current Day Trading baseline while running it."
+          },
+          "uncertaintyReduction": 0.1162,
+          "confidenceShift": 0.1286,
+          "downsideShift": -0.055,
+          "utilityShift": 0.1924,
+          "topRecommendationChanged": true,
+          "pass": true,
+          "failures": []
+        }
+      ],
+      "stability": {
+        "repeats": 3,
+        "maxDrift": 0,
+        "identical": true,
+        "repeatedRuns": [
+          {
+            "successRate": 0.5714,
+            "meanCapital": 43388.62,
+            "meanHealth": 0.8429,
+            "meanHappiness": 0.9429,
+            "meanBeliefConfidence": 0.4199,
+            "meanBeliefUncertainty": 0.748,
+            "meanDownsideSalience": 0.4829,
+            "utilityScore": 0.6961,
+            "topFocusMetric": "unknown",
+            "topUncertainty": "Is there a real edge?",
+            "topExperiment": "Design the smallest behaviorally binding test that resolves \"Is there a real edge?\" before making the next irreversible move. Preserve fall back to the current Day Trading baseline while running it."
+          },
+          {
+            "successRate": 0.5714,
+            "meanCapital": 43388.62,
+            "meanHealth": 0.8429,
+            "meanHappiness": 0.9429,
+            "meanBeliefConfidence": 0.4199,
+            "meanBeliefUncertainty": 0.748,
+            "meanDownsideSalience": 0.4829,
+            "utilityScore": 0.6961,
+            "topFocusMetric": "unknown",
+            "topUncertainty": "Is there a real edge?",
+            "topExperiment": "Design the smallest behaviorally binding test that resolves \"Is there a real edge?\" before making the next irreversible move. Preserve fall back to the current Day Trading baseline while running it."
+          }
+        ]
+      },
+      "pass": true,
+      "failures": []
+    }
+  ],
+  "metrics": {
+    "meanCalibrationError": 0,
+    "meanStaticPolicyRegret": 0.2324,
+    "meanUncertaintyReduction": 0.0801,
+    "maxStabilityDrift": 0,
+    "passRate": 1
+  },
+  "pass": true
+}

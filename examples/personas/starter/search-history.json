@@ -1,0 +1,84 @@
+{
+  "searches": [
+    {
+      "query": "Best coffee shops near my office",
+      "timestamp": "2025-11-23T07:30:00Z"
+    },
+    {
+      "query": "How to optimize React component rendering",
+      "timestamp": "2025-11-23T09:10:00Z"
+    },
+    {
+      "query": "2025 tech stack trends for product managers",
+      "timestamp": "2025-11-24T14:45:00Z"
+    },
+    {
+      "query": "Should I switch from AWS to Azure for cost savings?",
+      "timestamp": "2025-11-25T20:15:00Z"
+    },
+    {
+      "query": "Rain forecast for downtown tomorrow",
+      "timestamp": "2025-12-01T08:05:00Z"
+    },
+    {
+      "query": "Low-carb dinner ideas for busy professionals",
+      "timestamp": "2025-12-02T12:30:00Z"
+    },
+    {
+      "query": "How to negotiate salary as a software engineer",
+      "timestamp": "2025-12-03T17:50:00Z"
+    },
+    {
+      "query": "Top 10 productivity tools for product teams",
+      "timestamp": "2025-12-10T09:00:00Z"
+    },
+    {
+      "query": "Is it better to invest in index funds or real estate?",
+      "timestamp": "2025-12-12T22:30:00Z"
+    },
+    {
+      "query": "Google Cloud Functions vs AWS Lambda performance",
+      "timestamp": "2025-12-15T15:20:00Z"
+    },
+    {
+      "query": "Where to find free coding bootcamps in NYC",
+      "timestamp": "2025-12-20T11:45:00Z"
+    },
+    {
+      "query": "Winter weather forecast for my commute",
+      "timestamp": "2026-01-05T07:15:00Z"
+    },
+    {
+      "query": "How to build a product roadmap for a SaaS startup",
+      "timestamp": "2026-01-10T13:00:00Z"
+    },
+    {
+      "query": "Should I take a sabbatical to learn new language?",
+      "timestamp": "2026-01-12T19:30:00Z"
+    },
+    {
+      "query": "Best budget travel destinations for 2026",
+      "timestamp": "2026-01-18T23:00:00Z"
+    },
+    {
+      "query": "Tips for saving 20% of salary each month",
+      "timestamp": "2026-02-02T10:10:00Z"
+    },
+    {
+      "query": "React Native vs Flutter for cross-platform apps",
+      "timestamp": "2026-02-15T14:00:00Z"
+    },
+    {
+      "query": "How to handle product failure in stakeholder meetings",
+      "timestamp": "2026-02-20T18:45:00Z"
+    },
+    {
+      "query": "Is remote work a long-term trend?",
+      "timestamp": "2026-03-01T09:40:00Z"
+    },
+    {
+      "query": "Directions to the nearest grocery store from my apartment",
+      "timestamp": "2026-03-23T20:55:00Z"
+    }
+  ]
+}

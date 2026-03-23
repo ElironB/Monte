@@ -32,7 +32,7 @@ The npm package name is `monte-engine`. The installed executable is `monte`.
 
 ### CLI process
 
-`src/cli/index.ts` bootstraps the local and globally installable CLI. The CLI stores user config in `~/.monte/config.json`, primarily the target API URL.
+`src/cli/index.ts` bootstraps the local and globally installable CLI. The CLI stores user config in `~/.monte/config.json`, including the target API URL plus optional provider credentials for global usage when no repo-local `.env` is present.
 
 The agent-facing entrypoint is:
 
@@ -41,6 +41,12 @@ The agent-facing entrypoint is:
 The machine-readable readiness entrypoint is:
 
 - `monte doctor --json`
+
+Bundled starter assets are exposed through:
+
+- `monte example list`
+- `monte example path starter`
+- `monte example ingest starter`
 
 ### Background jobs
 
@@ -359,6 +365,9 @@ Installed usage prefers:
 - `monte decide "<question>" --mode standard --wait --json`
 - `monte doctor --json`
 - `monte config set-api http://localhost:3000`
+- `monte config set-provider openrouter`
+- `monte config set-api-key <key>`
+- `monte example ingest starter`
 
 Repo-local development usage prefers:
 

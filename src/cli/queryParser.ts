@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import OpenAI from 'openai';
+import { resolveLLMProviderConfig } from './providerConfig.js';
 import { parseJsonResponse } from '../utils/json.js';
 
 export interface ParsedSimulation {
@@ -24,22 +25,16 @@ export const SCENARIO_TYPES = [
 type ScenarioType = (typeof SCENARIO_TYPES)[number];
 
 function loadLLMConfig(): { apiKey: string; baseUrl: string; model: string } {
-  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.LLM_API_KEY;
+  const llm = resolveLLMProviderConfig();
 
-  if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY or GROQ_API_KEY is required. Set one in your .env file.');
+  if (!llm.apiKey) {
+    throw new Error('No LLM API key found. Set OPENROUTER_API_KEY / GROQ_API_KEY, or run `monte config set-provider ...` and `monte config set-api-key ...`.');
   }
 
-  const baseUrl = process.env.OPENROUTER_API_KEY
-    ? 'https://openrouter.ai/api/v1'
-    : process.env.GROQ_API_KEY
-      ? 'https://api.groq.com/openai/v1'
-      : process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1';
-
   return {
-    apiKey,
-    baseUrl,
-    model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
+    apiKey: llm.apiKey,
+    baseUrl: llm.baseUrl,
+    model: llm.model,
   };
 }
 

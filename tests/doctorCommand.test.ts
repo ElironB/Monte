@@ -29,6 +29,9 @@ describe('doctor command', () => {
         decisionBatchSize: 20,
         decisionBatchFlushMs: 40,
         llmRpmLimit: 30,
+        llmProvider: 'openrouter',
+        llmConfigSource: 'config',
+        embeddingConfigSource: 'config',
       },
     );
 
@@ -45,6 +48,9 @@ describe('doctor command', () => {
         decisionBatchSize: 20,
         decisionBatchFlushMs: 40,
         llmRpmLimit: 30,
+        llmProvider: 'openrouter',
+        llmConfigSource: 'config',
+        embeddingConfigSource: 'config',
       },
       checks: [
         { name: 'API Server', status: 'pass' },
@@ -72,6 +78,9 @@ describe('doctor command', () => {
         decisionBatchSize: 20,
         decisionBatchFlushMs: 40,
         llmRpmLimit: null,
+        llmProvider: 'openrouter',
+        llmConfigSource: 'config',
+        embeddingConfigSource: 'config',
       },
     );
 

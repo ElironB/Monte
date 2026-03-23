@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { mkdirSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
+import { resolveLLMProviderConfig } from '../providerConfig.js';
 import { dimText, icons, infoLabel, sectionHeader, valueText } from '../styles.js';
 
 import type { GeneratedPersona } from '../../persona/syntheticGenerator.js';
@@ -43,7 +44,12 @@ export const generateCommands = new Command('generate')
     console.log();
 
     const { SyntheticGenerator } = await import('../../persona/syntheticGenerator.js');
-    const generator = new SyntheticGenerator();
+    const llm = resolveLLMProviderConfig();
+    const generator = new SyntheticGenerator({
+      apiKey: llm.apiKey,
+      baseUrl: llm.baseUrl,
+      model: llm.model,
+    });
 
     let persona: GeneratedPersona;
     try {
