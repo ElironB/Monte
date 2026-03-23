@@ -9,6 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      NODE_ENV: test
+      NEO4J_PASSWORD: ci-test-password
+      MINIO_ACCESS_KEY: ci-test-access-key
+      MINIO_SECRET_KEY: ci-test-secret-key
 
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +35,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      NODE_ENV: test
+      NEO4J_PASSWORD: ci-test-password
+      MINIO_ACCESS_KEY: ci-test-access-key
+      MINIO_SECRET_KEY: ci-test-secret-key
 
     steps:
       - uses: actions/checkout@v4
