@@ -40,6 +40,7 @@ In self-hosted OSS mode, auth is stubbed to a local injected user.
 - An embedding-capable key for persona builds
 
 The simplest setup is `OPENROUTER_API_KEY`, which can cover both chat and embeddings.
+For the globally installed CLI, you can either keep using environment variables or store provider credentials once with `monte config`.
 
 ### 1. Configure the environment
 
@@ -83,6 +84,8 @@ The API starts on `http://localhost:3000` by default. Swagger docs are available
 ```bash
 npm install -g monte-engine
 monte config set-api http://localhost:3000
+monte config set-provider openrouter
+monte config set-api-key <your-openrouter-key>
 ```
 
 ### 5. Verify the stack
@@ -90,6 +93,7 @@ monte config set-api http://localhost:3000
 ```bash
 monte doctor
 monte doctor --json
+monte config show
 ```
 
 ## Global CLI Install
@@ -99,8 +103,20 @@ The published npm package is `monte-engine`, but the executable on your `PATH` i
 ```bash
 npm install -g monte-engine
 monte config set-api http://localhost:3000
+monte config set-provider openrouter
+monte config set-api-key <your-openrouter-key>
 monte doctor
 ```
+
+If you use Groq for chat and a separate embedding provider, store both:
+
+```bash
+monte config set-provider groq
+monte config set-api-key <your-groq-key>
+monte config set-embedding-key <your-embedding-key>
+```
+
+CLI key storage lives in `~/.monte/config.json`. Environment variables still take precedence if both are set.
 
 For local development inside this repo, use the source-running variant instead:
 
@@ -116,6 +132,8 @@ Preflight:
 
 ```bash
 monte config set-api http://localhost:3000
+monte config set-provider openrouter
+monte config set-api-key <your-openrouter-key>
 monte doctor --json
 ```
 
@@ -135,18 +153,27 @@ monte simulate results <simulation-id> -f json
 
 `monte decide --json` returns a single JSON object. Without `--wait`, it returns the queued simulation plus recommended polling commands. With `--wait`, it also returns a condensed decision bundle and the raw aggregated results payload.
 
-## Quick Demo
+## Bundled Example Persona
 
-Monte ships a synthetic persona generator, so you can exercise the full loop without exporting your own data first.
+Monte now ships a bundled starter persona inside the npm package so you can test the full loop without generating data first.
 
 ```bash
-monte generate "26 year old software engineer who day trades, impulse spender, anxious about career growth"
-monte ingest ./generated-persona
+monte example list
+monte example ingest starter
 monte persona build
-monte decide "should I quit my job and day trade with my savings?" --mode standard --wait
+monte persona psychology
+monte decide "should I leave my stable product job to join a startup and put $25k into the idea?" --mode fast --wait
 ```
 
-You can also compare sharply different personas:
+If you want the raw filesystem path to the bundled dataset:
+
+```bash
+monte example path starter
+```
+
+## Quick Demo
+
+Monte still ships a synthetic persona generator if you want a fresh persona tailored to a specific description.
 
 ```bash
 monte generate "conservative 40 year old accountant, disciplined saver, risk-averse" -o ./persona-conservative
@@ -196,6 +223,33 @@ Completed simulations now include runtime telemetry in `simulate results -f json
 - slowest decision nodes
 
 Use this to understand whether a run is bottlenecked by chat latency, queueing, retries, or persistence instead of guessing.
+
+## Benchmark Snapshot
+
+Monte's benchmark harness is deterministic and seeded, so these numbers are a regression surface rather than a marketing screenshot. The current suite tracks:
+
+- fixture pass rate
+- calibration mean absolute error
+- static policy regret
+- uncertainty reduction after evidence
+- deterministic stability drift
+
+Current committed snapshot (`phase3-v2`):
+
+- Fixtures: `3`
+- Pass rate: `100%`
+- Calibration MAE: `0.000`
+- Policy regret: `0.232`
+- Uncertainty reduction: `0.080`
+- Max drift: `0.000`
+
+You can regenerate the machine-readable snapshot with:
+
+```bash
+npm run benchmark -- --output examples/benchmarks/latest-benchmark.json
+```
+
+The latest benchmark snapshot is committed under `examples/benchmarks/`.
 
 ## Common CLI Workflows
 
@@ -259,6 +313,21 @@ Current fixture corpus:
 - `startup_founding_seeded_corpus`
 - `real_estate_purchase_carry_costs`
 - `day_trading_edge_discipline`
+
+## Publish To npm
+
+The npm package name is currently `monte-engine`, while the installed executable is still `monte`.
+
+Release checklist:
+
+```bash
+npm login
+npm whoami
+npm run release:check
+npm publish
+```
+
+If you eventually acquire the `monte` package name on npm, you can rename the package later without changing the CLI binary name.
 
 ## Project Map
 

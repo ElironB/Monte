@@ -147,6 +147,7 @@ ingestionCommands
       console.error(`${icons.error} ${warningText('Usage: monte ingest <path>')}`);
       console.error(dimText('  e.g., monte ingest ./my-data'));
       console.error(dimText('  e.g., monte ingest .'));
+      console.error(dimText('  or, for the bundled starter persona: monte example ingest starter'));
       process.exit(1);
     }
 

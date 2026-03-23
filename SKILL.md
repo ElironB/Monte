@@ -68,6 +68,8 @@ Keep that loop in mind and most of the repository will make sense.
 - Signal extraction is rule-based.
 - The benchmark harness is part of the product contract, not an optional extra.
 - The npm package is `monte-engine`; the installed executable is `monte`.
+- The globally installed CLI can store provider credentials in `~/.monte/config.json`.
+- A bundled starter persona ships under `examples/personas/starter` and is exposed by `monte example`.
 
 ## Practical guardrails
 
@@ -145,7 +147,10 @@ Installed and agent-facing usage:
 
 ```bash
 monte config set-api http://localhost:3000
+monte config set-provider openrouter
+monte config set-api-key <key>
 monte doctor --json
+monte example ingest starter
 monte decide "should I do this?" --mode standard --wait --json
 monte simulate progress <simulation-id> --json
 monte simulate results <simulation-id> -f json

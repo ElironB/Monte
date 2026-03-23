@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -7,10 +7,20 @@ export { CONFIG_DIR };
 const CONFIG_DIR = join(homedir(), '.monte');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
+export type LLMProvider = 'openrouter' | 'groq' | 'custom';
+
 export interface CLIConfig {
   apiUrl: string;
   defaultScenario?: string;
   defaultCloneCount?: number;
+  llmProvider?: LLMProvider;
+  llmApiKey?: string;
+  llmBaseUrl?: string;
+  llmModel?: string;
+  llmReasoningModel?: string;
+  embeddingApiKey?: string;
+  embeddingBaseUrl?: string;
+  embeddingModel?: string;
 }
 
 export function ensureConfigDir(): void {
@@ -32,7 +42,13 @@ export function loadConfig(): CLIConfig {
 export function saveConfig(config: Partial<CLIConfig>): void {
   ensureConfigDir();
   const current = loadConfig();
-  writeFileSync(CONFIG_FILE, JSON.stringify({ ...current, ...config }, null, 2));
+  writeFileSync(CONFIG_FILE, JSON.stringify({ ...current, ...config }, null, 2), { mode: 0o600 });
+
+  try {
+    chmodSync(CONFIG_FILE, 0o600);
+  } catch {
+    // Best effort only. Windows does not reliably support POSIX permission bits.
+  }
 }
 
 const CONNECTIONS_FILE = join(CONFIG_DIR, 'connections.json');

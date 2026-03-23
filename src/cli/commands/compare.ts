@@ -5,6 +5,7 @@ import { join, extname, basename, resolve } from 'path';
 import { api, MonteAPIError } from '../api.js';
 import { DIMENSION_DISPLAY, DIMENSION_KEYS } from '../dimensionMetadata.js';
 import OpenAI from 'openai';
+import { resolveLLMProviderConfig } from '../providerConfig.js';
 import { dimText, icons, infoLabel, sectionHeader, valueText } from '../styles.js';
 import type { AggregatedResults, OutcomeDistribution, StratifiedBreakdown, SimulationStatistics, Histogram } from '../../simulation/types.js';
 
@@ -402,14 +403,12 @@ function findDivergentSignals(traitsA: PersonaTrait[], traitsB: PersonaTrait[]):
 }
 
 function loadLLMConfig(): { apiKey?: string; baseUrl?: string; model?: string } {
-  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GROQ_API_KEY || process.env.LLM_API_KEY;
-  const baseUrl = process.env.OPENROUTER_API_KEY
-    ? 'https://openrouter.ai/api/v1'
-    : process.env.GROQ_API_KEY
-      ? 'https://api.groq.com/openai/v1'
-      : process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1';
-  const model = process.env.LLM_MODEL || 'openai/gpt-oss-20b';
-  return { apiKey: apiKey || undefined, baseUrl, model };
+  const llm = resolveLLMProviderConfig();
+  return {
+    apiKey: llm.apiKey,
+    baseUrl: llm.baseUrl,
+    model: llm.model,
+  };
 }
 
 async function generateComparisonNarrative(

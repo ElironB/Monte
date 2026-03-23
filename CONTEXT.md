@@ -10,7 +10,8 @@ Monte is a self-hosted TypeScript decision engine. It ingests exported personal 
 
 - Runtime: Fastify API plus Commander CLI
 - Distribution: npm package `monte-engine`, global executable `monte`
-- CLI config: `~/.monte/config.json`
+- CLI config: `~/.monte/config.json` stores the target API URL plus optional provider credentials for the globally installed CLI
+- Bundled examples: `examples/personas/starter` ships in the npm package and is surfaced by `monte example`
 - Storage: Neo4j for graph data, Redis for cache, queues, and live progress, MinIO for uploaded source blobs
 - Background execution: BullMQ queues and workers for ingestion, persona builds, and simulation batches
 - Auth model: self-hosted OSS mode injects `local-user`; there is no hosted auth flow in the current repo
@@ -152,7 +153,12 @@ Primary user-facing commands:
 
 - `monte doctor`
 - `monte doctor --json`
+- `monte config set-provider <provider>`
+- `monte config set-api-key <key>`
+- `monte config set-embedding-key <key>`
 - `monte ingest`
+- `monte example list`
+- `monte example ingest starter`
 - `monte persona build`
 - `monte simulate`
 - `monte simulate progress <id> --json`

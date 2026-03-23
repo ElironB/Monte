@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import { api } from '../api.js';
 import { loadConfig } from '../config.js';
 import { buildJsonErrorPayload, printJson, printJsonErrorAndExit } from '../output.js';
+import { resolveCliProviderConfig } from '../providerConfig.js';
 import { dimText, icons, infoLabel, sectionHeader } from '../styles.js';
 import { resolveSimulationRuntimeConfig } from '../../config/simulationRuntime.js';
 
@@ -41,6 +42,9 @@ interface DoctorRuntimeSettings {
   decisionBatchSize: number;
   decisionBatchFlushMs: number;
   llmRpmLimit: number | null;
+  llmProvider: string;
+  llmConfigSource: string;
+  embeddingConfigSource: string;
 }
 
 interface DoctorReport {
@@ -60,42 +64,20 @@ export const doctorCommands = new Command('doctor')
   .option('--json', 'output machine-readable JSON', false);
 
 function resolveLlmConfig(): ResolvedProviderConfig {
-  if (process.env.OPENROUTER_API_KEY) {
-    return {
-      apiKey: process.env.OPENROUTER_API_KEY,
-      baseUrl: 'https://openrouter.ai/api/v1',
-      model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
-    };
-  }
-
-  if (process.env.GROQ_API_KEY) {
-    return {
-      apiKey: process.env.GROQ_API_KEY,
-      baseUrl: 'https://api.groq.com/openai/v1',
-      model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
-    };
-  }
-
+  const { llm } = resolveCliProviderConfig();
   return {
-    apiKey: process.env.LLM_API_KEY,
-    baseUrl: process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1',
-    model: process.env.LLM_MODEL || 'openai/gpt-oss-20b',
+    apiKey: llm.apiKey,
+    baseUrl: llm.baseUrl,
+    model: llm.model,
   };
 }
 
 function resolveEmbeddingConfig(): ResolvedProviderConfig {
-  if (process.env.EMBEDDING_API_KEY) {
-    return {
-      apiKey: process.env.EMBEDDING_API_KEY,
-      baseUrl: process.env.EMBEDDING_BASE_URL || 'https://openrouter.ai/api/v1',
-      model: process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small',
-    };
-  }
-
+  const { embedding } = resolveCliProviderConfig();
   return {
-    apiKey: process.env.OPENROUTER_API_KEY,
-    baseUrl: 'https://openrouter.ai/api/v1',
-    model: process.env.EMBEDDING_MODEL || 'openai/text-embedding-3-small',
+    apiKey: embedding.apiKey,
+    baseUrl: embedding.baseUrl,
+    model: embedding.model,
   };
 }
 
@@ -134,6 +116,7 @@ async function fetchReadyHealth(apiUrl: string): Promise<{ response?: ReadyHealt
 export function getDoctorRuntimeSettings(): DoctorRuntimeSettings {
   const { apiUrl } = loadConfig();
   const runtime = resolveSimulationRuntimeConfig();
+  const providers = resolveCliProviderConfig();
 
   return {
     apiUrl,
@@ -145,6 +128,9 @@ export function getDoctorRuntimeSettings(): DoctorRuntimeSettings {
     decisionBatchSize: runtime.decisionBatchSize,
     decisionBatchFlushMs: runtime.decisionBatchFlushMs,
     llmRpmLimit: runtime.llmRpmLimit ?? null,
+    llmProvider: providers.llm.provider,
+    llmConfigSource: providers.llm.source,
+    embeddingConfigSource: providers.embedding.source,
   };
 }
 
@@ -230,7 +216,7 @@ async function collectHealthChecks(apiUrl: string): Promise<HealthCheck[]> {
       name: 'LLM API Key',
       status: 'fail',
       message: 'No API key found',
-      details: 'Set OPENROUTER_API_KEY, GROQ_API_KEY, or LLM_API_KEY',
+      details: 'Set OPENROUTER_API_KEY / GROQ_API_KEY / LLM_API_KEY, or run `monte config set-provider ...` and `monte config set-api-key ...`',
     });
   } else {
     try {
@@ -262,7 +248,7 @@ async function collectHealthChecks(apiUrl: string): Promise<HealthCheck[]> {
       name: 'Embedding API Key',
       status: 'fail',
       message: 'No embedding key found',
-      details: 'Set OPENROUTER_API_KEY or EMBEDDING_API_KEY',
+      details: 'Set OPENROUTER_API_KEY / EMBEDDING_API_KEY, or run `monte config set-embedding-key ...`',
     });
   } else {
     try {
@@ -309,6 +295,8 @@ function renderRuntimeSettings(runtime: DoctorRuntimeSettings): void {
   console.log(`  ${infoLabel('Decision Batch Size:')} ${runtime.decisionBatchSize}`);
   console.log(`  ${infoLabel('Decision Flush:')} ${runtime.decisionBatchFlushMs}ms`);
   console.log(`  ${infoLabel('LLM RPM Limit:')} ${rpmText}`);
+  console.log(`  ${infoLabel('LLM Provider:')} ${runtime.llmProvider} (${runtime.llmConfigSource})`);
+  console.log(`  ${infoLabel('Embedding Auth:')} ${runtime.embeddingConfigSource}`);
 }
 
 doctorCommands.action(async (options: { json?: boolean }) => {

@@ -1,5 +1,4 @@
 import OpenAI from 'openai';
-import { config } from '../config/index.js';
 import { parseJsonResponse, stripCodeFence } from '../utils/json.js';
 
 export { parseJsonResponse };
@@ -37,29 +36,35 @@ interface LLMCallOptions {
   responseFormat?: { type: 'json_object' };
 }
 
+export interface SyntheticGeneratorLLMConfig {
+  apiKey?: string;
+  baseUrl: string;
+  model: string;
+}
+
 export class SyntheticGenerator {
   private client: OpenAI | null = null;
   private model: string;
 
-  constructor() {
-    if (config.llm?.apiKey) {
+  constructor(llmConfig: SyntheticGeneratorLLMConfig) {
+    if (llmConfig.apiKey) {
       this.client = new OpenAI({
-        apiKey: config.llm.apiKey,
-        baseURL: config.llm.baseUrl || 'https://api.groq.com/openai/v1',
+        apiKey: llmConfig.apiKey,
+        baseURL: llmConfig.baseUrl,
         defaultHeaders: {
           'HTTP-Referer': 'https://github.com/ElironB/Monte',
           'X-Title': 'Monte Engine',
         },
       });
-      this.model = config.llm.model || 'openai/gpt-oss-20b';
+      this.model = llmConfig.model;
     } else {
-      this.model = '';
+      this.model = llmConfig.model;
     }
   }
 
   async generate(options: GenerationOptions): Promise<GeneratedPersona> {
     if (!this.client) {
-      throw new Error('OPENROUTER_API_KEY or GROQ_API_KEY required for persona generation. Set one in your .env file.');
+      throw new Error('No LLM API key found for persona generation. Set OPENROUTER_API_KEY / GROQ_API_KEY, or run `monte config set-provider ...` and `monte config set-api-key ...`.');
     }
 
     const startDate = new Date();

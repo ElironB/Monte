@@ -9,6 +9,8 @@
     "build": "tsc",
     "prepare": "npm run build",
     "prepack": "npm run build",
+    "release:check": "npm run build && npm test -- --run && npm run test:benchmarks && npm run benchmark:pretty && npm pack",
+    "publish:dry-run": "npm publish --dry-run",
     "benchmark": "tsx src/benchmarks/runHarness.ts --json",
     "benchmark:pretty": "tsx src/benchmarks/runHarness.ts",
     "start": "node dist/index.js",
@@ -25,11 +27,20 @@
     "decision-support",
     "behavioral-analysis"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ElironB/Monte.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ElironB/Monte/issues"
+  },
+  "homepage": "https://github.com/ElironB/Monte#readme",
   "bin": {
     "monte": "dist/cli/index.js"
   },
   "files": [
     "dist",
+    "examples",
     "README.md",
     "AGENTS.md",
     "CONTEXT.md",
