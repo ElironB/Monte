@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { existsSync } from 'fs';
 import { assertBundledExamplePersonaExists, getBundledExamplePersona, listBundledExamplePersonas } from '../src/cli/examples.js';
+import { resolveDiscoveredFiles } from '../src/cli/ingestUtils.js';
 
 describe('bundled example personas', () => {
   test('ships a starter persona that is discoverable from the CLI', () => {
@@ -18,5 +19,15 @@ describe('bundled example personas', () => {
 
   test('lists all bundled example personas', () => {
     expect(listBundledExamplePersonas().map((entry) => entry.id)).toContain('starter');
+  });
+
+  test('can exclude starter README metadata from bundled example ingestion', () => {
+    const examplePath = assertBundledExamplePersonaExists('starter');
+    const { files } = resolveDiscoveredFiles(examplePath, {
+      excludeFilenames: ['README.md'],
+    });
+
+    expect(files.some((file) => file.filename === 'README.md')).toBe(false);
+    expect(files.some((file) => file.filename === 'reflections.md')).toBe(true);
   });
 });

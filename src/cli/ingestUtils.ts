@@ -31,13 +31,18 @@ export interface UploadProgressHooks {
   ) => void;
 }
 
-function walkDirectory(dirPath: string): DiscoveredFile[] {
+export interface DiscoveryOptions {
+  excludeFilenames?: string[];
+}
+
+function walkDirectory(dirPath: string, options: DiscoveryOptions = {}): DiscoveredFile[] {
   const files: DiscoveredFile[] = [];
+  const excludedFilenames = new Set(options.excludeFilenames ?? []);
 
   function walk(dir: string) {
     const entries = readdirSync(dir);
     for (const entry of entries) {
-      if (entry.startsWith('.') || SKIP_DIRS.has(entry)) {
+      if (entry.startsWith('.') || SKIP_DIRS.has(entry) || excludedFilenames.has(entry)) {
         continue;
       }
 
@@ -126,14 +131,17 @@ export function getMimetype(ext: string): string {
   return mimeMap[ext] || 'application/octet-stream';
 }
 
-export function resolveDiscoveredFiles(inputPath: string): { absolutePath: string; files: DiscoveredFile[]; isDirectory: boolean } {
+export function resolveDiscoveredFiles(
+  inputPath: string,
+  options: DiscoveryOptions = {},
+): { absolutePath: string; files: DiscoveredFile[]; isDirectory: boolean } {
   const absolutePath = resolve(inputPath);
   const stat = statSync(absolutePath);
 
   if (stat.isDirectory()) {
     return {
       absolutePath,
-      files: walkDirectory(absolutePath),
+      files: walkDirectory(absolutePath, options),
       isDirectory: true,
     };
   }

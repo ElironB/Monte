@@ -38,7 +38,9 @@ exampleCommands
     try {
       const example = getBundledExamplePersona(id);
       const examplePath = assertBundledExamplePersonaExists(id);
-      const { files } = resolveDiscoveredFiles(examplePath);
+      const { files } = resolveDiscoveredFiles(examplePath, {
+        excludeFilenames: ['README.md'],
+      });
 
       if (files.length === 0) {
         throw new Error(`No files found in bundled example persona: ${examplePath}`);
