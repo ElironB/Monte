@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Worker } from 'bullmq';
 import { createWorker, IngestionJobData, PersonaJobData, SimulationJobData } from '../ingestionQueue.js';
 import { logger } from '../../../utils/logger.js';
+import { config } from '../../../config/index.js';
 import { runQuerySingle, runWriteSingle, runQuery } from '../../../config/neo4j.js';
 import { getFile } from '../../../config/minio.js';
 import { getRedisClient } from '../../../config/redis.js';
@@ -28,6 +29,7 @@ import { parseTimestamp, detectSequences } from '../../extractors/temporalUtils.
 import { SimulationEngine } from '../../../simulation/engine.js';
 import { compileScenario } from '../../../simulation/scenarioCompiler.js';
 import { createAggregator } from '../../../simulation/resultAggregator.js';
+import { persistCloneResultsBatch } from '../../../simulation/resultPersistence.js';
 import { buildRerunComparison } from '../../../simulation/evidenceLoop.js';
 import {
   AggregatedResults,
@@ -35,7 +37,11 @@ import {
   EvidenceResult,
 } from '../../../simulation/types.js';
 import { calculateKelly } from '../../../simulation/kellyCalculator.js';
-import { calculateSimulationProgress, estimateTimeRemainingSeconds } from '../../../simulation/progress.js';
+import {
+  calculatePersistingPhaseProgress,
+  createProgressSnapshot,
+  estimateTimeRemainingSeconds,
+} from '../../../simulation/progress.js';
 import { RateLimiter, createConcurrencyLimiter, detectProviderRPM } from '../../../utils/rateLimiter.js';
 
 const extractors = [
@@ -925,7 +931,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     });
     
     // Calculate batch size (100 clones per batch by default)
-    const batchSize = 100;
+    const batchSize = config.simulation.batchSize;
     const startIndex = Math.trunc(cloneBatchIndex * batchSize);
     const endIndex = Math.trunc(Math.min(startIndex + batchSize, simulation.cloneCount));
     const cloneLimit = Math.max(0, Math.trunc(endIndex - startIndex));
@@ -962,10 +968,10 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       scenario: scenarioType 
     }, 'Running simulation batch');
 
-    const configuredRPM = Number.parseInt(process.env.LLM_RPM_LIMIT || '', 10);
-    const rpm = configuredRPM > 0 ? configuredRPM : detectProviderRPM();
-    const configuredConcurrency = Number.parseInt(process.env.SIMULATION_CONCURRENCY || '', 10);
-    const concurrency = configuredConcurrency > 0 ? configuredConcurrency : 10;
+    const rpm = typeof config.simulation.llmRpmLimit === 'number'
+      ? config.simulation.llmRpmLimit
+      : detectProviderRPM();
+    const concurrency = config.simulation.cloneConcurrency;
     const rateLimiter = new RateLimiter(rpm);
     const redis = await getRedisClient();
     const processedClonesKey = getSimulationProcessedClonesKey(simulationId);
@@ -1023,16 +1029,24 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     const limit = createConcurrencyLimiter(concurrency);
     const batchStart = Date.now();
     const initialProcessedClones = Number.parseInt(await redis.get(processedClonesKey) || '0', 10);
-    await publishSimulationProgress(redis, simulationId, {
-      status: 'running',
-      progress: calculateSimulationProgress(initialProcessedClones, simulation.cloneCount, 'running'),
-      totalBatches,
-      currentBatch: cloneBatchIndex,
-      processedClones: initialProcessedClones,
-      totalClones: simulation.cloneCount,
-      batchProcessedClones: 0,
-      batchCloneCount: clones.length,
-    });
+    {
+      const progressSnapshot = createProgressSnapshot({
+        status: 'running',
+        phase: 'executing',
+        phaseProgress: initialProcessedClones > 0
+          ? Math.round((Math.min(initialProcessedClones, simulation.cloneCount) / simulation.cloneCount) * 100)
+          : 0,
+      });
+      await publishSimulationProgress(redis, simulationId, {
+        ...progressSnapshot,
+        totalBatches,
+        currentBatch: cloneBatchIndex,
+        processedClones: initialProcessedClones,
+        totalClones: simulation.cloneCount,
+        batchProcessedClones: 0,
+        batchCloneCount: clones.length,
+      });
+    }
     const batchLogInterval = Math.max(1, Math.ceil(clones.length / 4));
     let lastLoggedBatchProgress = 0;
 
@@ -1059,7 +1073,11 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
               redis.expire(batchProcessedClonesKey, SIMULATION_PROGRESS_TTL_SECONDS),
             ]);
 
-            const progress = calculateSimulationProgress(processedClones, simulation.cloneCount, 'running');
+            const progressSnapshot = createProgressSnapshot({
+              status: 'running',
+              phase: 'executing',
+              phaseProgress: Math.round((Math.min(processedClones, simulation.cloneCount) / simulation.cloneCount) * 100),
+            });
             const estimatedTimeRemaining = estimateTimeRemainingSeconds(
               progressStartedAtMs,
               processedClones,
@@ -1067,8 +1085,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
             );
 
             await publishSimulationProgress(redis, simulationId, {
-              status: 'running',
-              progress,
+              ...progressSnapshot,
               totalBatches,
               currentBatch: cloneBatchIndex,
               processedClones,
@@ -1090,7 +1107,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
                 batchCloneCount: clones.length,
                 processedClones,
                 totalClones: simulation.cloneCount,
-                progress,
+                progress: progressSnapshot.progress,
               }, 'Simulation batch progress');
             }
           }
@@ -1109,35 +1126,41 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       rpm,
     }, 'Simulation batch complete');
     
-    // Store clone results in Neo4j
-    for (const result of results) {
-      await runWriteSingle(
-        `MATCH (s:Simulation {id: $simulationId})
-         CREATE (cr:CloneResult {
-           id: $resultId,
-           cloneId: $cloneId,
-           percentile: $percentile,
-           category: $category,
-           path: $path,
-           finalState: $finalState,
-           metrics: $metrics,
-           duration: $duration,
-           createdAt: datetime()
-         })
-         CREATE (s)-[:HAS_RESULT]->(cr)
-         RETURN cr.id as id`,
-        {
-          simulationId,
-          resultId: result.cloneId,
-          cloneId: result.cloneId,
-          percentile: result.stratification.percentile,
-          category: result.stratification.category,
-          path: JSON.stringify(result.path),
-          finalState: JSON.stringify(result.finalState),
-          metrics: JSON.stringify(result.metrics),
-          duration: result.duration,
-        }
-      );
+    const processedClones = Number.parseInt(await redis.get(processedClonesKey) || '0', 10);
+    if (processedClones >= simulation.cloneCount) {
+      const persistStartSnapshot = createProgressSnapshot({
+        status: 'running',
+        phase: 'persisting',
+        phaseProgress: calculatePersistingPhaseProgress(0, Math.max(1, results.length)),
+      });
+      await publishSimulationProgress(redis, simulationId, {
+        ...persistStartSnapshot,
+        totalBatches,
+        currentBatch: cloneBatchIndex,
+        processedClones,
+        totalClones: simulation.cloneCount,
+        batchProcessedClones: clones.length,
+        batchCloneCount: clones.length,
+      });
+    }
+
+    await persistCloneResultsBatch(simulationId, results);
+
+    if (processedClones >= simulation.cloneCount) {
+      const persistCompleteSnapshot = createProgressSnapshot({
+        status: 'running',
+        phase: 'persisting',
+        phaseProgress: calculatePersistingPhaseProgress(results.length, Math.max(1, results.length)),
+      });
+      await publishSimulationProgress(redis, simulationId, {
+        ...persistCompleteSnapshot,
+        totalBatches,
+        currentBatch: cloneBatchIndex,
+        processedClones,
+        totalClones: simulation.cloneCount,
+        batchProcessedClones: clones.length,
+        batchCloneCount: clones.length,
+      });
     }
     
     // Update progress using persisted batch completion, not enqueue order.
@@ -1166,18 +1189,26 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     );
 
     const completedBatches = progressState?.completedBatches ?? 0;
-    const progress = progressState?.progress ?? 0;
-
     const isFinalBatch = completedBatches >= totalBatches;
 
     // Publish real-time progress to Redis. For non-final batches publish now;
     // for the final batch we publish 'completed' only after results are stored
     // to avoid a race where the CLI reads 'completed' before results exist in Neo4j.
-    const processedClones = Number.parseInt(await redis.get(processedClonesKey) || '0', 10);
     if (!isFinalBatch) {
+      const allClonesFinished = processedClones >= simulation.cloneCount;
+      const progressSnapshot = allClonesFinished
+        ? createProgressSnapshot({
+            status: 'running',
+            phase: 'persisting',
+            phaseProgress: calculatePersistingPhaseProgress(completedBatches, totalBatches),
+          })
+        : createProgressSnapshot({
+            status: 'running',
+            phase: 'executing',
+            phaseProgress: Math.round((Math.min(processedClones, simulation.cloneCount) / simulation.cloneCount) * 100),
+          });
       await publishSimulationProgress(redis, simulationId, {
-        status: 'running',
-        progress: calculateSimulationProgress(processedClones, simulation.cloneCount, 'running'),
+        ...progressSnapshot,
         completedBatches,
         totalBatches,
         currentBatch: cloneBatchIndex,
@@ -1207,17 +1238,24 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         return;
       }
 
-      await publishSimulationProgress(redis, simulationId, {
-        status: 'aggregating',
-        progress: calculateSimulationProgress(processedClones, simulation.cloneCount, 'aggregating'),
-        completedBatches,
-        totalBatches,
-        currentBatch: cloneBatchIndex,
-        processedClones,
-        totalClones: simulation.cloneCount,
-        batchProcessedClones: clones.length,
-        batchCloneCount: clones.length,
-      });
+      {
+        const aggregationSnapshot = createProgressSnapshot({
+          status: 'aggregating',
+          phase: 'aggregating',
+          phaseProgress: 0,
+          aggregationStage: 'loading_results',
+        });
+        await publishSimulationProgress(redis, simulationId, {
+          ...aggregationSnapshot,
+          completedBatches,
+          totalBatches,
+          currentBatch: cloneBatchIndex,
+          processedClones,
+          totalClones: simulation.cloneCount,
+          batchProcessedClones: clones.length,
+          batchCloneCount: clones.length,
+        });
+      }
 
       // Aggregate all results
       const aggregator = createAggregator(scenarioType, scenario.decisionFrame);
@@ -1235,6 +1273,25 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
                 cr.category as category, cr.percentile as percentile`,
         { simulationId }
       );
+
+      {
+        const aggregationSnapshot = createProgressSnapshot({
+          status: 'aggregating',
+          phase: 'aggregating',
+          phaseProgress: 50,
+          aggregationStage: 'reducing',
+        });
+        await publishSimulationProgress(redis, simulationId, {
+          ...aggregationSnapshot,
+          completedBatches,
+          totalBatches,
+          currentBatch: cloneBatchIndex,
+          processedClones,
+          totalClones: simulation.cloneCount,
+          batchProcessedClones: clones.length,
+          batchCloneCount: clones.length,
+        });
+      }
       
       // Convert to CloneResult format
       const aggregatedResults: CloneResult[] = allResults.map(r => ({
@@ -1293,6 +1350,25 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
           capitalAtRisk: simulation.capitalAtRisk,
         });
       }
+
+      {
+        const aggregationSnapshot = createProgressSnapshot({
+          status: 'aggregating',
+          phase: 'aggregating',
+          phaseProgress: 100,
+          aggregationStage: 'writing_summary',
+        });
+        await publishSimulationProgress(redis, simulationId, {
+          ...aggregationSnapshot,
+          completedBatches,
+          totalBatches,
+          currentBatch: cloneBatchIndex,
+          processedClones,
+          totalClones: simulation.cloneCount,
+          batchProcessedClones: clones.length,
+          batchCloneCount: clones.length,
+        });
+      }
       
       // Store aggregated results
       await runWriteSingle(
@@ -1317,8 +1393,11 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         String(simulation.cloneCount),
       );
       await publishSimulationProgress(redis, simulationId, {
-        status: 'completed',
-        progress: 100,
+        ...createProgressSnapshot({
+          status: 'completed',
+          phase: 'completed',
+          phaseProgress: 100,
+        }),
         completedBatches: totalBatches,
         totalBatches,
         currentBatch: cloneBatchIndex,
@@ -1354,11 +1433,15 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         await redis.get(getSimulationProcessedClonesKey(simulationId)) || '0',
         10,
       );
+      const failureSnapshot = createProgressSnapshot({
+        status: 'failed',
+        phase: 'failed',
+        phaseProgress: Math.round((Math.min(processedClones, Math.max(1, simulationCloneCount)) / Math.max(1, simulationCloneCount)) * 100),
+      });
       await publishSimulationProgress(redis, simulationId, {
-        progress: calculateSimulationProgress(processedClones, simulationCloneCount, 'failed'),
+        ...failureSnapshot,
         processedClones,
         totalClones: simulationCloneCount,
-        status: 'failed',
         error: (err as Error).message,
       });
     } catch {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import { resolveSimulationRuntimeConfig } from './simulationRuntime.js';
 
 dotenv.config();
 
@@ -88,6 +89,12 @@ const configSchema = z.object({
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
     logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   }),
+  simulation: z.object({
+    batchSize: z.number().int().min(1).default(100),
+    cloneConcurrency: z.number().int().min(1).default(10),
+    workerConcurrency: z.number().int().min(1).default(5),
+    llmRpmLimit: z.number().int().positive().optional(),
+  }),
   llm: z.object({
     apiKey: z.string().optional(),
     baseUrl: z.string().url().default('https://api.groq.com/openai/v1'),
@@ -132,6 +139,7 @@ export const config = configSchema.parse({
     nodeEnv: process.env.NODE_ENV,
     logLevel: process.env.LOG_LEVEL,
   },
+  simulation: resolveSimulationRuntimeConfig(),
   llm: resolveLLMConfig(),
   embedding: resolveEmbeddingConfig(),
   composio: {

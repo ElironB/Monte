@@ -4,8 +4,8 @@ WORKDIR /app
 
 RUN apk add --no-cache python3 make g++
 
-COPY package.json tsconfig.json ./
-RUN npm ci
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --ignore-scripts
 
 COPY src ./src
 RUN npm run build

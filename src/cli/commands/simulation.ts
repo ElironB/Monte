@@ -1,6 +1,8 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
+import type { AggregatedResults } from '../../simulation/types.js';
 import { api } from '../api.js';
+import { printJson, printJsonErrorAndExit } from '../output.js';
 import { parseSimulationQuery } from '../queryParser.js';
 import {
   dimText,
@@ -99,19 +101,22 @@ Advanced mode:
     }
   });
 
-type SimulationCreateResult = {
+export type SimulationCreateResult = {
   simulationId: string;
   status: string;
   cloneCount: number;
 };
 
-type SimulationProgressResult = {
+export type SimulationProgressResult = {
   simulationId: string;
   status: string;
   progress: number;
   completedBatches: number;
   totalBatches: number;
   cloneCount: number;
+  phase?: 'queued' | 'executing' | 'persisting' | 'aggregating' | 'completed' | 'failed';
+  phaseProgress?: number;
+  aggregationStage?: 'loading_results' | 'reducing' | 'writing_summary';
   processedClones?: number;
   currentBatch?: number;
   batchProcessedClones?: number;
@@ -142,51 +147,26 @@ type SimulationRerunResult = SimulationCreateResult & {
   evidenceCount: number;
 };
 
-type SimulationResultsPayload = {
+export type SimulationResultsPayload = {
   status: string;
-  distributions: {
-    outcomeDistribution: {
-      success: number;
-      failure: number;
-      neutral: number;
-    };
-    statistics: {
-      successRate: number;
-      meanCapital: number;
-      meanHealth: number;
-      meanHappiness: number;
-      averageDuration: number;
-    };
-    stratifiedBreakdown: {
-      edge: { count: number; avgOutcome: number };
-      typical: { count: number; avgOutcome: number };
-      central: { count: number; avgOutcome: number };
-    };
-    appliedEvidence?: Array<{
-      id: string;
-      uncertainty: string;
-      result: 'positive' | 'negative' | 'mixed' | 'inconclusive';
-      confidence: number;
-      observedSignal: string;
-    }>;
-    rerunComparison?: {
-      sourceSimulationId: string;
-      evidenceCount: number;
-      summary: string;
-      beliefDelta: {
-        thesisConfidence: number;
-        uncertaintyLevel: number;
-        downsideSalience: number;
-      };
-      recommendationDelta: {
-        changed: boolean;
-        previousTopUncertainty?: string;
-        newTopUncertainty?: string;
-        previousTopExperiment?: string;
-        newTopExperiment?: string;
-      };
-    };
-  } | null;
+  distributions: AggregatedResults | null;
+};
+
+type PaginatedSimulations = {
+  data: Array<{
+    id: string;
+    name: string;
+    scenarioType: string;
+    status: string;
+    cloneCount: number;
+    createdAt: string;
+  }>;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
 };
 
 async function createSimulationAndHandleResult(
@@ -286,14 +266,8 @@ simulationCommands
   .description(chalk.dim('List all simulations'))
   .action(async () => {
     try {
-      const simulations = await api.listSimulations() as Array<{
-        id: string;
-        name: string;
-        scenarioType: string;
-        status: string;
-        cloneCount: number;
-        createdAt: string;
-      }>;
+      const response = await api.listSimulations() as PaginatedSimulations;
+      const simulations = response.data;
 
       if (simulations.length === 0) {
         console.log(dimText('No simulations found'));
@@ -313,6 +287,9 @@ simulationCommands
           `  ${dimText(sim.id)}  ${chalk.white.bold(sim.name.slice(0, 20).padEnd(22))}  ${chalk.white(sim.scenarioType.padEnd(22))}  ${statusColor(sim.status, 12)}  ${chalk.cyan(String(sim.cloneCount).padStart(6))}  ${dimText(date)}`,
         );
       }
+
+      console.log(`\n${infoLabel('Page:')} ${valueText(`${response.pagination.page}/${Math.max(1, response.pagination.totalPages)}`)}`);
+      console.log(`${infoLabel('Total:')} ${valueText(response.pagination.total)}`);
     } catch (err) {
       console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
@@ -346,9 +323,18 @@ simulationCommands
   .command('progress')
   .description(chalk.dim('Check simulation progress'))
   .argument('<id>', 'simulation ID')
-  .action(async (id) => {
+  .option('--json', 'output machine-readable JSON', false)
+  .action(async (id, options: { json?: boolean }) => {
     try {
       const progress = await api.getSimulationProgress(id) as SimulationProgressResult;
+
+      if (options.json) {
+        printJson({
+          ok: true,
+          ...progress,
+        });
+        return;
+      }
 
       console.log(`\n${sectionHeader('Simulation Progress')}`);
       console.log(`  ${infoLabel('Simulation:')} ${chalk.cyan(progress.simulationId)}`);
@@ -356,6 +342,9 @@ simulationCommands
       console.log(
         `  ${infoLabel('Progress:')} ${chalk.cyan.bold(`${progress.progress}%`)} ${dimText(`(${formatProgressSummary(progress)})`)}`,
       );
+      if (progress.phase) {
+        console.log(`  ${infoLabel('Phase:')} ${dimText(formatPhaseLabel(progress))}`);
+      }
       console.log(`  ${infoLabel('Clones:')} ${valueText(progress.cloneCount)}`);
       const currentBatch = formatCurrentBatch(progress);
       if (currentBatch) {
@@ -367,6 +356,9 @@ simulationCommands
 
       console.log(`\n  [${progressBar(progress.progress)}] ${chalk.cyan.bold(`${progress.progress}%`)}`);
     } catch (err) {
+      if (options.json) {
+        printJsonErrorAndExit(err);
+      }
       console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);
     }
@@ -617,11 +609,19 @@ simulationCommands
     }
   });
 
-async function waitForSimulation(id: string): Promise<void> {
+export async function waitForSimulationData(
+  id: string,
+  options: {
+    onProgress?: (progress: SimulationProgressResult) => void;
+    onStall?: (progress: SimulationProgressResult, stagnantPolls: number) => void;
+    pollIntervalMs?: number;
+  } = {},
+): Promise<NonNullable<SimulationResultsPayload['distributions']>> {
   return new Promise((resolve, reject) => {
-    let lastProgress = -1;
+    let lastMarker = '';
     let stagnantPolls = 0;
     let warnedAboutStall = false;
+    const pollIntervalMs = options.pollIntervalMs ?? 2000;
 
     const check = async () => {
       try {
@@ -630,10 +630,7 @@ async function waitForSimulation(id: string): Promise<void> {
         if (progress.status === 'completed') {
           // Re-fetch until results are actually in Neo4j (race: Redis marks
           // completed before the aggregation write finishes)
-          const results = await api.getSimulationResults(id) as {
-            status: string;
-            distributions: { statistics: { successRate: number } } | null;
-          };
+          const results = await api.getSimulationResults(id) as SimulationResultsPayload;
 
           if (!results.distributions) {
             // Aggregation not written yet — keep polling
@@ -641,10 +638,7 @@ async function waitForSimulation(id: string): Promise<void> {
             return;
           }
 
-          process.stdout.write('\n');
-          console.log(`${icons.success} ${chalk.green.bold('Simulation complete!')}`);
-          console.log(`  ${infoLabel('Success Rate:')} ${chalk.green.bold(formatPercent(results.distributions.statistics.successRate))}`);
-          resolve();
+          resolve(results.distributions);
           return;
         }
 
@@ -658,35 +652,31 @@ async function waitForSimulation(id: string): Promise<void> {
           return;
         }
 
-        if (progress.progress === lastProgress) {
+        const currentMarker = [
+          progress.progress,
+          progress.phase || '',
+          progress.phaseProgress ?? '',
+          progress.completedBatches,
+          progress.currentBatch ?? '',
+          progress.batchProcessedClones ?? '',
+        ].join(':');
+
+        if (currentMarker === lastMarker) {
           stagnantPolls += 1;
         } else {
           stagnantPolls = 0;
           warnedAboutStall = false;
-          lastProgress = progress.progress;
+          lastMarker = currentMarker;
         }
 
-        process.stdout.write(
-          `\r${infoLabel('Progress:')} [${progressBar(progress.progress)}] ${chalk.cyan.bold(`${progress.progress}%`)} ${dimText(`(${formatProgressSummary(progress)})`)}${progress.status === 'aggregating' ? ` ${dimText('aggregating results')}` : ''}`
-        );
+        options.onProgress?.(progress);
 
         if (stagnantPolls >= 15 && !warnedAboutStall) {
-          process.stdout.write('\n');
-          console.log(
-            warningText(
-              progress.status === 'aggregating'
-                ? `No progress update for ~${stagnantPolls * 2}s. Final aggregation may still be writing results.`
-                : `No progress update for ~${stagnantPolls * 2}s. Simulation may be waiting on workers or queued LLM calls.`
-            )
-          );
-          if (progress.lastUpdated) {
-            console.log(`  ${infoLabel('Last update:')} ${dimText(progress.lastUpdated)}`);
-          }
-          console.log(`  ${dimText(`Try \`monte simulate progress ${id}\` or inspect the server logs if this persists.`)}`);
+          options.onStall?.(progress, stagnantPolls);
           warnedAboutStall = true;
         }
 
-        setTimeout(check, 2000);
+        setTimeout(check, pollIntervalMs);
       } catch (err) {
         reject(err);
       }
@@ -694,6 +684,28 @@ async function waitForSimulation(id: string): Promise<void> {
 
     check();
   });
+}
+
+async function waitForSimulation(id: string): Promise<void> {
+  const results = await waitForSimulationData(id, {
+    onProgress: (progress) => {
+      process.stdout.write(
+        `\r${infoLabel('Progress:')} [${progressBar(progress.progress)}] ${chalk.cyan.bold(`${progress.progress}%`)} ${dimText(`(${formatProgressSummary(progress)})`)} ${dimText(formatPhaseLabel(progress))}`
+      );
+    },
+    onStall: (progress, stagnantPolls) => {
+      process.stdout.write('\n');
+      console.log(warningText(buildStallMessage(progress, stagnantPolls)));
+      if (progress.lastUpdated) {
+        console.log(`  ${infoLabel('Last update:')} ${dimText(progress.lastUpdated)}`);
+      }
+      console.log(`  ${dimText(`Try \`monte simulate progress ${id}\` or inspect the server logs if this persists.`)}`);
+    },
+  });
+
+  process.stdout.write('\n');
+  console.log(`${icons.success} ${chalk.green.bold('Simulation complete!')}`);
+  console.log(`  ${infoLabel('Success Rate:')} ${chalk.green.bold(formatPercent(results.statistics.successRate))}`);
 }
 
 function formatDuration(seconds: number): string {
@@ -711,6 +723,38 @@ function formatProgressSummary(progress: SimulationProgressResult): string {
     : `${processedClones}/${progress.cloneCount} clones`;
 
   return `${cloneSummary}, ${progress.completedBatches}/${progress.totalBatches} batches`;
+}
+
+function formatPhaseLabel(progress: SimulationProgressResult): string {
+  if (!progress.phase) {
+    return progress.status;
+  }
+
+  if (progress.phase === 'aggregating' && progress.aggregationStage) {
+    return `aggregating · ${progress.aggregationStage.replace(/_/g, ' ')}`;
+  }
+
+  if (typeof progress.phaseProgress === 'number' && progress.phase !== 'completed' && progress.phase !== 'failed') {
+    return `${progress.phase} (${progress.phaseProgress}%)`;
+  }
+
+  return progress.phase;
+}
+
+function buildStallMessage(progress: SimulationProgressResult, stagnantPolls: number): string {
+  const stallDuration = stagnantPolls * 2;
+
+  switch (progress.phase) {
+    case 'aggregating':
+      return `No progress update for ~${stallDuration}s. Final aggregation may still be reducing results or writing the summary.`;
+    case 'persisting':
+      return `No progress update for ~${stallDuration}s. Monte is still persisting clone results to Neo4j.`;
+    case 'queued':
+      return `No progress update for ~${stallDuration}s. The simulation is still queued for execution.`;
+    case 'executing':
+    default:
+      return `No progress update for ~${stallDuration}s. Simulation may be waiting on workers or queued LLM calls.`;
+  }
 }
 
 function formatCurrentBatch(progress: SimulationProgressResult): string | null {

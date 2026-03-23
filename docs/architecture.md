@@ -2,23 +2,25 @@
 
 ## Overview
 
-Monte is a self-hosted TypeScript system that turns personal behavioral data into a probabilistic decision model. The platform ingests raw sources, extracts behavioral signals, compresses them into a master persona, generates clone variants, simulates scenario outcomes, and then lets the user rerun the model after new evidence is collected.
+Monte is a self-hosted TypeScript system that turns personal behavioral data into a probabilistic decision model. It ingests raw sources, extracts behavioral signals, compresses them into a master persona, generates clone variants, simulates scenario outcomes, and lets the operator rerun the model after new evidence is collected.
 
 The current shipped architecture includes:
 
 - a Fastify API
-- a Commander CLI
+- a globally installable Commander CLI
 - BullMQ workers for background jobs
 - Neo4j for graph persistence
-- Redis for caching and queue transport
+- Redis for cache, live progress, and queue transport
 - MinIO for uploaded source storage
 - OpenAI-compatible chat and embedding providers
+
+The npm package name is `monte-engine`. The installed executable is `monte`.
 
 ## Runtime topology
 
 ### API process
 
-`src/index.ts` bootstraps Fastify, registers plugins, initializes schema/tracing, starts background workers, and mounts route groups for:
+`src/index.ts` bootstraps Fastify, registers plugins, initializes schema and tracing, starts background workers, and mounts route groups for:
 
 - health
 - users
@@ -27,6 +29,18 @@ The current shipped architecture includes:
 - simulation
 - cli
 - stream
+
+### CLI process
+
+`src/cli/index.ts` bootstraps the local and globally installable CLI. The CLI stores user config in `~/.monte/config.json`, primarily the target API URL.
+
+The agent-facing entrypoint is:
+
+- `monte decide`
+
+The machine-readable readiness entrypoint is:
+
+- `monte doctor --json`
 
 ### Background jobs
 
@@ -41,12 +55,12 @@ These queues separate raw source processing, persona builds, and clone-batch sim
 ### Storage
 
 - Neo4j stores users, personas, traits, memories, simulations, clone results, and evidence relationships.
-- Redis handles cache lookups and BullMQ transport.
+- Redis handles cache lookups, BullMQ transport, and live simulation progress snapshots.
 - MinIO stores uploaded files and other raw source artifacts.
 
 ### Auth model
 
-In open-source/self-hosted mode, auth is intentionally simplified. `src/api/plugins/auth.ts` injects a local user rather than performing hosted authentication.
+In open-source and self-hosted mode, auth is intentionally simplified. `src/api/plugins/auth.ts` injects a local user rather than performing hosted authentication.
 
 ## End-to-end data flow
 
@@ -54,13 +68,13 @@ In open-source/self-hosted mode, auth is intentionally simplified. `src/api/plug
 2. Ingestion normalizes raw input into `RawSourceData`.
 3. Rule-based extractors derive `BehavioralSignal` records.
 4. Contradiction detection identifies tension between signals.
-5. Persona build maps signals into dimensions, stores trait/memory nodes, and compresses them into a master persona.
+5. Persona build maps signals into dimensions, stores trait and memory nodes, and compresses them into a master persona.
 6. Clone generation creates a stratified distribution around that persona.
 7. Scenario compilation builds a runnable decision graph.
-8. Simulation batches execute clones and aggregate outcomes.
-9. Decision intelligence proposes experiments and unknowns to resolve.
+8. Simulation batches execute clones and batch-persist their results.
+9. Aggregation reduces the full result set into distributions, decision intelligence, and optional narrative output.
 10. Evidence can be recorded against a completed simulation.
-11. Evidence-adjusted reruns reuse the scenario with updated causal/belief state.
+11. Evidence-adjusted reruns reuse the scenario with updated causal and belief state.
 12. The benchmark harness exercises a seeded corpus to catch regressions.
 
 ## Persona system
@@ -85,11 +99,11 @@ Each dimension also carries confidence, source counts, source types, estimated-v
 
 The core persona path is:
 
-1. `DimensionMapper` — semantic mapping from signals into dimension scores
-2. `GraphBuilder` — persistence of traits, memories, and signal links into Neo4j
-3. `PersonaCompressor` — master persona summary and LLM-facing context
-4. `PsychologyLayer` — derived psychology model
-5. `CloneGenerator` — clone sampling and psychology-based modifiers
+1. `DimensionMapper` -> semantic mapping from signals into dimension scores
+2. `GraphBuilder` -> persistence of traits, memories, and signal links into Neo4j
+3. `PersonaCompressor` -> master persona summary and LLM-facing context
+4. `PsychologyLayer` -> derived psychology model
+5. `CloneGenerator` -> clone sampling and psychology-based modifiers
 
 ### Psychology layer
 
@@ -112,7 +126,7 @@ Monte simulates a population rather than a single identity. Clone generation is 
 
 ### Scenario catalog
 
-Monte ships the following scenario types:
+Monte currently ships 8 scenario types including `custom`:
 
 - `day_trading`
 - `startup_founding`
@@ -151,13 +165,14 @@ Each clone run tracks:
 
 The causal and belief layers are central to how Monte reasons about uncertainty, reversibility, downside, and experiment design.
 
-### Execution and aggregation
+### Execution, persistence, and aggregation
 
 The runtime path is:
 
 1. compile a scenario
 2. execute clones in batches
-3. aggregate clone results into:
+3. persist each finished batch with a single Neo4j `UNWIND` write
+4. aggregate clone results into:
    - histograms
    - outcome distribution
    - stratified breakdown
@@ -166,9 +181,53 @@ The runtime path is:
    - optional narrative output
    - rerun comparison data when evidence is present
 
+The persistence optimization matters because it removes the old per-clone Neo4j write tail that made simulations appear stuck near the end.
+
+### Live progress architecture
+
+Simulation progress is published to Redis and exposed through `/stream/simulation/:id/progress-rest`. The live payload can include:
+
+- `status`
+- `phase`
+- `phaseProgress`
+- `aggregationStage`
+- `progress`
+- `completedBatches`
+- `currentBatch`
+- `processedClones`
+- `batchProcessedClones`
+- `batchCloneCount`
+- `estimatedTimeRemaining`
+- `lastUpdated`
+
+Current phase model:
+
+- `queued`
+- `executing`
+- `persisting`
+- `aggregating`
+- `completed`
+- `failed`
+
+Progress weighting:
+
+- `queued`: `0`
+- `executing`: `0-90`
+- `persisting`: `90-96`
+- `aggregating`: `97-99`
+- `completed`: `100`
+
+Aggregation stages:
+
+- `loading_results`
+- `reducing`
+- `writing_summary`
+
+The progress route prefers explicit live Redis payloads when they exist and falls back to the persisted simulation state when Redis is unavailable.
+
 ### Outcome semantics
 
-Outcome bucketing is shared logic, not something that should drift independently between the engine and the aggregator. If outcome semantics change, the scenario path, engine path, aggregator path, and benchmark expectations must be kept aligned.
+Outcome bucketing is shared logic, not something that should drift independently between the engine and the aggregator. If outcome semantics change, the scenario path, engine path, aggregator path, and benchmark expectations must stay aligned.
 
 ## Evidence loop
 
@@ -253,19 +312,23 @@ Swagger documentation is exposed at `/docs`.
 
 ### CLI
 
-The local CLI groups include:
+Installed usage prefers:
 
-- `simulate`
-- `persona`
-- `ingest`
-- `config`
-- `connect`
-- `report`
-- `generate`
-- `compare`
-- `doctor`
+- `monte simulate`
+- `monte simulate progress <id> --json`
+- `monte simulate results <id> -f json`
+- `monte decide "<question>" --mode standard --wait --json`
+- `monte doctor --json`
+- `monte config set-api http://localhost:3000`
 
-`connect` exists but is still a WIP integration path.
+Repo-local development usage prefers:
+
+```bash
+npm run cli:dev -- simulate "should I do this?" --wait
+npm run cli:dev -- decide "should I do this?" --mode standard --wait --json
+```
+
+`connect` exists but is still an experimental integration path.
 
 ## Operational invariants
 
@@ -280,7 +343,8 @@ The local CLI groups include:
 
 If you change:
 
-- dimensions — also audit persona compression, CLI/report display surfaces, docs, and tests
-- scenario semantics — also audit aggregation and benchmarks
-- evidence logic — also audit simulation route/CLI integration and rerun comparison
-- benchmark fixtures — also audit harness tests and docs
+- dimensions -> also audit persona compression, CLI and reporting display surfaces, docs, and tests
+- scenario semantics -> also audit aggregation and benchmarks
+- evidence logic -> also audit simulation route and CLI integration plus rerun comparison
+- package and CLI distribution -> also audit `package.json`, `README.md`, `CONTEXT.md`, `AGENTS.md`, `docs/architecture.md`, and `SKILL.md`
+- benchmark fixtures -> also audit harness tests and docs
