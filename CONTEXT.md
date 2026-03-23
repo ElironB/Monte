@@ -66,7 +66,7 @@ Monte does not simulate a single user. It generates a stratified clone populatio
 
 ### 5. Simulation
 
-Simulations compile a scenario, execute clone runs, batch LLM decisions for clones waiting on the same node, batch-persist clone results with Neo4j `UNWIND` writes, and aggregate:
+Simulations compile a scenario, execute clone runs through a node-frontier scheduler, batch LLM decisions for clones waiting on the same node, batch-persist clone results with Neo4j `UNWIND` writes, and aggregate:
 
 - histograms
 - outcome distribution
@@ -78,6 +78,10 @@ Simulations compile a scenario, execute clone runs, batch LLM decisions for clon
 - rerun comparison when evidence is applied
 
 Each simulation state carries both a `beliefState` and a `causalState`.
+
+The scheduler keeps an active frontier of clones in memory, advances them locally until they hit a decision node or terminal state, groups waiting clones by `(scenario, node, reasoning mode)`, and then spends LLM concurrency on those grouped forks. `SIMULATION_DECISION_CONCURRENCY` caps in-flight LLM requests. `SIMULATION_ACTIVE_FRONTIER` controls how many clones a worker batch keeps active at once.
+
+Batch recovery is adaptive. If a provider repeatedly fails on a large batched decision payload, the evaluator lowers the preferred batch size for the rest of that scenario/mode instead of repeating the same failing request size on later decision waves.
 
 ### 6. Live progress
 
@@ -104,11 +108,21 @@ Aggregation may expose sub-stages:
 - `reducing`
 - `writing_summary`
 
+Execution payloads can also expose:
+
+- `activeFrontier`
+- `waitingDecisions`
+- `resolvedDecisions`
+- `estimatedDecisionCount`
+- `localStepDurationMs`
+
 Completed simulations also carry runtime telemetry that summarizes:
 
 - wall-clock runtime
 - execution, persistence, and aggregation timing
 - LLM batch vs single-call counts
+- decision concurrency and active frontier usage
+- batch retry, split, and leaf-fallback counts
 - limiter wait time
 - embedding time
 - slowest decision nodes
@@ -152,7 +166,9 @@ For repo development, the equivalent source-running form is `npm run cli:dev -- 
 Relevant runtime tuning env vars:
 
 - `SIMULATION_BATCH_SIZE`
-- `SIMULATION_CONCURRENCY`
+- `SIMULATION_DECISION_CONCURRENCY`
+- `SIMULATION_ACTIVE_FRONTIER`
+- `SIMULATION_CONCURRENCY` (legacy alias for decision concurrency)
 - `SIMULATION_WORKER_CONCURRENCY`
 - `SIMULATION_DECISION_BATCH_SIZE`
 - `SIMULATION_DECISION_BATCH_FLUSH_MS`

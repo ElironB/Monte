@@ -40,6 +40,7 @@ import {
 import { calculateKelly } from '../../../simulation/kellyCalculator.js';
 import {
   calculatePersistingPhaseProgress,
+  calculateExecutionPhaseProgressFromFrontier,
   createProgressSnapshot,
   estimateTimeRemainingSeconds,
 } from '../../../simulation/progress.js';
@@ -47,7 +48,12 @@ import {
   createEmptySimulationRuntimeTelemetry,
   mergeSimulationRuntimeTelemetry,
 } from '../../../simulation/runtimeTelemetry.js';
-import { RateLimiter, createConcurrencyLimiter, detectProviderRPM } from '../../../utils/rateLimiter.js';
+import {
+  RateLimiter,
+  createConcurrencyLimiter,
+  detectProviderRPM,
+  type ConcurrencyLimiter,
+} from '../../../utils/rateLimiter.js';
 
 const extractors = [
   new SearchHistoryExtractor(),
@@ -61,6 +67,19 @@ const extractors = [
 const semanticExtractor = new SemanticExtractor();
 const SIMULATION_PROGRESS_TTL_SECONDS = 300;
 const SIMULATION_RUNTIME_TTL_SECONDS = 86400;
+let sharedSimulationRateLimiter: RateLimiter | null = null;
+let sharedSimulationRateLimiterRpm = 0;
+let sharedDecisionRequestLimiter: ConcurrencyLimiter | null = null;
+let sharedDecisionRequestConcurrency = 0;
+
+interface SimulationBatchExecutionState {
+  completedClones: number;
+  waitingDecisions: number;
+  resolvedDecisions: number;
+  activeFrontier: number;
+  estimatedDecisionCount: number;
+  localStepDurationMs: number;
+}
 
 function getSimulationProgressKey(simulationId: string): string {
   return `sim:${simulationId}:progress`;
@@ -80,6 +99,28 @@ function getSimulationBatchProcessedClonesKey(simulationId: string, batchIndex: 
 
 function getSimulationBatchTelemetryKey(simulationId: string, batchIndex: number): string {
   return `sim:${simulationId}:batch:${batchIndex}:runtimeTelemetry`;
+}
+
+function getSimulationBatchExecutionKey(simulationId: string, batchIndex: number): string {
+  return `sim:${simulationId}:batch:${batchIndex}:execution`;
+}
+
+function getSharedSimulationRateLimiter(rpm: number): RateLimiter {
+  if (!sharedSimulationRateLimiter || sharedSimulationRateLimiterRpm !== rpm) {
+    sharedSimulationRateLimiter = new RateLimiter(rpm);
+    sharedSimulationRateLimiterRpm = rpm;
+  }
+
+  return sharedSimulationRateLimiter;
+}
+
+function getSharedDecisionRequestLimiter(concurrency: number): ConcurrencyLimiter {
+  if (!sharedDecisionRequestLimiter || sharedDecisionRequestConcurrency !== concurrency) {
+    sharedDecisionRequestLimiter = createConcurrencyLimiter(concurrency);
+    sharedDecisionRequestConcurrency = concurrency;
+  }
+
+  return sharedDecisionRequestLimiter;
 }
 
 async function storeSimulationBatchTelemetry(
@@ -132,6 +173,57 @@ async function publishSimulationProgress(
       lastUpdated: new Date().toISOString(),
     }),
   );
+}
+
+async function storeSimulationBatchExecutionState(
+  redis: Awaited<ReturnType<typeof getRedisClient>>,
+  simulationId: string,
+  batchIndex: number,
+  state: SimulationBatchExecutionState,
+): Promise<void> {
+  await redis.setex(
+    getSimulationBatchExecutionKey(simulationId, batchIndex),
+    SIMULATION_PROGRESS_TTL_SECONDS,
+    JSON.stringify(state),
+  );
+}
+
+async function loadSimulationExecutionState(
+  redis: Awaited<ReturnType<typeof getRedisClient>>,
+  simulationId: string,
+  totalBatches: number,
+): Promise<SimulationBatchExecutionState> {
+  const payloads = await Promise.all(
+    Array.from({ length: totalBatches }, (_, index) =>
+      redis.get(getSimulationBatchExecutionKey(simulationId, index))),
+  );
+
+  return payloads.reduce<SimulationBatchExecutionState>((acc, payload) => {
+    if (!payload) {
+      return acc;
+    }
+
+    try {
+      const parsed = JSON.parse(payload) as Partial<SimulationBatchExecutionState>;
+      acc.completedClones += parsed.completedClones ?? 0;
+      acc.waitingDecisions += parsed.waitingDecisions ?? 0;
+      acc.resolvedDecisions += parsed.resolvedDecisions ?? 0;
+      acc.activeFrontier += parsed.activeFrontier ?? 0;
+      acc.estimatedDecisionCount += parsed.estimatedDecisionCount ?? 0;
+      acc.localStepDurationMs += parsed.localStepDurationMs ?? 0;
+    } catch {
+      return acc;
+    }
+
+    return acc;
+  }, {
+    completedClones: 0,
+    waitingDecisions: 0,
+    resolvedDecisions: 0,
+    activeFrontier: 0,
+    estimatedDecisionCount: 0,
+    localStepDurationMs: 0,
+  });
 }
 
 async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
@@ -1017,8 +1109,13 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     const rpm = typeof config.simulation.llmRpmLimit === 'number'
       ? config.simulation.llmRpmLimit
       : detectProviderRPM();
-    const concurrency = config.simulation.cloneConcurrency;
-    const rateLimiter = new RateLimiter(rpm);
+    const decisionConcurrency = config.simulation.decisionConcurrency;
+    const activeFrontier = Math.max(
+      1,
+      Math.min(clones.length, config.simulation.activeFrontier),
+    );
+    const rateLimiter = getSharedSimulationRateLimiter(rpm);
+    const requestLimiter = getSharedDecisionRequestLimiter(decisionConcurrency);
     const redis = await getRedisClient();
     const processedClonesKey = getSimulationProcessedClonesKey(simulationId);
     const batchProcessedClonesKey = getSimulationBatchProcessedClonesKey(simulationId, cloneBatchIndex);
@@ -1068,13 +1165,20 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       maxLLMCalls: 20,
       logDecisions: false,
       rateLimiter,
+      requestLimiter,
       masterPersona,
     });
 
-    const results: CloneResult[] = [];
-    const limit = createConcurrencyLimiter(concurrency);
     const batchStart = Date.now();
     const initialProcessedClones = Number.parseInt(await redis.get(processedClonesKey) || '0', 10);
+    await storeSimulationBatchExecutionState(redis, simulationId, cloneBatchIndex, {
+      completedClones: 0,
+      waitingDecisions: 0,
+      resolvedDecisions: 0,
+      activeFrontier: 0,
+      estimatedDecisionCount: clones.length * engine.getDecisionNodeCount(),
+      localStepDurationMs: 0,
+    });
     {
       const progressSnapshot = createProgressSnapshot({
         status: 'running',
@@ -1095,71 +1199,95 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     }
     const batchLogInterval = Math.max(1, Math.ceil(clones.length / 4));
     let lastLoggedBatchProgress = 0;
+    let lastCompletedClones = 0;
+    const defaultEstimatedDecisionCount = simulation.cloneCount * engine.getDecisionNodeCount();
 
-    await Promise.all(
-      clones.map((clone) =>
-        limit(async () => {
-          try {
-            const result = await engine.executeClone(
-              clone.cloneId,
-              clone.parameters,
-              clone.stratification
-            );
-            results.push(result);
-          } catch (err) {
-            logger.error({ err, cloneId: clone.cloneId }, 'Clone simulation failed');
-          } finally {
-            const [processedClones, batchProcessedClones] = await Promise.all([
-              redis.incr(processedClonesKey),
-              redis.incr(batchProcessedClonesKey),
-            ]);
+    const results = await engine.executeFrontierBatch(clones, {
+      activeFrontier,
+      decisionBatchSize: config.simulation.decisionBatchSize,
+      onProgress: async (progress) => {
+        const completedDelta = Math.max(0, progress.completedClones - lastCompletedClones);
+        if (completedDelta > 0) {
+          await Promise.all([
+            redis.incrby(processedClonesKey, completedDelta),
+            redis.incrby(batchProcessedClonesKey, completedDelta),
+          ]);
 
-            await Promise.all([
-              redis.expire(processedClonesKey, SIMULATION_PROGRESS_TTL_SECONDS),
-              redis.expire(batchProcessedClonesKey, SIMULATION_PROGRESS_TTL_SECONDS),
-            ]);
+          await Promise.all([
+            redis.expire(processedClonesKey, SIMULATION_PROGRESS_TTL_SECONDS),
+            redis.expire(batchProcessedClonesKey, SIMULATION_PROGRESS_TTL_SECONDS),
+          ]);
 
-            const progressSnapshot = createProgressSnapshot({
-              status: 'running',
-              phase: 'executing',
-              phaseProgress: Math.round((Math.min(processedClones, simulation.cloneCount) / simulation.cloneCount) * 100),
-            });
-            const estimatedTimeRemaining = estimateTimeRemainingSeconds(
-              progressStartedAtMs,
-              processedClones,
-              simulation.cloneCount,
-            );
+          lastCompletedClones = progress.completedClones;
+        }
 
-            await publishSimulationProgress(redis, simulationId, {
-              ...progressSnapshot,
-              totalBatches,
-              currentBatch: cloneBatchIndex,
-              processedClones,
-              totalClones: simulation.cloneCount,
-              batchProcessedClones,
-              batchCloneCount: clones.length,
-              estimatedTimeRemaining,
-            });
+        await storeSimulationBatchExecutionState(redis, simulationId, cloneBatchIndex, {
+          completedClones: progress.completedClones,
+          waitingDecisions: progress.waitingDecisions,
+          resolvedDecisions: progress.resolvedDecisions,
+          activeFrontier: progress.activeFrontier,
+          estimatedDecisionCount: progress.estimatedDecisionCount,
+          localStepDurationMs: progress.localStepDurationMs,
+        });
 
-            if (
-              batchProcessedClones === clones.length ||
-              batchProcessedClones >= lastLoggedBatchProgress + batchLogInterval
-            ) {
-              lastLoggedBatchProgress = batchProcessedClones;
-              logger.info({
-                simulationId,
-                batchIndex: cloneBatchIndex,
-                batchProcessedClones,
-                batchCloneCount: clones.length,
-                processedClones,
-                totalClones: simulation.cloneCount,
-                progress: progressSnapshot.progress,
-              }, 'Simulation batch progress');
-            }
-          }
-        })
-      )
-    );
+        const [processedClonesRaw, executionState] = await Promise.all([
+          redis.get(processedClonesKey),
+          loadSimulationExecutionState(redis, simulationId, totalBatches),
+        ]);
+        const processedClones = Number.parseInt(processedClonesRaw || '0', 10);
+        const phaseProgress = calculateExecutionPhaseProgressFromFrontier({
+          processedClones,
+          totalClones: simulation.cloneCount,
+          resolvedDecisions: executionState.resolvedDecisions,
+          waitingDecisions: executionState.waitingDecisions,
+          estimatedDecisionCount: executionState.estimatedDecisionCount || defaultEstimatedDecisionCount,
+        });
+        const progressSnapshot = createProgressSnapshot({
+          status: 'running',
+          phase: 'executing',
+          phaseProgress,
+        });
+        const estimatedTimeRemaining = estimateTimeRemainingSeconds(
+          progressStartedAtMs,
+          processedClones,
+          simulation.cloneCount,
+        );
+
+        await publishSimulationProgress(redis, simulationId, {
+          ...progressSnapshot,
+          totalBatches,
+          currentBatch: cloneBatchIndex,
+          processedClones,
+          totalClones: simulation.cloneCount,
+          batchProcessedClones: progress.completedClones,
+          batchCloneCount: clones.length,
+          estimatedTimeRemaining,
+          activeFrontier: executionState.activeFrontier,
+          waitingDecisions: executionState.waitingDecisions,
+          resolvedDecisions: executionState.resolvedDecisions,
+          estimatedDecisionCount: executionState.estimatedDecisionCount || defaultEstimatedDecisionCount,
+          localStepDurationMs: executionState.localStepDurationMs,
+        });
+
+        if (
+          progress.completedClones === clones.length ||
+          progress.completedClones >= lastLoggedBatchProgress + batchLogInterval
+        ) {
+          lastLoggedBatchProgress = progress.completedClones;
+          logger.info({
+            simulationId,
+            batchIndex: cloneBatchIndex,
+            batchProcessedClones: progress.completedClones,
+            batchCloneCount: clones.length,
+            processedClones,
+            totalClones: simulation.cloneCount,
+            waitingDecisions: executionState.waitingDecisions,
+            activeFrontier: executionState.activeFrontier,
+            progress: progressSnapshot.progress,
+          }, 'Simulation batch progress');
+        }
+      },
+    });
 
     const batchDuration = Date.now() - batchStart;
     logger.info({
@@ -1168,7 +1296,8 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       cloneCount: clones.length,
       durationMs: batchDuration,
       avgPerClone: clones.length > 0 ? Math.round(batchDuration / clones.length) : 0,
-      concurrency,
+      decisionConcurrency,
+      activeFrontier,
       rpm,
     }, 'Simulation batch complete');
     
@@ -1202,7 +1331,12 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       persistenceMaxBatchDurationMs: persistenceDurationMs,
       cloneCount: clones.length,
       batchCount: 1,
-      cloneConcurrency: concurrency,
+      decisionConcurrency,
+      cloneConcurrency: decisionConcurrency,
+      activeFrontier,
+      peakActiveFrontier: engineRuntimeTelemetry.peakActiveFrontier,
+      peakWaitingDecisions: engineRuntimeTelemetry.peakWaitingDecisions,
+      localStepDurationMs: engineRuntimeTelemetry.localStepDurationMs,
       decisionBatchSize: config.simulation.decisionBatchSize,
       decisionBatchFlushMs: config.simulation.decisionBatchFlushMs,
       llmRpmLimit: rpm,
@@ -1261,6 +1395,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     // for the final batch we publish 'completed' only after results are stored
     // to avoid a race where the CLI reads 'completed' before results exist in Neo4j.
     if (!isFinalBatch) {
+      const executionState = await loadSimulationExecutionState(redis, simulationId, totalBatches);
       const allClonesFinished = processedClones >= simulation.cloneCount;
       const progressSnapshot = allClonesFinished
         ? createProgressSnapshot({
@@ -1271,7 +1406,13 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         : createProgressSnapshot({
             status: 'running',
             phase: 'executing',
-            phaseProgress: Math.round((Math.min(processedClones, simulation.cloneCount) / simulation.cloneCount) * 100),
+            phaseProgress: calculateExecutionPhaseProgressFromFrontier({
+              processedClones,
+              totalClones: simulation.cloneCount,
+              resolvedDecisions: executionState.resolvedDecisions,
+              waitingDecisions: executionState.waitingDecisions,
+              estimatedDecisionCount: executionState.estimatedDecisionCount || defaultEstimatedDecisionCount,
+            }),
           });
       await publishSimulationProgress(redis, simulationId, {
         ...progressSnapshot,
@@ -1287,6 +1428,11 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
           processedClones,
           simulation.cloneCount,
         ),
+        activeFrontier: executionState.activeFrontier,
+        waitingDecisions: executionState.waitingDecisions,
+        resolvedDecisions: executionState.resolvedDecisions,
+        estimatedDecisionCount: executionState.estimatedDecisionCount || defaultEstimatedDecisionCount,
+        localStepDurationMs: executionState.localStepDurationMs,
       });
     }
     
@@ -1423,7 +1569,18 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       runtimeTelemetry.aggregationDurationMs = Date.now() - aggregationStartedAt;
       runtimeTelemetry.cloneCount = simulation.cloneCount;
       runtimeTelemetry.batchCount = totalBatches;
-      runtimeTelemetry.cloneConcurrency = Math.max(runtimeTelemetry.cloneConcurrency, concurrency);
+      runtimeTelemetry.decisionConcurrency = Math.max(
+        runtimeTelemetry.decisionConcurrency,
+        decisionConcurrency,
+      );
+      runtimeTelemetry.cloneConcurrency = Math.max(
+        runtimeTelemetry.cloneConcurrency,
+        decisionConcurrency,
+      );
+      runtimeTelemetry.activeFrontier = Math.max(
+        runtimeTelemetry.activeFrontier,
+        activeFrontier,
+      );
       runtimeTelemetry.decisionBatchSize = Math.max(
         runtimeTelemetry.decisionBatchSize,
         config.simulation.decisionBatchSize,

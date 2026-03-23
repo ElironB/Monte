@@ -298,9 +298,13 @@ export interface SimulationNodeRuntimeTelemetry {
   singleCalls: number;
   standardCalls: number;
   reasoningCalls: number;
+  splitRetries: number;
   cloneDecisions: number;
   totalDurationMs: number;
+  totalModelDurationMs: number;
+  totalLocalStepDurationMs: number;
   totalBatchWaitMs: number;
+  totalBatchSize: number;
   maxBatchSize: number;
 }
 
@@ -310,11 +314,20 @@ export interface SimulationLlmRuntimeTelemetry {
   singleCalls: number;
   standardCalls: number;
   reasoningCalls: number;
+  batchRetryCount: number;
+  splitBatchCount: number;
+  singleFallbackFromBatchCount: number;
+  invalidBatchPayloadCount: number;
+  batchParseFailureCount: number;
   repairCalls: number;
   fallbackHeuristicCount: number;
   rateLimitErrors: number;
   rateLimitRetries: number;
   totalTokens: number;
+  batchPromptTokens: number;
+  batchResponseTokens: number;
+  singlePromptTokens: number;
+  singleResponseTokens: number;
   totalChatDurationMs: number;
   totalRepairDurationMs: number;
   totalBatchWaitMs: number;
@@ -346,7 +359,12 @@ export interface SimulationRuntimeTelemetry {
   aggregationDurationMs: number;
   cloneCount: number;
   batchCount: number;
+  decisionConcurrency: number;
   cloneConcurrency: number;
+  activeFrontier: number;
+  peakActiveFrontier: number;
+  peakWaitingDecisions: number;
+  localStepDurationMs: number;
   decisionBatchSize: number;
   decisionBatchFlushMs: number;
   llmRpmLimit: number;

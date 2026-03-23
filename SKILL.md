@@ -40,6 +40,7 @@ Keep that loop in mind and most of the repository will make sense.
 - `src/persona/cloneGenerator.ts` -> stratified clones and psychology modifiers
 - `src/simulation/decisionGraph.ts` -> built-in scenario graphs and outcome semantics
 - `src/simulation/engine.ts` -> clone execution
+- `src/simulation/forkEvaluator.ts` -> batched LLM fork evaluation and recovery
 - `src/simulation/resultAggregator.ts` -> aggregate outputs
 - `src/simulation/resultPersistence.ts` -> batched clone-result persistence
 - `src/simulation/evidenceLoop.ts` -> evidence deltas and rerun comparison
@@ -78,6 +79,8 @@ Keep that loop in mind and most of the repository will make sense.
 - Treat `connect` / Composio as experimental.
 - When public behavior changes, keep the main docs synchronized.
 - Simulation throughput is now partly shaped by node-level LLM batching; if you touch that path, audit both quality and runtime telemetry.
+- The simulation runtime is frontier-scheduled. `SIMULATION_DECISION_CONCURRENCY` and `SIMULATION_ACTIVE_FRONTIER` are now the main throughput knobs; `SIMULATION_CONCURRENCY` is only a backward-compatible alias.
+- The evaluator now adaptively shrinks preferred batch sizes after repeated provider-side batch failures. If you touch recovery logic, preserve that learning behavior and update the runtime telemetry story.
 
 ## Common task recipes
 
@@ -109,6 +112,7 @@ Keep that loop in mind and most of the repository will make sense.
 - audit `src/simulation/engine.ts`
 - audit `src/simulation/runtimeTelemetry.ts`
 - audit `src/ingestion/queue/workers/index.ts`
+- audit `src/api/routes/stream.ts` and `src/cli/commands/simulation.ts` if progress or telemetry fields change
 - keep the runtime telemetry payload meaningful enough to explain slow runs
 
 ### If you change dimensions or persona logic

@@ -105,6 +105,77 @@ describe('simulation runtime integrity', () => {
     expect(aggressive.path).not.toEqual(cautious.path);
   });
 
+  test('frontier execution stays local when llm evaluation is disabled', async () => {
+    const scenario = getScenario(ScenarioType.CUSTOM);
+    const engine = new SimulationEngine(scenario, { useLLM: false, useChaos: false });
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    const results = await engine.executeFrontierBatch([
+      {
+        cloneId: 'frontier-aggressive',
+        parameters: aggressiveParameters,
+        stratification: { percentile: 95, category: 'edge' },
+      },
+      {
+        cloneId: 'frontier-cautious',
+        parameters: cautiousParameters,
+        stratification: { percentile: 5, category: 'edge' },
+      },
+    ], {
+      activeFrontier: 2,
+      decisionBatchSize: 2,
+    });
+
+    expect(results).toHaveLength(2);
+    expect(engine.getLLMUsage().llmCallsUsed).toBe(0);
+    expect(engine.getRuntimeTelemetry().peakActiveFrontier).toBe(2);
+  });
+
+  test('frontier scheduler batches aligned clone decisions together across the active frontier', async () => {
+    const scenario = getScenario(ScenarioType.CUSTOM);
+    const engine = new SimulationEngine(scenario, {
+      useLLM: true,
+      useChaos: false,
+      maxLLMCalls: 0,
+    });
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    const batchSpy = vi.spyOn((engine as any).evaluator, 'evaluateForkBatch')
+      .mockImplementation(async (items: Array<{ index: number; request: { decisionNode: { options: Array<{ id: string }> } }; complexity: number }>) =>
+        new Map(
+          items.map((item) => [
+            item.index,
+            {
+              chosenOptionId: item.request.decisionNode.options[0].id,
+              reasoning: 'batched frontier decision',
+              confidence: 0.82,
+              complexity: item.complexity,
+            },
+          ]),
+        ));
+
+    const clones = Array.from({ length: 4 }, (_, index) => ({
+      cloneId: `clone-${index + 1}`,
+      parameters: aggressiveParameters,
+      stratification: { percentile: 50, category: 'typical' as const },
+    }));
+
+    const results = await engine.executeFrontierBatch(clones, {
+      activeFrontier: 4,
+      decisionBatchSize: 4,
+    });
+
+    const batchSizes = batchSpy.mock.calls.map(([items]) => items.length);
+
+    expect(results).toHaveLength(4);
+    expect(batchSizes.length).toBeGreaterThan(0);
+    expect(batchSizes[0]).toBe(4);
+    expect(Math.max(...batchSizes)).toBe(4);
+    expect(engine.getRuntimeTelemetry().peakActiveFrontier).toBe(4);
+  });
+
   test('runtime persona projection separates aggressive and cautious world baselines', () => {
     const aggressiveProfile = buildSimulationPersonaRuntimeProfile(aggressiveParameters);
     const cautiousProfile = buildSimulationPersonaRuntimeProfile(cautiousParameters);

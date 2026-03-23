@@ -23,9 +23,11 @@ describe('doctor command', () => {
         apiUrl: 'http://localhost:3000',
         batchSize: 100,
         workerConcurrency: 5,
+        decisionConcurrency: 10,
         cloneConcurrency: 10,
-        decisionBatchSize: 10,
-        decisionBatchFlushMs: 15,
+        activeFrontier: 100,
+        decisionBatchSize: 20,
+        decisionBatchFlushMs: 40,
         llmRpmLimit: 30,
       },
     );
@@ -37,9 +39,11 @@ describe('doctor command', () => {
         apiUrl: 'http://localhost:3000',
         batchSize: 100,
         workerConcurrency: 5,
+        decisionConcurrency: 10,
         cloneConcurrency: 10,
-        decisionBatchSize: 10,
-        decisionBatchFlushMs: 15,
+        activeFrontier: 100,
+        decisionBatchSize: 20,
+        decisionBatchFlushMs: 40,
         llmRpmLimit: 30,
       },
       checks: [
@@ -62,9 +66,11 @@ describe('doctor command', () => {
         apiUrl: 'http://localhost:3000',
         batchSize: 100,
         workerConcurrency: 5,
+        decisionConcurrency: 10,
         cloneConcurrency: 10,
-        decisionBatchSize: 10,
-        decisionBatchFlushMs: 15,
+        activeFrontier: 100,
+        decisionBatchSize: 20,
+        decisionBatchFlushMs: 40,
         llmRpmLimit: null,
       },
     );
@@ -92,10 +98,12 @@ describe('doctor command', () => {
 
     expect(getDoctorRuntimeSettings()).toMatchObject({
       batchSize: 100,
+      decisionConcurrency: 10,
       cloneConcurrency: 10,
+      activeFrontier: 100,
       workerConcurrency: 5,
-      decisionBatchSize: 10,
-      decisionBatchFlushMs: 15,
+      decisionBatchSize: 20,
+      decisionBatchFlushMs: 40,
       llmRpmLimit: null,
     });
 

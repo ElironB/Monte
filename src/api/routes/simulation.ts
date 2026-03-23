@@ -274,6 +274,7 @@ async function simulationRoutes(fastify: FastifyInstance) {
       }
 
       const simulationId = uuidv4();
+      const batchSizeUsed = config.simulation.batchSize;
       await runWriteSingle(
         `MATCH (p:Persona {id: $personaId})
          CREATE (s:Simulation {
@@ -284,6 +285,7 @@ async function simulationRoutes(fastify: FastifyInstance) {
            parameters: $parameters,
            cloneCount: $cloneCount,
            capitalAtRisk: $capitalAtRisk,
+           batchSizeUsed: $batchSizeUsed,
            progress: 0,
            completedBatches: 0,
            createdAt: datetime()
@@ -298,11 +300,11 @@ async function simulationRoutes(fastify: FastifyInstance) {
           parameters: JSON.stringify(body.parameters ?? {}),
           cloneCount: body.cloneCount,
           capitalAtRisk: body.capitalAtRisk ?? null,
+          batchSizeUsed,
         }
       );
 
-      const batchSize = config.simulation.batchSize;
-      const totalBatches = Math.ceil(body.cloneCount / batchSize);
+      const totalBatches = Math.ceil(body.cloneCount / batchSizeUsed);
       for (let i = 0; i < totalBatches; i++) {
         await scheduleSimulationBatch({
           simulationId,
@@ -531,6 +533,7 @@ async function simulationRoutes(fastify: FastifyInstance) {
       const simulationId = uuidv4();
       const cloneCount = body.cloneCount ?? sourceSimulation.cloneCount;
       const rerunName = body.name ?? `${sourceSimulation.name} (evidence rerun)`;
+      const batchSizeUsed = config.simulation.batchSize;
       const rerunParameters = {
         ...parseJson<Record<string, unknown>>(sourceSimulation.parameters, {}),
         evidence: selectedEvidence,
@@ -549,6 +552,7 @@ async function simulationRoutes(fastify: FastifyInstance) {
            parameters: $parameters,
            cloneCount: $cloneCount,
            capitalAtRisk: $capitalAtRisk,
+           batchSizeUsed: $batchSizeUsed,
            progress: 0,
            completedBatches: 0,
            sourceSimulationId: $sourceSimulationId,
@@ -573,13 +577,13 @@ async function simulationRoutes(fastify: FastifyInstance) {
           parameters: JSON.stringify(rerunParameters),
           cloneCount,
           capitalAtRisk: sourceSimulation.capitalAtRisk ?? null,
+          batchSizeUsed,
           evidenceCount: selectedEvidence.length,
           evidenceIds: selectedEvidence.map((entry) => entry.id),
         }
       );
 
-      const batchSize = config.simulation.batchSize;
-      const totalBatches = Math.ceil(cloneCount / batchSize);
+      const totalBatches = Math.ceil(cloneCount / batchSizeUsed);
       for (let i = 0; i < totalBatches; i++) {
         await scheduleSimulationBatch({
           simulationId,

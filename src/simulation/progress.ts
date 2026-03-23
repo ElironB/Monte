@@ -76,6 +76,30 @@ export function calculateExecutionPhaseProgress(
   return clampPercent((safeProcessedClones / totalClones) * 100);
 }
 
+export function calculateExecutionPhaseProgressFromFrontier(options: {
+  processedClones: number;
+  totalClones: number;
+  resolvedDecisions: number;
+  waitingDecisions: number;
+  estimatedDecisionCount: number;
+}): number {
+  const cloneProgress = calculateExecutionPhaseProgress(
+    options.processedClones,
+    options.totalClones,
+  );
+
+  if (options.estimatedDecisionCount <= 0) {
+    return cloneProgress;
+  }
+
+  const effectiveDecisionProgress = clampPercent(
+    ((Math.max(0, options.resolvedDecisions) + (Math.max(0, options.waitingDecisions) * 0.5))
+      / options.estimatedDecisionCount) * 100,
+  );
+
+  return Math.max(cloneProgress, effectiveDecisionProgress);
+}
+
 export function calculatePersistingPhaseProgress(
   persistedCloneResults: number,
   batchCloneCount: number,

@@ -52,7 +52,9 @@ Set at least:
 Optional runtime tuning:
 
 - `SIMULATION_BATCH_SIZE`
-- `SIMULATION_CONCURRENCY`
+- `SIMULATION_DECISION_CONCURRENCY`
+- `SIMULATION_ACTIVE_FRONTIER`
+- `SIMULATION_CONCURRENCY` (legacy alias for decision concurrency)
 - `SIMULATION_WORKER_CONCURRENCY`
 - `SIMULATION_DECISION_BATCH_SIZE`
 - `SIMULATION_DECISION_BATCH_FLUSH_MS`
@@ -165,6 +167,10 @@ During execution, progress covers `0-90%`. Persistence covers `90-96%`. Aggregat
 
 Monte also batches concurrent LLM decisions by decision node inside each worker batch. Instead of making one remote call per clone per node, Monte can group multiple clones waiting on the same fork into a single structured LLM request. This keeps decision quality LLM-backed while cutting request overhead and rate-limit pressure.
 
+Under the hood, the scheduler is frontier-based rather than whole-clone-concurrency-based. Each worker batch keeps an active frontier of clones in memory, advances them locally until they block on a decision, groups those waiting decisions by node, and only then spends LLM concurrency.
+
+If the provider starts rejecting large batched decision payloads, Monte now adapts by shrinking later batch sizes for that scenario/mode instead of repeating the same oversized request pattern all run long.
+
 Example:
 
 ```bash
@@ -178,8 +184,10 @@ Completed simulations now include runtime telemetry in `simulate results -f json
 
 - wall-clock duration
 - execution, persistence, and aggregation timing
+- decision concurrency and active frontier usage
 - total LLM decision evaluations
 - batched vs single LLM call counts
+- batch retry, split, and leaf-fallback counts
 - total rate-limiter wait time
 - embedding time
 - slowest decision nodes
