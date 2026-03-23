@@ -2,7 +2,14 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getRedisClient } from '../../config/redis.js';
 import { logger } from '../../utils/logger.js';
 import { runQuerySingle } from '../../config/neo4j.js';
-import { calculateSimulationProgress } from '../../simulation/progress.js';
+import {
+  asSimulationAggregationStage,
+  asSimulationProgressPhase,
+  calculateExecutionPhaseProgress,
+  createProgressSnapshot,
+  deriveSimulationPhase,
+} from '../../simulation/progress.js';
+import { config } from '../../config/index.js';
 
 interface SSEClient {
   id: string;
@@ -28,6 +35,62 @@ function getNumberField(payload: Record<string, unknown> | null, key: string): n
 function getStringField(payload: Record<string, unknown> | null, key: string): string | undefined {
   const value = payload?.[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+export function buildProgressResponse(options: {
+  simulationId: string;
+  simulation: {
+    status: string;
+    progress?: number;
+    completedBatches?: number;
+    cloneCount: number;
+    error?: string;
+  };
+  parsed: Record<string, unknown> | null;
+  processedClones?: number;
+}) {
+  const { simulationId, simulation, parsed, processedClones } = options;
+  const status = getStringField(parsed, 'status') ?? simulation.status;
+  const phase = asSimulationProgressPhase(getStringField(parsed, 'phase')) ?? deriveSimulationPhase(status);
+  const aggregationStage = asSimulationAggregationStage(getStringField(parsed, 'aggregationStage'));
+  const liveProcessedClones = typeof processedClones === 'number' && Number.isFinite(processedClones)
+    ? processedClones
+    : undefined;
+  const phaseProgress = getNumberField(parsed, 'phaseProgress')
+    ?? (phase === 'executing' && typeof liveProcessedClones === 'number'
+      ? calculateExecutionPhaseProgress(liveProcessedClones, simulation.cloneCount)
+      : phase === 'completed'
+        ? 100
+        : phase === 'queued'
+          ? 0
+          : undefined);
+  const snapshot = typeof phaseProgress === 'number'
+    ? createProgressSnapshot({
+        status,
+        phase,
+        phaseProgress,
+        aggregationStage,
+      })
+    : undefined;
+
+  return {
+    simulationId,
+    status: snapshot?.status ?? status,
+    phase: snapshot?.phase ?? phase,
+    phaseProgress,
+    aggregationStage: snapshot?.aggregationStage ?? aggregationStage,
+    progress: getNumberField(parsed, 'progress') ?? snapshot?.progress ?? simulation.progress ?? 0,
+    completedBatches: getNumberField(parsed, 'completedBatches') ?? simulation.completedBatches ?? 0,
+    totalBatches: Math.ceil(simulation.cloneCount / config.simulation.batchSize),
+    cloneCount: simulation.cloneCount,
+    processedClones: liveProcessedClones ?? 0,
+    error: getStringField(parsed, 'error') ?? simulation.error,
+    currentBatch: getNumberField(parsed, 'currentBatch'),
+    batchProcessedClones: getNumberField(parsed, 'batchProcessedClones'),
+    batchCloneCount: getNumberField(parsed, 'batchCloneCount'),
+    estimatedTimeRemaining: getNumberField(parsed, 'estimatedTimeRemaining'),
+    lastUpdated: getStringField(parsed, 'lastUpdated'),
+  };
 }
 
 export function broadcastSimulationProgress(simulationId: string, data: unknown): void {
@@ -156,35 +219,31 @@ async function streamRoutes(fastify: FastifyInstance) {
         : getNumberField(parsed, 'processedClones');
 
       if (parsed || Number.isFinite(processedClones)) {
-        const status = getStringField(parsed, 'status') ?? simulation.status;
-        const liveProcessedClones = typeof processedClones === 'number' && Number.isFinite(processedClones)
-          ? processedClones
-          : undefined;
-        return {
+        return buildProgressResponse({
           simulationId: id,
-          status,
-          progress: typeof liveProcessedClones === 'number' && liveProcessedClones > 0
-            ? calculateSimulationProgress(liveProcessedClones, simulation.cloneCount, status)
-            : getNumberField(parsed, 'progress') ?? simulation.progress ?? 0,
-          completedBatches: getNumberField(parsed, 'completedBatches') ?? simulation.completedBatches ?? 0,
-          totalBatches: Math.ceil(simulation.cloneCount / 100),
-          cloneCount: simulation.cloneCount,
-          processedClones: liveProcessedClones ?? 0,
-          error: getStringField(parsed, 'error') ?? simulation.error,
-          currentBatch: getNumberField(parsed, 'currentBatch'),
-          batchProcessedClones: getNumberField(parsed, 'batchProcessedClones'),
-          batchCloneCount: getNumberField(parsed, 'batchCloneCount'),
-          estimatedTimeRemaining: getNumberField(parsed, 'estimatedTimeRemaining'),
-          lastUpdated: getStringField(parsed, 'lastUpdated'),
-        };
+          simulation,
+          parsed,
+          processedClones,
+        });
       }
 
+      const fallbackSnapshot = createProgressSnapshot({
+        status: simulation.status,
+        phase: deriveSimulationPhase(simulation.status),
+        phaseProgress: simulation.status === 'completed'
+          ? 100
+          : simulation.status === 'pending'
+            ? 0
+            : simulation.progress ?? 0,
+      });
       return {
         simulationId: id,
-        status: simulation.status,
-        progress: simulation.progress ?? 0,
+        status: fallbackSnapshot.status,
+        phase: fallbackSnapshot.phase,
+        phaseProgress: fallbackSnapshot.phaseProgress,
+        progress: simulation.progress ?? fallbackSnapshot.progress,
         completedBatches: simulation.completedBatches ?? 0,
-        totalBatches: Math.ceil(simulation.cloneCount / 100),
+        totalBatches: Math.ceil(simulation.cloneCount / config.simulation.batchSize),
         cloneCount: simulation.cloneCount,
         error: simulation.error,
       };

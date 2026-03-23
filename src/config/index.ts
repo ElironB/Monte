@@ -66,6 +66,31 @@ function resolveEmbeddingConfig() {
   };
 }
 
+function parsePositiveIntEnv(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+function resolveSimulationConfig() {
+  const nodeEnv = process.env.NODE_ENV || 'development';
+
+  return {
+    batchSize: parsePositiveIntEnv(process.env.SIMULATION_BATCH_SIZE) || 100,
+    cloneConcurrency: parsePositiveIntEnv(process.env.SIMULATION_CONCURRENCY) || 10,
+    workerConcurrency: parsePositiveIntEnv(process.env.SIMULATION_WORKER_CONCURRENCY)
+      || (nodeEnv === 'production' ? 20 : 5),
+    llmRpmLimit: parsePositiveIntEnv(process.env.LLM_RPM_LIMIT),
+  };
+}
+
 const configSchema = z.object({
   neo4j: z.object({
     uri: z.string().default('bolt://localhost:7687'),
@@ -87,6 +112,12 @@ const configSchema = z.object({
     port: z.number().default(3000),
     nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
     logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+  }),
+  simulation: z.object({
+    batchSize: z.number().int().min(1).default(100),
+    cloneConcurrency: z.number().int().min(1).default(10),
+    workerConcurrency: z.number().int().min(1).default(5),
+    llmRpmLimit: z.number().int().positive().optional(),
   }),
   llm: z.object({
     apiKey: z.string().optional(),
@@ -132,6 +163,7 @@ export const config = configSchema.parse({
     nodeEnv: process.env.NODE_ENV,
     logLevel: process.env.LOG_LEVEL,
   },
+  simulation: resolveSimulationConfig(),
   llm: resolveLLMConfig(),
   embedding: resolveEmbeddingConfig(),
   composio: {

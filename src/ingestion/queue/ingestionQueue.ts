@@ -61,7 +61,7 @@ export function getSimulationQueue(): Queue<SimulationJobData> {
 export function createWorker<T>(queueName: string, processor: (job: Job<T>) => Promise<unknown>): Worker<T> {
   const worker = new Worker<T>(queueName, processor, {
     connection: getConnection(),
-    concurrency: config.server.nodeEnv === 'production' ? 20 : 5,
+    concurrency: config.simulation.workerConcurrency,
   });
   worker.on('completed', (job) => logger.info({ jobId: job.id }, 'Job completed'));
   worker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, 'Job failed'));

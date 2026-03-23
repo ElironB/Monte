@@ -17,6 +17,7 @@ import { cacheGet, cacheSet } from '../../config/redis.js';
 import { scheduleSimulationBatch } from '../../ingestion/queue/ingestionQueue.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
+import { config } from '../../config/index.js';
 
 const SCENARIOS = ['day_trading', 'startup_founding', 'career_change', 'advanced_degree', 'geographic_relocation', 'real_estate_purchase', 'health_fitness_goal', 'custom'] as const;
 const EVIDENCE_RESULTS = ['positive', 'negative', 'mixed', 'inconclusive'] as const;
@@ -300,7 +301,7 @@ async function simulationRoutes(fastify: FastifyInstance) {
         }
       );
 
-      const batchSize = 100;
+      const batchSize = config.simulation.batchSize;
       const totalBatches = Math.ceil(body.cloneCount / batchSize);
       for (let i = 0; i < totalBatches; i++) {
         await scheduleSimulationBatch({
@@ -577,7 +578,7 @@ async function simulationRoutes(fastify: FastifyInstance) {
         }
       );
 
-      const batchSize = 100;
+      const batchSize = config.simulation.batchSize;
       const totalBatches = Math.ceil(cloneCount / batchSize);
       for (let i = 0; i < totalBatches; i++) {
         await scheduleSimulationBatch({

@@ -5,7 +5,9 @@ import { Command } from 'commander';
 import OpenAI from 'openai';
 import { api } from '../api.js';
 import { loadConfig } from '../config.js';
+import { buildJsonErrorPayload, printJson, printJsonErrorAndExit } from '../output.js';
 import { dimText, icons, infoLabel, sectionHeader } from '../styles.js';
+import { config } from '../../config/index.js';
 
 interface HealthCheck {
   name: string;
@@ -29,8 +31,29 @@ interface ResolvedProviderConfig {
   model: string;
 }
 
-const doctorCommands = new Command('doctor')
-  .description(chalk.dim('Run health checks on your Monte setup'));
+interface DoctorRuntimeSettings {
+  apiUrl: string;
+  batchSize: number;
+  workerConcurrency: number;
+  cloneConcurrency: number;
+  llmRpmLimit: number | null;
+}
+
+interface DoctorReport {
+  ok: boolean;
+  apiUrl: string;
+  runtime: DoctorRuntimeSettings;
+  checks: HealthCheck[];
+  summary: {
+    passCount: number;
+    failCount: number;
+    warnCount: number;
+  };
+}
+
+export const doctorCommands = new Command('doctor')
+  .description(chalk.dim('Run health checks on your Monte setup'))
+  .option('--json', 'output machine-readable JSON', false);
 
 function resolveLlmConfig(): ResolvedProviderConfig {
   if (process.env.OPENROUTER_API_KEY) {
@@ -94,9 +117,7 @@ function formatIcon(status: HealthCheck['status']): string {
   }
 }
 
-async function fetchReadyHealth(): Promise<{ response?: ReadyHealthResponse; error?: Error }> {
-  const { apiUrl } = loadConfig();
-
+async function fetchReadyHealth(apiUrl: string): Promise<{ response?: ReadyHealthResponse; error?: Error }> {
   try {
     const result = await fetch(`${apiUrl}/health/ready`);
     const response = await result.json().catch(() => ({})) as ReadyHealthResponse;
@@ -106,9 +127,37 @@ async function fetchReadyHealth(): Promise<{ response?: ReadyHealthResponse; err
   }
 }
 
-doctorCommands.action(async () => {
-  console.log(`\n${sectionHeader('Monte Engine Health Check')}\n`);
+export function getDoctorRuntimeSettings(): DoctorRuntimeSettings {
+  const { apiUrl } = loadConfig();
 
+  return {
+    apiUrl,
+    batchSize: config.simulation.batchSize,
+    workerConcurrency: config.simulation.workerConcurrency,
+    cloneConcurrency: config.simulation.cloneConcurrency,
+    llmRpmLimit: config.simulation.llmRpmLimit ?? null,
+  };
+}
+
+export function buildDoctorReport(checks: HealthCheck[], runtime: DoctorRuntimeSettings): DoctorReport {
+  const failCount = checks.filter((check) => check.status === 'fail').length;
+  const passCount = checks.filter((check) => check.status === 'pass').length;
+  const warnCount = checks.filter((check) => check.status === 'warn').length;
+
+  return {
+    ok: failCount === 0,
+    apiUrl: runtime.apiUrl,
+    runtime,
+    checks,
+    summary: {
+      passCount,
+      failCount,
+      warnCount,
+    },
+  };
+}
+
+async function collectHealthChecks(apiUrl: string): Promise<HealthCheck[]> {
   const checks: HealthCheck[] = [];
 
   try {
@@ -123,7 +172,7 @@ doctorCommands.action(async () => {
     });
   }
 
-  const ready = await fetchReadyHealth();
+  const ready = await fetchReadyHealth(apiUrl);
   if (ready.error) {
     checks.push({
       name: 'Neo4j',
@@ -235,26 +284,62 @@ doctorCommands.action(async () => {
     checks.push({ name: 'Composio API Key', status: 'warn', message: 'Not set (optional)' });
   }
 
-  for (const check of checks) {
-    const icon = formatIcon(check.status);
-    const status = formatStatus(check.status);
-    const msg = check.message ? dimText(` — ${check.message}`) : '';
-    console.log(`  ${icon} ${infoLabel(check.name.padEnd(20))} ${status}${msg}`);
-    if (check.details) {
-      console.log(`     ${dimText(check.details)}`);
+  return checks;
+}
+
+function renderRuntimeSettings(runtime: DoctorRuntimeSettings): void {
+  const rpmText = runtime.llmRpmLimit === null ? 'auto-detected' : String(runtime.llmRpmLimit);
+
+  console.log(`\n${sectionHeader('Runtime Tuning')}`);
+  console.log(`  ${infoLabel('API URL:')} ${runtime.apiUrl}`);
+  console.log(`  ${infoLabel('Batch Size:')} ${runtime.batchSize}`);
+  console.log(`  ${infoLabel('Worker Concurrency:')} ${runtime.workerConcurrency}`);
+  console.log(`  ${infoLabel('Clone Concurrency:')} ${runtime.cloneConcurrency}`);
+  console.log(`  ${infoLabel('LLM RPM Limit:')} ${rpmText}`);
+}
+
+doctorCommands.action(async (options: { json?: boolean }) => {
+  try {
+    const runtime = getDoctorRuntimeSettings();
+    const checks = await collectHealthChecks(runtime.apiUrl);
+    const report = buildDoctorReport(checks, runtime);
+
+    if (options.json) {
+      printJson(report);
+      if (!report.ok) {
+        process.exit(1);
+      }
+      return;
     }
-  }
 
-  const failCount = checks.filter((check) => check.status === 'fail').length;
-  const passCount = checks.filter((check) => check.status === 'pass').length;
+    console.log(`\n${sectionHeader('Monte Engine Health Check')}\n`);
 
-  console.log();
-  if (failCount > 0) {
-    console.log(chalk.red.bold(`✗ ${failCount} check(s) failed`));
+    for (const check of checks) {
+      const icon = formatIcon(check.status);
+      const status = formatStatus(check.status);
+      const msg = check.message ? dimText(` — ${check.message}`) : '';
+      console.log(`  ${icon} ${infoLabel(check.name.padEnd(20))} ${status}${msg}`);
+      if (check.details) {
+        console.log(`     ${dimText(check.details)}`);
+      }
+    }
+
+    renderRuntimeSettings(runtime);
+    console.log();
+
+    if (!report.ok) {
+      console.log(chalk.red.bold(`✗ ${report.summary.failCount} check(s) failed`));
+      process.exit(1);
+    }
+
+    console.log(chalk.green.bold(`✓ All critical checks passed (${report.summary.passCount}/${checks.length})`));
+  } catch (err) {
+    if (options.json) {
+      printJsonErrorAndExit(err);
+    }
+
+    const payload = buildJsonErrorPayload(err);
+    console.error(`${icons.error} ${payload.error.message}`);
     process.exit(1);
   }
-
-  console.log(chalk.green.bold(`✓ All critical checks passed (${passCount}/${checks.length})`));
 });
-
-export { doctorCommands };

@@ -1,137 +1,203 @@
 # Monte
 
-> A flight simulator for life decisions.
+> A flight simulator for hard decisions.
 
-**Ask Monte questions like:**
+Monte is a self-hosted decision engine that ingests personal data, builds a behavioral persona, generates stratified clones, and runs probabilistic simulations against real decision paths. Instead of a single prediction, it returns distributions, decision intelligence, recommended experiments, and evidence-adjusted reruns.
 
-- Should I quit my job to start a company?
-- Is buying a house right now smart?
-- Should I move cities or change careers?
+**Core loop:** Data -> Signals -> Persona -> Clones -> Simulation -> Evidence loop
 
-Monte is an open-source, self-hostable decision engine that ingests personal data, builds a behavioral persona, generates clone variants, and runs probabilistic simulations against real decision paths.
+## What Monte gives you
 
-Instead of giving you a single prediction, Monte gives you:
-
-- outcome distributions
-- decision intelligence
-- recommended experiments
-- evidence-adjusted reruns as new information comes in
-
-**Data → Signals → Persona → Clones → Simulation → Evidence loop**
-
-## What it is in one screen
-
-- **Not an oracle** — Monte stress-tests decisions instead of claiming to predict the future
-- **Behavior-driven** — it uses revealed behavioral signals from your data, not just self-reported preferences
-- **Probabilistic** — it returns distributions and scenario spread, not a single yes/no answer
-- **Updatable** — you can record real-world evidence and rerun the model after learning something new
-
-## What people use it for
-
-- Stress-testing major life choices before acting
-- Comparing how different personas behave under the same scenario
-- Giving external tools or agents a decision layer through the API or CLI
-- Regression-testing simulation quality with a deterministic benchmark harness
-
-## Quick demo (no real data needed)
-
-Monte ships a synthetic persona generator, so someone landing on the repo can understand the full loop without exporting their own data first:
-
-```bash
-npm run cli:dev -- generate "26 year old software engineer who day trades, impulse spender, anxious about career growth"
-npm run cli:dev -- ingest ./generated-persona
-npm run cli:dev -- persona build
-npm run cli:dev -- simulate "should I quit my job and day trade with my savings?" --wait
-```
-
-Want to prove the system differentiates between people instead of returning generic advice?
-
-```bash
-npm run cli:dev -- generate "conservative 40 year old accountant, disciplined saver, risk-averse" -o ./persona-conservative
-npm run cli:dev -- generate "25 year old crypto trader, YOLO mentality, high risk tolerance" -o ./persona-aggressive
-```
-
-Then ingest/build/simulate each persona separately, or use `compare` for an A/B-style workflow.
-
-## What the CLI output looks like
-
-Here is a realistic example of the kind of output Monte produces from a completed simulation:
-
-```bash
-$ npm run cli:dev -- simulate "should I quit my job to start a company?" --wait
-Parsed simulation:
-  Scenario: startup_founding
-  Name: Should I quit my job to start a company?
-
-Creating simulation "Should I quit my job to start a company?" with 1000 clones...
-✓ Simulation created
-  Simulation ID: 8d1f9b2e-2a4f-4d9f-8b7a-1d6af9d3b4c2
-  Status: pending
-  Clones: 1000
-
-Waiting for completion...
-Progress: [████████████████████████████████████████] 100% (1000/1000 clones, 10/10 batches)
-✓ Simulation complete!
-  Success Rate: 41.2%
-
-$ npm run cli:dev -- simulate results 8d1f9b2e-2a4f-4d9f-8b7a-1d6af9d3b4c2
-
-Simulation Results
-
-Outcome Distribution
-  Success: 41.2%
-  Failure: 34.7%
-  Neutral: 24.1%
-
-Statistics
-  Success Rate: 41.2%
-  Mean Capital: $184000
-  Mean Health: 73.0%
-  Mean Happiness: 68.0%
-  Avg Duration: 38.4 months
-
-Stratified Breakdown
-  Edge Cases: 100 clones avg outcome: 0.61
-  Typical: 700 clones avg outcome: 0.24
-  Central: 200 clones avg outcome: 0.31
-```
-
-If you record evidence and rerun the simulation, Monte also prints deltas showing how the recommendation changed after new information came in.
-
-## What Monte does
-
-- Ingests exported files and notes from multiple personal data sources
-- Extracts behavioral signals and contradictions
-- Maps signals into 9 behavioral dimensions:
-  - `riskTolerance`
-  - `timePreference`
-  - `socialDependency`
-  - `learningStyle`
-  - `decisionSpeed`
-  - `emotionalVolatility`
-  - `executionGap`
-  - `informationSeeking`
-  - `stressResponse`
-- Derives a psychology layer with Big Five, attachment style, locus of control, temporal discounting, and risk flags
-- Generates a stratified population of clones instead of a single deterministic profile
-- Runs decision simulations across 8 built-in scenarios plus a custom scenario
-- Produces decision intelligence, experiment recommendations, evidence-adjusted reruns, and optional narrative summaries
-- Ships a seeded benchmark harness for regression testing calibration, policy regret, evidence updates, and deterministic stability
+- Outcome distributions instead of a single yes/no answer
+- A persona built from revealed behavioral signals, not just self-reported traits
+- Decision intelligence with dominant uncertainties and recommended experiments
+- Evidence capture plus reruns after the world gives you new information
+- A deterministic benchmark harness for regression-testing the simulation layer
 
 ## Current product shape
 
-Monte currently ships as a self-hosted TypeScript backend with:
+Monte currently ships as:
 
 - a Fastify API
-- a Commander-based CLI
+- a globally installable Commander CLI
 - BullMQ workers for ingestion, persona builds, and simulation batches
-- Neo4j for the persistent graph
-- Redis for caching and queue transport
+- Neo4j for graph persistence
+- Redis for cache, live progress, and queue transport
 - MinIO for uploaded source storage
 
-In open-source/self-hosted mode, auth is stubbed and requests run as a local user.
+In self-hosted OSS mode, auth is stubbed to a local injected user.
 
-## Built-in scenarios
+## Quickstart
+
+### Requirements
+
+- Node.js 20+
+- Docker and Docker Compose
+- A chat-capable OpenAI-compatible model key
+- An embedding-capable key for persona builds
+
+The simplest setup is `OPENROUTER_API_KEY`, which can cover both chat and embeddings.
+
+### 1. Configure the environment
+
+```bash
+cp .env.example .env
+```
+
+Set at least:
+
+- `NEO4J_PASSWORD`
+- `OPENROUTER_API_KEY`, or equivalent chat plus embedding keys
+
+Optional runtime tuning:
+
+- `SIMULATION_BATCH_SIZE`
+- `SIMULATION_CONCURRENCY`
+- `SIMULATION_WORKER_CONCURRENCY`
+- `LLM_RPM_LIMIT`
+
+### 2. Start dependencies and install packages
+
+```bash
+docker compose up -d neo4j redis minio
+npm install
+```
+
+### 3. Run the Monte API
+
+```bash
+npm run dev
+```
+
+The API starts on `http://localhost:3000` by default. Swagger docs are available at `http://localhost:3000/docs`.
+
+### 4. Install the global CLI
+
+```bash
+npm install -g monte-engine
+monte config set-api http://localhost:3000
+```
+
+### 5. Verify the stack
+
+```bash
+monte doctor
+monte doctor --json
+```
+
+## Global CLI Install
+
+The published npm package is `monte-engine`, but the executable on your `PATH` is `monte`.
+
+```bash
+npm install -g monte-engine
+monte config set-api http://localhost:3000
+monte doctor
+```
+
+For local development inside this repo, use the source-running variant instead:
+
+```bash
+npm run cli:dev -- doctor
+```
+
+## Agent Integration
+
+Monte is designed to be usable as a CLI step inside external agent systems like Claude Code, OpenClaw, or Hermes. The agent-facing entrypoint is `monte decide`.
+
+Preflight:
+
+```bash
+monte config set-api http://localhost:3000
+monte doctor --json
+```
+
+One-shot decision:
+
+```bash
+monte decide "should I quit my job to start a company?" --mode standard --wait --json
+```
+
+Async flow:
+
+```bash
+monte decide "should I move to Berlin for this job?" --mode fast --json
+monte simulate progress <simulation-id> --json
+monte simulate results <simulation-id> -f json
+```
+
+`monte decide --json` returns a single JSON object. Without `--wait`, it returns the queued simulation plus recommended polling commands. With `--wait`, it also returns a condensed decision bundle and the raw aggregated results payload.
+
+## Quick Demo
+
+Monte ships a synthetic persona generator, so you can exercise the full loop without exporting your own data first.
+
+```bash
+monte generate "26 year old software engineer who day trades, impulse spender, anxious about career growth"
+monte ingest ./generated-persona
+monte persona build
+monte decide "should I quit my job and day trade with my savings?" --mode standard --wait
+```
+
+You can also compare sharply different personas:
+
+```bash
+monte generate "conservative 40 year old accountant, disciplined saver, risk-averse" -o ./persona-conservative
+monte generate "25 year old crypto trader, YOLO mentality, high risk tolerance" -o ./persona-aggressive
+```
+
+Then ingest, build, and simulate each separately, or use `compare` for an A/B workflow.
+
+## Progress Reporting
+
+Simulation progress is phase-aware. Instead of appearing stuck at `95-99%`, Monte now surfaces the active phase:
+
+- `queued`
+- `executing`
+- `persisting`
+- `aggregating`
+- `completed`
+- `failed`
+
+During execution, progress covers `0-90%`. Persistence covers `90-96%`. Aggregation uses stable end markers at `97-99%` so long-tail work is explained rather than looking frozen.
+
+Example:
+
+```bash
+monte simulate "should I buy this house?" --wait
+monte simulate progress <simulation-id> --json
+```
+
+## Common CLI Workflows
+
+### Persona workflow
+
+```bash
+monte ingest ./path/to/data
+monte persona build
+monte persona status
+monte persona psychology
+```
+
+### Simulation workflow
+
+```bash
+monte simulate "should I quit my job and start a business?" --wait
+monte simulate evidence <simulation-id> --recommendation 1 --result positive --signal "Customer interviews converted at 3x the prior rate"
+monte simulate rerun <simulation-id> --wait
+```
+
+### Development workflow inside this repo
+
+```bash
+npm run cli:dev -- ingest ./path/to/data
+npm run cli:dev -- persona build
+npm run cli:dev -- decide "should I do this?" --mode standard --wait --json
+```
+
+## Built-in Scenario Types
+
+Monte currently ships 8 scenario types including `custom`:
 
 - `day_trading`
 - `startup_founding`
@@ -142,82 +208,9 @@ In open-source/self-hosted mode, auth is stubbed and requests run as a local use
 - `health_fitness_goal`
 - `custom`
 
-## Quickstart
+## Benchmark Harness
 
-### Requirements
-
-- Node.js 20+
-- Docker and Docker Compose
-- At least one chat-capable OpenAI-compatible model key
-- An embedding-capable key for persona builds
-
-The simplest setup is `OPENROUTER_API_KEY`, which can cover both chat and embeddings.
-
-### 1. Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and set at least:
-
-- `NEO4J_PASSWORD`
-- `OPENROUTER_API_KEY` (recommended), or equivalent chat plus embedding keys
-
-### 2. Start dependencies and install packages
-
-```bash
-docker compose up -d neo4j redis minio
-npm install
-```
-
-### 3. Run the API
-
-```bash
-npm run dev
-```
-
-The API starts on `http://localhost:3000` by default.
-Swagger docs are available at `http://localhost:3000/docs`.
-
-### 4. Verify the stack
-
-```bash
-npm run cli:dev -- doctor
-```
-
-## Typical workflow
-
-### Ingest data
-
-```bash
-npm run cli:dev -- ingest ./path/to/data
-```
-
-### Build a persona
-
-```bash
-npm run cli:dev -- persona build
-npm run cli:dev -- persona status
-npm run cli:dev -- persona psychology
-```
-
-### Run a simulation
-
-```bash
-npm run cli:dev -- simulate "should I quit my job and start a company?" --wait
-```
-
-### Add evidence and rerun
-
-```bash
-npm run cli:dev -- simulate evidence <simulation-id> --recommendation 1 --result positive --signal "Customer interviews converted at 3x the prior rate"
-npm run cli:dev -- simulate rerun <simulation-id> --wait
-```
-
-## Benchmark harness
-
-The benchmark harness is the main regression check for the simulation layer. It uses a seeded fixture corpus and verifies:
+The benchmark harness is a first-class regression surface for the simulation stack. It verifies:
 
 - calibration error
 - static policy regret
@@ -238,28 +231,25 @@ Current fixture corpus:
 - `real_estate_purchase_carry_costs`
 - `day_trading_edge_discipline`
 
-## Project map
+## Project Map
 
-- `src/index.ts` — Fastify bootstrap and route registration
-- `src/api/` — REST routes and plugins
-- `src/cli/` — local CLI
-- `src/ingestion/` — file ingestion, extractors, contradictions, queues
-- `src/persona/` — dimension mapping, graph build, compression, psychology, clone generation
-- `src/simulation/` — scenario compilation, state model, engine, aggregation, evidence loop
-- `src/benchmarks/` — seeded benchmark harness
-- `tests/` — Vitest suites
-- `docs/architecture.md` — system architecture
-- `SKILL.md` — repo-aware guidance for coding agents
-- `AGENTS.md` — agent operating rules for this repository
+- `src/index.ts` -> Fastify bootstrap and route registration
+- `src/api/` -> HTTP routes and plugins
+- `src/cli/` -> CLI bootstrap, config, and commands
+- `src/ingestion/` -> ingestion, extractors, contradictions, queues
+- `src/persona/` -> dimension mapping, graph build, compression, psychology, clone generation
+- `src/simulation/` -> scenario compilation, engine, aggregation, evidence loop, progress helpers
+- `src/benchmarks/` -> seeded benchmark harness
+- `tests/` -> Vitest suites
+- `docs/architecture.md` -> system architecture
+- `CONTEXT.md` -> durable repo state
+- `SKILL.md` -> repo-aware coding guidance
+- `AGENTS.md` -> agent operating rules for this repository
 
-## Development notes
+## Development Notes
 
-- Signal extraction is rule-based; do not move extraction into the LLM path.
-- Use the `openai` SDK for provider integrations instead of provider-specific SDKs.
-- If you change simulation semantics, run the benchmark harness.
-- If you change public behavior or architecture, keep `README.md`, `CONTEXT.md`, `AGENTS.md`, `docs/architecture.md`, and `SKILL.md` aligned.
-- The `connect` / Composio workflow exists but is still experimental.
-
-## Contributing
-
-See `CONTRIBUTING.md`.
+- Signal extraction is rule-based; do not route extraction through an LLM.
+- Use the `openai` SDK for provider integrations.
+- If simulation semantics change, rerun the benchmark harness.
+- If architecture or commands change, keep `README.md`, `CONTEXT.md`, `AGENTS.md`, `docs/architecture.md`, and `SKILL.md` aligned.
+- `connect` / Composio exists but is still experimental.
