@@ -1,13 +1,16 @@
 # Monte
 
-> A flight simulator for hard decisions.
+> Give AI agents the judgment layer they need for hard real-life decisions.
 
-Monte is a self-hosted decision engine that ingests personal data, builds a behavioral persona, generates stratified clones, and runs probabilistic simulations against real decision paths. Instead of a single prediction, it returns distributions, decision intelligence, recommended experiments, and evidence-adjusted reruns.
+Monte turns your personal data into a behavioral decision model that AI agents can consult before making high-stakes calls on your behalf. Instead of guessing what an average user might do, Monte helps an agent simulate how *you* are likely to think, hesitate, react under pressure, and trade off risk across hundreds of realistic futures.
+
+For career moves, money choices, relocations, relationships, or any irreversible bet, Monte gives agents more than a one-shot answer: it returns outcome distributions, dominant uncertainties, recommended experiments, and evidence-adjusted reruns so decisions can improve as reality unfolds.
 
 **Core loop:** Data -> Signals -> Persona -> Clones -> Simulation -> Evidence loop
 
 ## What Monte gives you
 
+- A judgment engine AI agents can call before making expensive, emotional, or irreversible decisions
 - Outcome distributions instead of a single yes/no answer
 - A persona built from revealed behavioral signals, not just self-reported traits
 - Decision intelligence with dominant uncertainties and recommended experiments
