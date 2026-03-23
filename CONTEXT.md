@@ -66,7 +66,7 @@ Monte does not simulate a single user. It generates a stratified clone populatio
 
 ### 5. Simulation
 
-Simulations compile a scenario, execute clone runs, batch-persist clone results with Neo4j `UNWIND` writes, and aggregate:
+Simulations compile a scenario, execute clone runs, batch LLM decisions for clones waiting on the same node, batch-persist clone results with Neo4j `UNWIND` writes, and aggregate:
 
 - histograms
 - outcome distribution
@@ -104,6 +104,15 @@ Aggregation may expose sub-stages:
 - `reducing`
 - `writing_summary`
 
+Completed simulations also carry runtime telemetry that summarizes:
+
+- wall-clock runtime
+- execution, persistence, and aggregation timing
+- LLM batch vs single-call counts
+- limiter wait time
+- embedding time
+- slowest decision nodes
+
 ### 7. Evidence loop
 
 Completed simulations can accept experiment results. Evidence is translated into causal and belief adjustments, applied to the state and decision frame, and then used to create evidence-adjusted reruns. Reruns compare belief deltas and recommendation changes against the source simulation.
@@ -139,6 +148,15 @@ Primary user-facing commands:
 - `monte decide "<question>" --mode fast|standard|deep [--wait] [--json]`
 
 For repo development, the equivalent source-running form is `npm run cli:dev -- ...`.
+
+Relevant runtime tuning env vars:
+
+- `SIMULATION_BATCH_SIZE`
+- `SIMULATION_CONCURRENCY`
+- `SIMULATION_WORKER_CONCURRENCY`
+- `SIMULATION_DECISION_BATCH_SIZE`
+- `SIMULATION_DECISION_BATCH_FLUSH_MS`
+- `LLM_RPM_LIMIT`
 
 ## Built-in scenario types
 

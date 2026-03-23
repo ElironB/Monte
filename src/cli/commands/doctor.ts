@@ -36,6 +36,8 @@ interface DoctorRuntimeSettings {
   batchSize: number;
   workerConcurrency: number;
   cloneConcurrency: number;
+  decisionBatchSize: number;
+  decisionBatchFlushMs: number;
   llmRpmLimit: number | null;
 }
 
@@ -136,6 +138,8 @@ export function getDoctorRuntimeSettings(): DoctorRuntimeSettings {
     batchSize: runtime.batchSize,
     workerConcurrency: runtime.workerConcurrency,
     cloneConcurrency: runtime.cloneConcurrency,
+    decisionBatchSize: runtime.decisionBatchSize,
+    decisionBatchFlushMs: runtime.decisionBatchFlushMs,
     llmRpmLimit: runtime.llmRpmLimit ?? null,
   };
 }
@@ -296,6 +300,8 @@ function renderRuntimeSettings(runtime: DoctorRuntimeSettings): void {
   console.log(`  ${infoLabel('Batch Size:')} ${runtime.batchSize}`);
   console.log(`  ${infoLabel('Worker Concurrency:')} ${runtime.workerConcurrency}`);
   console.log(`  ${infoLabel('Clone Concurrency:')} ${runtime.cloneConcurrency}`);
+  console.log(`  ${infoLabel('Decision Batch Size:')} ${runtime.decisionBatchSize}`);
+  console.log(`  ${infoLabel('Decision Flush:')} ${runtime.decisionBatchFlushMs}ms`);
   console.log(`  ${infoLabel('LLM RPM Limit:')} ${rpmText}`);
 }
 

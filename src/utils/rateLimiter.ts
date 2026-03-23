@@ -1,3 +1,11 @@
+export interface RateLimiterStats {
+  acquireCalls: number;
+  immediateGrants: number;
+  queuedAcquires: number;
+  totalWaitMs: number;
+  maxWaitMs: number;
+}
+
 export class RateLimiter {
   private tokens: number;
   private readonly maxTokens: number;
@@ -5,6 +13,13 @@ export class RateLimiter {
   private lastRefill: number;
   private readonly waitQueue: Array<{ resolve: () => void }> = [];
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  private stats: RateLimiterStats = {
+    acquireCalls: 0,
+    immediateGrants: 0,
+    queuedAcquires: 0,
+    totalWaitMs: 0,
+    maxWaitMs: 0,
+  };
 
   constructor(requestsPerMinute: number) {
     const safeRPM = Math.max(1, Math.floor(requestsPerMinute));
@@ -15,17 +30,43 @@ export class RateLimiter {
   }
 
   async acquire(): Promise<void> {
+    this.stats.acquireCalls += 1;
     this.refill();
 
     if (this.waitQueue.length === 0 && this.tokens >= 1) {
       this.tokens -= 1;
+      this.stats.immediateGrants += 1;
       return;
     }
 
+    this.stats.queuedAcquires += 1;
+    const startedAt = Date.now();
+
     await new Promise<void>((resolve) => {
-      this.waitQueue.push({ resolve });
+      this.waitQueue.push({
+        resolve: () => {
+          const waitMs = Date.now() - startedAt;
+          this.stats.totalWaitMs += waitMs;
+          this.stats.maxWaitMs = Math.max(this.stats.maxWaitMs, waitMs);
+          resolve();
+        },
+      });
       this.scheduleDrain();
     });
+  }
+
+  getStats(): RateLimiterStats {
+    return { ...this.stats };
+  }
+
+  resetStats(): void {
+    this.stats = {
+      acquireCalls: 0,
+      immediateGrants: 0,
+      queuedAcquires: 0,
+      totalWaitMs: 0,
+      maxWaitMs: 0,
+    };
   }
 
   private refill(): void {

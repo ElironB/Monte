@@ -23,9 +23,17 @@ vi.mock('../src/utils/logger.js', () => ({
 
 import { BayesianUpdater, DriftDetector } from '../src/persona/bayesianUpdater.js';
 
-function makeSignal(value: string, type: BehavioralSignal['type'], confidence: number = 0.9): BehavioralSignal {
+let signalCounter = 0;
+
+function makeSignal(
+  value: string,
+  type: BehavioralSignal['type'],
+  confidence = 0.9,
+): BehavioralSignal {
+  signalCounter += 1;
+
   return {
-    id: `sig-${Math.random().toString(36).slice(2, 8)}`,
+    id: `sig-${signalCounter}`,
     type,
     value,
     confidence,
@@ -38,30 +46,54 @@ function makeSignal(value: string, type: BehavioralSignal['type'], confidence: n
 
 const conceptEmbeddings: ConceptEmbeddings = {
   riskTolerance: { high: [[1, 0]], low: [[-1, 0]], negative: [] },
-  timePreference: { high: [[0.9, 0.1]], low: [[-0.9, -0.1]], negative: [] },
-  socialDependency: { high: [[0.7, 0.7]], low: [[-0.7, -0.7]], negative: [] },
+  timePreference: {
+    high: [[0.9, 0.1]],
+    low: [[-0.9, -0.1]],
+    negative: [],
+  },
+  socialDependency: {
+    high: [[0.7, 0.7]],
+    low: [[-0.7, -0.7]],
+    negative: [],
+  },
   learningStyle: { high: [[0, 1]], low: [[0, -1]], negative: [] },
-  decisionSpeed: { high: [[0.8, 0.2]], low: [[-0.8, -0.2]], negative: [] },
-  emotionalVolatility: { high: [[0.6, 0.8]], low: [[-0.6, -0.8]], negative: [] },
+  decisionSpeed: {
+    high: [[0.8, 0.2]],
+    low: [[-0.8, -0.2]],
+    negative: [],
+  },
+  emotionalVolatility: {
+    high: [[0.6, 0.8]],
+    low: [[-0.6, -0.8]],
+    negative: [],
+  },
 };
 
 describe('BayesianUpdater', () => {
   beforeEach(() => {
+    signalCounter = 0;
     runQuerySingleMock.mockReset();
     runWriteSingleMock.mockReset();
     runWriteSingleMock.mockResolvedValue({ id: 'trait-1' });
   });
 
   it('raises confidence for corroborating semantic evidence', async () => {
-    runQuerySingleMock.mockImplementation(async (_query: string, params: { dimName: string }) => ({
-      value: params.dimName === 'riskTolerance' ? 0.82 : 0.5,
-      confidence: params.dimName === 'riskTolerance' ? 0.7 : 0.6,
-      evidenceCount: 2,
-    }));
+    runQuerySingleMock.mockImplementation(
+      async (_query: string, params: { dimName: string }) => ({
+        value: params.dimName === 'riskTolerance' ? 0.82 : 0.5,
+        confidence: params.dimName === 'riskTolerance' ? 0.7 : 0.6,
+        evidenceCount: 2,
+      }),
+    );
 
     const signal = makeSignal('speculative conviction', 'cognitive_trait');
     const signalEmbeddings = new Map([[signal.id, [1, 0]]]);
-    const updater = new BayesianUpdater('user-1', 'persona-1', conceptEmbeddings, signalEmbeddings);
+    const updater = new BayesianUpdater(
+      'user-1',
+      'persona-1',
+      conceptEmbeddings,
+      signalEmbeddings,
+    );
     const result = await updater.update(
       [signal],
       {
@@ -71,10 +103,12 @@ describe('BayesianUpdater', () => {
         learningStyle: 0.5,
         decisionSpeed: 0.5,
         emotionalVolatility: 0.5,
-      }
+      },
     );
 
-    const riskUpdate = result.updates.find(update => update.dimension === 'riskTolerance');
+    const riskUpdate = result.updates.find(
+      update => update.dimension === 'riskTolerance',
+    );
     expect(riskUpdate).toBeDefined();
     expect(riskUpdate?.evidenceType).toBe('corroborating');
     expect(riskUpdate?.posterior).toBeGreaterThan(riskUpdate?.prior ?? 0);
@@ -87,20 +121,31 @@ describe('BayesianUpdater', () => {
         dimName: 'riskTolerance',
         evidenceCount: 3,
         lowConfidence: false,
-      })
+      }),
     );
   });
 
   it('flags low confidence after repeated contradicting semantic evidence', async () => {
-    runQuerySingleMock.mockImplementation(async (_query: string, params: { dimName: string }) => ({
-      value: params.dimName === 'riskTolerance' ? 0.8 : 0.5,
-      confidence: params.dimName === 'riskTolerance' ? 0.1 : 0.6,
-      evidenceCount: 2,
-    }));
+    runQuerySingleMock.mockImplementation(
+      async (_query: string, params: { dimName: string }) => ({
+        value: params.dimName === 'riskTolerance' ? 0.8 : 0.5,
+        confidence: params.dimName === 'riskTolerance' ? 0.1 : 0.6,
+        evidenceCount: 2,
+      }),
+    );
 
-    const signal = makeSignal('cautious capital preservation', 'cognitive_trait', 1);
+    const signal = makeSignal(
+      'cautious capital preservation',
+      'cognitive_trait',
+      1,
+    );
     const signalEmbeddings = new Map([[signal.id, [1, 0]]]);
-    const updater = new BayesianUpdater('user-1', 'persona-1', conceptEmbeddings, signalEmbeddings);
+    const updater = new BayesianUpdater(
+      'user-1',
+      'persona-1',
+      conceptEmbeddings,
+      signalEmbeddings,
+    );
     const result = await updater.update(
       [signal],
       {
@@ -110,10 +155,12 @@ describe('BayesianUpdater', () => {
         learningStyle: 0.5,
         decisionSpeed: 0.5,
         emotionalVolatility: 0.5,
-      }
+      },
     );
 
-    const riskUpdate = result.updates.find(update => update.dimension === 'riskTolerance');
+    const riskUpdate = result.updates.find(
+      update => update.dimension === 'riskTolerance',
+    );
     expect(riskUpdate).toBeDefined();
     expect(riskUpdate?.evidenceType).toBe('contradicting');
     expect(riskUpdate?.posterior).toBe(0.05);
@@ -124,11 +171,10 @@ describe('BayesianUpdater', () => {
         dimName: 'riskTolerance',
         lowConfidence: true,
         evidenceCount: 3,
-      })
+      }),
     );
   });
 });
-
 
 describe('DriftDetector', () => {
   const detector = new DriftDetector();
@@ -155,28 +201,31 @@ describe('DriftDetector', () => {
     expect(result.recommendedStrategy).toBe('full_rebuild');
   });
 
-  it('does not infer drift from count changes alone when semantics stay aligned', () => {
-    const historicalSignals: BehavioralSignal[] = [
-      {
-        ...makeSignal('speculative conviction', 'cognitive_trait'),
-        evidence: 'comfortable with bold volatile bets',
-      },
-      {
-        ...makeSignal('aggressive venture appetite', 'interest'),
-        evidence: 'likes leveraged upside',
-      },
-    ];
-    const recentSignals: BehavioralSignal[] = [
-      {
-        ...makeSignal('speculative conviction', 'cognitive_trait'),
-        evidence: 'comfortable with bold volatile bets',
-      },
-    ];
+  it(
+    'does not infer drift from count changes alone when semantics stay aligned',
+    () => {
+      const historicalSignals: BehavioralSignal[] = [
+        {
+          ...makeSignal('speculative conviction', 'cognitive_trait'),
+          evidence: 'comfortable with bold volatile bets',
+        },
+        {
+          ...makeSignal('aggressive venture appetite', 'interest'),
+          evidence: 'likes leveraged upside',
+        },
+      ];
+      const recentSignals: BehavioralSignal[] = [
+        {
+          ...makeSignal('speculative conviction', 'cognitive_trait'),
+          evidence: 'comfortable with bold volatile bets',
+        },
+      ];
 
-    const result = detector.evaluateDrift(recentSignals, historicalSignals);
+      const result = detector.evaluateDrift(recentSignals, historicalSignals);
 
-    expect(result.driftingDimensions).toEqual([]);
-    expect(result.maxDelta).toBe(0);
-    expect(result.recommendedStrategy).toBe('incremental');
-  });
+      expect(result.driftingDimensions).toEqual([]);
+      expect(result.maxDelta).toBe(0);
+      expect(result.recommendedStrategy).toBe('incremental');
+    },
+  );
 });

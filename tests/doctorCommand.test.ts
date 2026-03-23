@@ -24,6 +24,8 @@ describe('doctor command', () => {
         batchSize: 100,
         workerConcurrency: 5,
         cloneConcurrency: 10,
+        decisionBatchSize: 10,
+        decisionBatchFlushMs: 15,
         llmRpmLimit: 30,
       },
     );
@@ -36,6 +38,8 @@ describe('doctor command', () => {
         batchSize: 100,
         workerConcurrency: 5,
         cloneConcurrency: 10,
+        decisionBatchSize: 10,
+        decisionBatchFlushMs: 15,
         llmRpmLimit: 30,
       },
       checks: [
@@ -59,6 +63,8 @@ describe('doctor command', () => {
         batchSize: 100,
         workerConcurrency: 5,
         cloneConcurrency: 10,
+        decisionBatchSize: 10,
+        decisionBatchFlushMs: 15,
         llmRpmLimit: null,
       },
     );
@@ -71,12 +77,16 @@ describe('doctor command', () => {
     const originalBatchSize = process.env.SIMULATION_BATCH_SIZE;
     const originalConcurrency = process.env.SIMULATION_CONCURRENCY;
     const originalWorkerConcurrency = process.env.SIMULATION_WORKER_CONCURRENCY;
+    const originalDecisionBatchSize = process.env.SIMULATION_DECISION_BATCH_SIZE;
+    const originalDecisionBatchFlushMs = process.env.SIMULATION_DECISION_BATCH_FLUSH_MS;
     const originalRpm = process.env.LLM_RPM_LIMIT;
     const originalNodeEnv = process.env.NODE_ENV;
 
     delete process.env.SIMULATION_BATCH_SIZE;
     delete process.env.SIMULATION_CONCURRENCY;
     delete process.env.SIMULATION_WORKER_CONCURRENCY;
+    delete process.env.SIMULATION_DECISION_BATCH_SIZE;
+    delete process.env.SIMULATION_DECISION_BATCH_FLUSH_MS;
     delete process.env.LLM_RPM_LIMIT;
     process.env.NODE_ENV = 'development';
 
@@ -84,12 +94,16 @@ describe('doctor command', () => {
       batchSize: 100,
       cloneConcurrency: 10,
       workerConcurrency: 5,
+      decisionBatchSize: 10,
+      decisionBatchFlushMs: 15,
       llmRpmLimit: null,
     });
 
     restoreEnv('SIMULATION_BATCH_SIZE', originalBatchSize);
     restoreEnv('SIMULATION_CONCURRENCY', originalConcurrency);
     restoreEnv('SIMULATION_WORKER_CONCURRENCY', originalWorkerConcurrency);
+    restoreEnv('SIMULATION_DECISION_BATCH_SIZE', originalDecisionBatchSize);
+    restoreEnv('SIMULATION_DECISION_BATCH_FLUSH_MS', originalDecisionBatchFlushMs);
     restoreEnv('LLM_RPM_LIMIT', originalRpm);
     restoreEnv('NODE_ENV', originalNodeEnv);
   });

@@ -6,6 +6,9 @@ import {
   LLMEvaluation,
   ForkEvaluationRequest,
   CloneParameters,
+  SimulationEmbeddingRuntimeTelemetry,
+  SimulationLlmRuntimeTelemetry,
+  SimulationNodeRuntimeTelemetry,
 } from './types.js';
 import { getScenario } from './decisionGraph.js';
 import { logger } from '../utils/logger.js';
@@ -13,6 +16,11 @@ import { config } from '../config/index.js';
 import { EmbeddingService, cosineSimilarity } from '../embeddings/embeddingService.js';
 import { type RateLimiter } from '../utils/rateLimiter.js';
 import { parseJsonResponse } from '../utils/json.js';
+import {
+  createEmptyEmbeddingTelemetry,
+  createEmptyLlmTelemetry,
+  createEmptyNodeTelemetry,
+} from './runtimeTelemetry.js';
 
 interface LLMUsage {
   standardCalls: number;
@@ -63,6 +71,8 @@ const HEURISTIC_CONCEPT_TEXTS: Record<keyof HeuristicConceptEmbeddings, string> 
 
 interface ForkEvaluatorOptions {
   rateLimiter?: RateLimiter | null;
+  decisionBatchSize?: number;
+  decisionBatchFlushMs?: number;
 }
 
 type ParsedForkResponse = {
@@ -73,6 +83,42 @@ type ParsedForkResponse = {
   explanation?: unknown;
   confidence?: unknown;
 };
+
+type ParsedForkBatchEntry = {
+  requestId?: unknown;
+  caseId?: unknown;
+  cloneId?: unknown;
+  chosenOptionId?: unknown;
+  option?: unknown;
+  choice?: unknown;
+  reasoning?: unknown;
+  explanation?: unknown;
+  confidence?: unknown;
+};
+
+type ParsedForkBatchResponse = {
+  decisions?: unknown;
+  evaluations?: unknown;
+  choices?: unknown;
+};
+
+interface PendingBatchItem {
+  requestId: string;
+  request: ForkEvaluationRequest;
+  complexity: number;
+  useReasoning: boolean;
+  enqueuedAt: number;
+  resolve: (evaluation: LLMEvaluation) => void;
+  reject: (error: unknown) => void;
+}
+
+interface PendingDecisionBatch {
+  key: string;
+  nodeId: string;
+  useReasoning: boolean;
+  items: PendingBatchItem[];
+  timer: ReturnType<typeof setTimeout> | null;
+}
 
 export class ForkEvaluator {
   private static heuristicConceptEmbeddings: HeuristicConceptEmbeddings | null = null;
@@ -87,6 +133,13 @@ export class ForkEvaluator {
     totalTokens: 0,
     estimatedCost: 0,
   };
+  private llmTelemetry: SimulationLlmRuntimeTelemetry = createEmptyLlmTelemetry();
+  private embeddingTelemetry: SimulationEmbeddingRuntimeTelemetry = createEmptyEmbeddingTelemetry();
+  private readonly nodeTelemetry = new Map<string, SimulationNodeRuntimeTelemetry>();
+  private readonly pendingBatches = new Map<string, PendingDecisionBatch>();
+  private requestSequence = 0;
+  private readonly decisionBatchSize: number;
+  private readonly decisionBatchFlushMs: number;
 
   private readonly MAX_REASONING_CALLS = 20;
   private readonly COMPLEXITY_THRESHOLD = 0.6;
@@ -97,6 +150,8 @@ export class ForkEvaluator {
 
   constructor(options: ForkEvaluatorOptions = {}) {
     this.rateLimiter = options.rateLimiter ?? null;
+    this.decisionBatchSize = Math.max(1, options.decisionBatchSize ?? config.simulation.decisionBatchSize);
+    this.decisionBatchFlushMs = Math.max(1, options.decisionBatchFlushMs ?? config.simulation.decisionBatchFlushMs);
 
     if (config.llm?.apiKey) {
       this.client = new OpenAI({
@@ -131,6 +186,7 @@ export class ForkEvaluator {
     try {
       return await this.callLLM(request, complexity, useReasoning);
     } catch {
+      this.llmTelemetry.fallbackHeuristicCount += 1;
       // Heuristic fallback is expected when the provider truncates or drops
       // responses (common on free-tier OpenRouter). Not an error.
       return await this.heuristicEvaluation(request, complexity);
@@ -182,6 +238,19 @@ export class ForkEvaluator {
     complexity: number,
     useReasoning: boolean
   ): Promise<LLMEvaluation> {
+    if (this.decisionBatchSize <= 1) {
+      return this.callSingleLLM(request, complexity, useReasoning, 0);
+    }
+
+    return this.enqueueDecisionBatch(request, complexity, useReasoning);
+  }
+
+  private async callSingleLLM(
+    request: ForkEvaluationRequest,
+    complexity: number,
+    useReasoning: boolean,
+    batchWaitMs: number,
+  ): Promise<LLMEvaluation> {
     if (!this.client) {
       throw new Error('LLM client not initialized - set OPENROUTER_API_KEY or GROQ_API_KEY');
     }
@@ -216,12 +285,15 @@ export class ForkEvaluator {
 
     const duration = Date.now() - startTime;
 
-    if (useReasoning) {
-      this.usage.reasoningCalls++;
-    } else {
-      this.usage.standardCalls++;
-    }
-    this.usage.totalTokens += completion.usage?.total_tokens || 0;
+    this.recordDecisionCall({
+      nodeId: request.decisionNode.id,
+      useReasoning,
+      durationMs: duration,
+      batchWaitMs,
+      batchSize: 1,
+      tokens: completion.usage?.total_tokens || 0,
+      mode: 'single',
+    });
 
     logger.debug({ duration, model, complexity, useReasoning }, 'LLM evaluation completed');
 
@@ -261,6 +333,7 @@ export class ForkEvaluator {
       );
     }
 
+    const repairStartedAt = Date.now();
     const repaired = await this.callWithRetry(async () => {
       if (this.rateLimiter) {
         await this.rateLimiter.acquire();
@@ -287,11 +360,239 @@ export class ForkEvaluator {
         ...(this.useJsonObjectMode ? { response_format: { type: 'json_object' as const } } : {}),
       });
     });
+    this.llmTelemetry.repairCalls += 1;
+    this.llmTelemetry.totalRepairDurationMs += Date.now() - repairStartedAt;
 
     return this.parseLLMResponse(
       repaired.choices[0]?.message?.content || '{}',
       request.decisionNode,
       complexity
+    );
+  }
+
+  private enqueueDecisionBatch(
+    request: ForkEvaluationRequest,
+    complexity: number,
+    useReasoning: boolean,
+  ): Promise<LLMEvaluation> {
+    const key = `${request.scenario.id}:${request.decisionNode.id}:${useReasoning ? 'reasoning' : 'standard'}`;
+    const requestId = `case_${++this.requestSequence}`;
+
+    let batch = this.pendingBatches.get(key);
+    if (!batch) {
+      batch = {
+        key,
+        nodeId: request.decisionNode.id,
+        useReasoning,
+        items: [],
+        timer: null,
+      };
+      this.pendingBatches.set(key, batch);
+    }
+
+    return new Promise<LLMEvaluation>((resolve, reject) => {
+      batch!.items.push({
+        requestId,
+        request,
+        complexity,
+        useReasoning,
+        enqueuedAt: Date.now(),
+        resolve,
+        reject,
+      });
+
+      if (batch!.items.length >= this.decisionBatchSize) {
+        this.flushDecisionBatch(batch!);
+        return;
+      }
+
+      if (!batch!.timer) {
+        batch!.timer = setTimeout(() => {
+          this.flushDecisionBatch(batch!);
+        }, this.decisionBatchFlushMs);
+      }
+    });
+  }
+
+  private flushDecisionBatch(batch: PendingDecisionBatch): void {
+    const current = this.pendingBatches.get(batch.key);
+    if (!current) {
+      return;
+    }
+
+    this.pendingBatches.delete(batch.key);
+    if (current.timer) {
+      clearTimeout(current.timer);
+      current.timer = null;
+    }
+
+    void this.runDecisionBatch(current);
+  }
+
+  private async runDecisionBatch(batch: PendingDecisionBatch): Promise<void> {
+    if (batch.items.length === 0) {
+      return;
+    }
+
+    if (batch.items.length === 1) {
+      const [item] = batch.items;
+      try {
+        const evaluation = await this.callSingleLLM(
+          item.request,
+          item.complexity,
+          item.useReasoning,
+          Date.now() - item.enqueuedAt,
+        );
+        item.resolve(evaluation);
+      } catch (error) {
+        item.reject(error);
+      }
+      return;
+    }
+
+    try {
+      const batchResults = await this.callBatchLLM(batch.items);
+      for (const item of batch.items) {
+        const evaluation = batchResults.get(item.requestId);
+        if (evaluation) {
+          item.resolve(evaluation);
+          continue;
+        }
+
+        try {
+          const fallbackEvaluation = await this.callSingleLLM(
+            item.request,
+            item.complexity,
+            item.useReasoning,
+            Date.now() - item.enqueuedAt,
+          );
+          item.resolve(fallbackEvaluation);
+        } catch (error) {
+          item.reject(error);
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        {
+          nodeId: batch.nodeId,
+          batchSize: batch.items.length,
+          error: (error as Error).message,
+        },
+        'Batched decision evaluation failed, retrying with single-call fallbacks',
+      );
+
+      for (const item of batch.items) {
+        try {
+          const evaluation = await this.callSingleLLM(
+            item.request,
+            item.complexity,
+            item.useReasoning,
+            Date.now() - item.enqueuedAt,
+          );
+          item.resolve(evaluation);
+        } catch (singleError) {
+          item.reject(singleError);
+        }
+      }
+    }
+  }
+
+  private async callBatchLLM(
+    items: PendingBatchItem[],
+  ): Promise<Map<string, LLMEvaluation>> {
+    if (!this.client) {
+      throw new Error('LLM client not initialized - set OPENROUTER_API_KEY or GROQ_API_KEY');
+    }
+
+    const prompt = this.buildBatchPrompt(items);
+    const useReasoning = items.some((item) => item.useReasoning);
+    const model = (useReasoning && this.reasoningModel) ? this.reasoningModel : this.model;
+    const averageComplexity = items.reduce((sum, item) => sum + item.complexity, 0) / items.length;
+    const batchWaitMs = items.reduce((sum, item) => sum + (Date.now() - item.enqueuedAt), 0);
+    const startTime = Date.now();
+
+    const completion = await this.callWithRetry(async () => {
+      if (this.rateLimiter) {
+        await this.rateLimiter.acquire();
+      }
+
+      return this.client!.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a behavioral simulation engine. You will receive one shared decision node plus multiple behavioral clone cases. For each case, choose exactly one valid option ID and return ONLY JSON of the form {"decisions":[{"requestId":"case_1","chosenOptionId":"option_id","reasoning":"short reason","confidence":0.81}]}. Return every requestId exactly once.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        model,
+        temperature: 0.35 + (averageComplexity * 0.25),
+        max_tokens: Math.min(useReasoning ? 2200 : 1600, 220 + (items.length * 120)),
+        ...(this.useJsonObjectMode ? { response_format: { type: 'json_object' as const } } : {}),
+      });
+    });
+
+    const duration = Date.now() - startTime;
+    this.recordDecisionCall({
+      nodeId: items[0].request.decisionNode.id,
+      useReasoning,
+      durationMs: duration,
+      batchWaitMs,
+      batchSize: items.length,
+      tokens: completion.usage?.total_tokens || 0,
+      mode: 'batch',
+    });
+
+    const content = completion.choices[0]?.message?.content || '{}';
+    const finishReason = completion.choices[0]?.finish_reason;
+    if (!finishReason && content.length < 80) {
+      throw new Error('Provider returned truncated batched response');
+    }
+
+    try {
+      return this.parseBatchLLMResponse(content, items);
+    } catch (error) {
+      if (content.length < 60) {
+        throw error;
+      }
+    }
+
+    const repairStartedAt = Date.now();
+    const repaired = await this.callWithRetry(async () => {
+      if (this.rateLimiter) {
+        await this.rateLimiter.acquire();
+      }
+
+      return this.client!.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'You repair malformed JSON. Output only JSON with key "decisions", containing an array of objects with keys requestId, chosenOptionId, reasoning, confidence.',
+          },
+          {
+            role: 'user',
+            content: [
+              `Request IDs: ${items.map((item) => item.requestId).join(', ')}`,
+              `Valid option IDs: ${items[0].request.decisionNode.options.map((option) => option.id).join(', ')}`,
+              `Malformed input: ${content.slice(0, 900)}`,
+              'Return every requestId exactly once.',
+            ].join('\n'),
+          },
+        ],
+        model,
+        temperature: 0,
+        max_tokens: Math.min(1600, 200 + (items.length * 90)),
+        ...(this.useJsonObjectMode ? { response_format: { type: 'json_object' as const } } : {}),
+      });
+    });
+    this.llmTelemetry.repairCalls += 1;
+    this.llmTelemetry.totalRepairDurationMs += Date.now() - repairStartedAt;
+
+    return this.parseBatchLLMResponse(
+      repaired.choices[0]?.message?.content || '{}',
+      items,
     );
   }
 
@@ -319,6 +620,181 @@ export class ForkEvaluator {
     } as const;
   }
 
+  private buildBatchPrompt(items: PendingBatchItem[]): string {
+    const first = items[0];
+    const { decisionNode, scenario, masterPersona } = first.request;
+    const sharedPersonaContext = this.describeMasterPersonaContext(masterPersona)
+      .replace(/^\nRicher persona context:\n/, '')
+      .trim();
+    const optionIds = decisionNode.options.map((option) => option.id).join(', ');
+    const optionsList = decisionNode.options
+      .map((option, index) => `${index + 1}. ${option.label} (id: "${option.id}")`)
+      .join('\n');
+    const cases = items
+      .map((item, index) => {
+        const psychology = this.describePsychologyModifiers(
+          item.request.cloneParams,
+          scenario.id,
+          item.request.masterPersona,
+        );
+
+        return [
+          `Case ${index + 1} — requestId: "${item.requestId}"`,
+          'Behavioral clone traits:',
+          this.describeTraits(item.request.cloneParams),
+          psychology || '',
+          'Current state:',
+          this.describeState(item.request.state),
+        ]
+          .filter((segment) => segment.trim().length > 0)
+          .join('\n');
+      })
+      .join('\n\n');
+
+    return `Shared scenario: ${scenario.name}
+${sharedPersonaContext ? `\nShared persona context:\n${sharedPersonaContext}\n` : ''}
+Decision: ${decisionNode.prompt}
+
+Options:
+${optionsList}
+
+Valid option IDs: [${optionIds}]
+
+Clone cases:
+${cases}
+
+Return JSON with this exact top-level shape:
+{"decisions":[{"requestId":"case_1","chosenOptionId":"${decisionNode.options[0].id}","reasoning":"short reason","confidence":0.81}]}`;
+  }
+
+  private parseBatchLLMResponse(
+    content: string,
+    items: PendingBatchItem[],
+  ): Map<string, LLMEvaluation> {
+    const parsed = parseJsonResponse<ParsedForkBatchResponse>(content);
+    const rawEntries = Array.isArray(parsed.decisions)
+      ? parsed.decisions
+      : Array.isArray(parsed.evaluations)
+        ? parsed.evaluations
+        : Array.isArray(parsed.choices)
+          ? parsed.choices
+          : [];
+
+    if (rawEntries.length === 0) {
+      throw new Error('LLM returned an empty batched decision payload');
+    }
+
+    const itemsById = new Map(items.map((item) => [item.requestId, item]));
+    const result = new Map<string, LLMEvaluation>();
+
+    for (const rawEntry of rawEntries) {
+      if (typeof rawEntry !== 'object' || rawEntry === null) {
+        continue;
+      }
+
+      const entry = rawEntry as ParsedForkBatchEntry;
+      const requestId = typeof entry.requestId === 'string'
+        ? entry.requestId
+        : typeof entry.caseId === 'string'
+          ? entry.caseId
+          : typeof entry.cloneId === 'string'
+            ? entry.cloneId
+            : null;
+
+      if (!requestId) {
+        continue;
+      }
+
+      const batchItem = itemsById.get(requestId);
+      if (!batchItem) {
+        continue;
+      }
+
+      const candidateOptionId = entry.chosenOptionId ?? entry.option ?? entry.choice;
+      const chosenOptionId = typeof candidateOptionId === 'string'
+        ? candidateOptionId
+        : batchItem.request.decisionNode.options[0].id;
+      const validOption = batchItem.request.decisionNode.options.find((option) => option.id === chosenOptionId);
+      const finalOptionId = validOption ? chosenOptionId : batchItem.request.decisionNode.options[0].id;
+      const reasoning = typeof entry.reasoning === 'string'
+        ? entry.reasoning
+        : typeof entry.explanation === 'string'
+          ? entry.explanation
+          : 'No reasoning provided';
+      const rawConfidence = typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)
+        ? entry.confidence
+        : 0.8;
+
+      result.set(requestId, {
+        chosenOptionId: finalOptionId,
+        reasoning,
+        confidence: Math.min(0.95, Math.max(0.7, rawConfidence)),
+        complexity: batchItem.complexity,
+      });
+    }
+
+    if (result.size === 0) {
+      throw new Error('LLM returned batched JSON but no usable decisions');
+    }
+
+    return result;
+  }
+
+  private recordDecisionCall(options: {
+    nodeId: string;
+    useReasoning: boolean;
+    durationMs: number;
+    batchWaitMs: number;
+    batchSize: number;
+    tokens: number;
+    mode: 'single' | 'batch';
+  }): void {
+    if (options.useReasoning) {
+      this.usage.reasoningCalls += 1;
+      this.llmTelemetry.reasoningCalls += 1;
+    } else {
+      this.usage.standardCalls += 1;
+      this.llmTelemetry.standardCalls += 1;
+    }
+
+    this.usage.totalTokens += options.tokens;
+    this.llmTelemetry.totalTokens += options.tokens;
+    this.llmTelemetry.totalDecisionEvaluations += options.batchSize;
+    this.llmTelemetry.totalChatDurationMs += options.durationMs;
+    this.llmTelemetry.totalBatchWaitMs += options.batchWaitMs;
+    this.llmTelemetry.maxBatchSize = Math.max(this.llmTelemetry.maxBatchSize, options.batchSize);
+
+    if (options.mode === 'batch') {
+      this.llmTelemetry.batchCalls += 1;
+    } else {
+      this.llmTelemetry.singleCalls += 1;
+    }
+
+    const currentNode = this.nodeTelemetry.get(options.nodeId) ?? createEmptyNodeTelemetry(options.nodeId);
+    if (options.mode === 'batch') {
+      currentNode.batchCalls += 1;
+    } else {
+      currentNode.singleCalls += 1;
+    }
+    if (options.useReasoning) {
+      currentNode.reasoningCalls += 1;
+    } else {
+      currentNode.standardCalls += 1;
+    }
+    currentNode.cloneDecisions += options.batchSize;
+    currentNode.totalDurationMs += options.durationMs;
+    currentNode.totalBatchWaitMs += options.batchWaitMs;
+    currentNode.maxBatchSize = Math.max(currentNode.maxBatchSize, options.batchSize);
+    this.nodeTelemetry.set(options.nodeId, currentNode);
+  }
+
+  private recordEmbeddingCall(textCount: number, durationMs: number): void {
+    this.embeddingTelemetry.calls += 1;
+    this.embeddingTelemetry.batchCalls += 1;
+    this.embeddingTelemetry.totalTexts += textCount;
+    this.embeddingTelemetry.totalDurationMs += durationMs;
+  }
+
 
   private async callWithRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -326,9 +802,14 @@ export class ForkEvaluator {
         return await fn();
       } catch (error) {
         if (!this.isRateLimitError(error) || attempt >= maxRetries) {
+          if (this.isRateLimitError(error)) {
+            this.llmTelemetry.rateLimitErrors += 1;
+          }
           throw error;
         }
 
+        this.llmTelemetry.rateLimitErrors += 1;
+        this.llmTelemetry.rateLimitRetries += 1;
         const delayMs = this.getRetryDelayMs(error, attempt);
         logger.warn({ attempt: attempt + 1, delayMs }, 'LLM rate limited, retrying');
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -730,7 +1211,9 @@ Respond with JSON containing exactly these three keys:
 
     const service = EmbeddingService.getInstance();
     const keys = Object.keys(HEURISTIC_CONCEPT_TEXTS) as Array<keyof HeuristicConceptEmbeddings>;
+    const startedAt = Date.now();
     const embeddings = await service.embedBatch(keys.map(key => HEURISTIC_CONCEPT_TEXTS[key]));
+    this.recordEmbeddingCall(keys.length, Date.now() - startedAt);
 
     ForkEvaluator.heuristicConceptEmbeddings = keys.reduce((acc, key, index) => {
       acc[key] = embeddings[index];
@@ -743,7 +1226,9 @@ Respond with JSON containing exactly these three keys:
   private async getOptionEmbeddings(options: DecisionOption[]): Promise<Map<string, number[]>> {
     const service = EmbeddingService.getInstance();
     const texts = options.map(option => `${option.label}. ${option.value}`);
+    const startedAt = Date.now();
     const embeddings = await service.embedBatch(texts);
+    this.recordEmbeddingCall(texts.length, Date.now() - startedAt);
     const map = new Map<string, number[]>();
 
     options.forEach((option, index) => {
@@ -817,6 +1302,21 @@ Respond with JSON containing exactly these three keys:
     return { ...this.usage };
   }
 
+  getTelemetry(): {
+    llm: SimulationLlmRuntimeTelemetry;
+    embeddings: SimulationEmbeddingRuntimeTelemetry;
+  } {
+    return {
+      llm: {
+        ...this.llmTelemetry,
+        nodeStats: Array.from(this.nodeTelemetry.values()).sort((left, right) =>
+          right.totalDurationMs - left.totalDurationMs,
+        ),
+      },
+      embeddings: { ...this.embeddingTelemetry },
+    };
+  }
+
   resetUsage(): void {
     this.usage = {
       standardCalls: 0,
@@ -824,6 +1324,9 @@ Respond with JSON containing exactly these three keys:
       totalTokens: 0,
       estimatedCost: 0,
     };
+    this.llmTelemetry = createEmptyLlmTelemetry();
+    this.embeddingTelemetry = createEmptyEmbeddingTelemetry();
+    this.nodeTelemetry.clear();
   }
 
   isAvailable(): {

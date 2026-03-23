@@ -54,6 +54,8 @@ Optional runtime tuning:
 - `SIMULATION_BATCH_SIZE`
 - `SIMULATION_CONCURRENCY`
 - `SIMULATION_WORKER_CONCURRENCY`
+- `SIMULATION_DECISION_BATCH_SIZE`
+- `SIMULATION_DECISION_BATCH_FLUSH_MS`
 - `LLM_RPM_LIMIT`
 
 ### 2. Start dependencies and install packages
@@ -161,12 +163,28 @@ Simulation progress is phase-aware. Instead of appearing stuck at `95-99%`, Mont
 
 During execution, progress covers `0-90%`. Persistence covers `90-96%`. Aggregation uses stable end markers at `97-99%` so long-tail work is explained rather than looking frozen.
 
+Monte also batches concurrent LLM decisions by decision node inside each worker batch. Instead of making one remote call per clone per node, Monte can group multiple clones waiting on the same fork into a single structured LLM request. This keeps decision quality LLM-backed while cutting request overhead and rate-limit pressure.
+
 Example:
 
 ```bash
 monte simulate "should I buy this house?" --wait
 monte simulate progress <simulation-id> --json
 ```
+
+## Runtime Telemetry
+
+Completed simulations now include runtime telemetry in `simulate results -f json`, and the human-readable `simulate results` output shows a short runtime section. This includes:
+
+- wall-clock duration
+- execution, persistence, and aggregation timing
+- total LLM decision evaluations
+- batched vs single LLM call counts
+- total rate-limiter wait time
+- embedding time
+- slowest decision nodes
+
+Use this to understand whether a run is bottlenecked by chat latency, queueing, retries, or persistence instead of guessing.
 
 ## Common CLI Workflows
 

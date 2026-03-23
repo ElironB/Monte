@@ -44,6 +44,7 @@ Keep that loop in mind and most of the repository will make sense.
 - `src/simulation/resultPersistence.ts` -> batched clone-result persistence
 - `src/simulation/evidenceLoop.ts` -> evidence deltas and rerun comparison
 - `src/simulation/progress.ts` -> phase-aware progress math
+- `src/simulation/runtimeTelemetry.ts` -> runtime timing and LLM telemetry rollup
 - `src/benchmarks/fixtures.ts` -> seeded fixture corpus
 - `src/benchmarks/harness.ts` -> benchmark execution and scoring
 - `tests/benchmarks/harness.test.ts` -> benchmark contract
@@ -76,6 +77,7 @@ Keep that loop in mind and most of the repository will make sense.
 - Do not replace seeded benchmark randomness with a constant `Math.random`.
 - Treat `connect` / Composio as experimental.
 - When public behavior changes, keep the main docs synchronized.
+- Simulation throughput is now partly shaped by node-level LLM batching; if you touch that path, audit both quality and runtime telemetry.
 
 ## Common task recipes
 
@@ -100,6 +102,14 @@ Keep that loop in mind and most of the repository will make sense.
 - audit `src/ingestion/queue/workers/index.ts`
 - audit `src/cli/commands/simulation.ts`
 - update docs to reflect the current progress phases
+
+### If you change simulation throughput
+
+- audit `src/simulation/forkEvaluator.ts`
+- audit `src/simulation/engine.ts`
+- audit `src/simulation/runtimeTelemetry.ts`
+- audit `src/ingestion/queue/workers/index.ts`
+- keep the runtime telemetry payload meaningful enough to explain slow runs
 
 ### If you change dimensions or persona logic
 
