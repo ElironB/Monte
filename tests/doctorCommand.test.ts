@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'vitest';
 import { buildDoctorReport } from '../src/cli/commands/doctor.js';
+import { getDoctorRuntimeSettings } from '../src/cli/commands/doctor.js';
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
+}
 
 describe('doctor command', () => {
   test('builds a machine-readable readiness payload', () => {
@@ -55,5 +65,32 @@ describe('doctor command', () => {
 
     expect(report.ok).toBe(false);
     expect(report.summary.failCount).toBe(1);
+  });
+
+  test('resolves runtime defaults without requiring server credentials', () => {
+    const originalBatchSize = process.env.SIMULATION_BATCH_SIZE;
+    const originalConcurrency = process.env.SIMULATION_CONCURRENCY;
+    const originalWorkerConcurrency = process.env.SIMULATION_WORKER_CONCURRENCY;
+    const originalRpm = process.env.LLM_RPM_LIMIT;
+    const originalNodeEnv = process.env.NODE_ENV;
+
+    delete process.env.SIMULATION_BATCH_SIZE;
+    delete process.env.SIMULATION_CONCURRENCY;
+    delete process.env.SIMULATION_WORKER_CONCURRENCY;
+    delete process.env.LLM_RPM_LIMIT;
+    process.env.NODE_ENV = 'development';
+
+    expect(getDoctorRuntimeSettings()).toMatchObject({
+      batchSize: 100,
+      cloneConcurrency: 10,
+      workerConcurrency: 5,
+      llmRpmLimit: null,
+    });
+
+    restoreEnv('SIMULATION_BATCH_SIZE', originalBatchSize);
+    restoreEnv('SIMULATION_CONCURRENCY', originalConcurrency);
+    restoreEnv('SIMULATION_WORKER_CONCURRENCY', originalWorkerConcurrency);
+    restoreEnv('LLM_RPM_LIMIT', originalRpm);
+    restoreEnv('NODE_ENV', originalNodeEnv);
   });
 });

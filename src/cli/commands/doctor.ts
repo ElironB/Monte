@@ -7,7 +7,7 @@ import { api } from '../api.js';
 import { loadConfig } from '../config.js';
 import { buildJsonErrorPayload, printJson, printJsonErrorAndExit } from '../output.js';
 import { dimText, icons, infoLabel, sectionHeader } from '../styles.js';
-import { config } from '../../config/index.js';
+import { resolveSimulationRuntimeConfig } from '../../config/simulationRuntime.js';
 
 interface HealthCheck {
   name: string;
@@ -129,13 +129,14 @@ async function fetchReadyHealth(apiUrl: string): Promise<{ response?: ReadyHealt
 
 export function getDoctorRuntimeSettings(): DoctorRuntimeSettings {
   const { apiUrl } = loadConfig();
+  const runtime = resolveSimulationRuntimeConfig();
 
   return {
     apiUrl,
-    batchSize: config.simulation.batchSize,
-    workerConcurrency: config.simulation.workerConcurrency,
-    cloneConcurrency: config.simulation.cloneConcurrency,
-    llmRpmLimit: config.simulation.llmRpmLimit ?? null,
+    batchSize: runtime.batchSize,
+    workerConcurrency: runtime.workerConcurrency,
+    cloneConcurrency: runtime.cloneConcurrency,
+    llmRpmLimit: runtime.llmRpmLimit ?? null,
   };
 }
 

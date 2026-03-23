@@ -53,6 +53,14 @@ describe('simulation progress helpers', () => {
     expect(calculateOverallProgress('aggregating', 100, 'writing_summary')).toBe(99);
   });
 
+  test('persisting progress stays ahead of executing once all clone batches are done', () => {
+    const executingComplete = calculateOverallProgress('executing', 100);
+    const persistingNearlyDone = calculateOverallProgress('persisting', 75);
+
+    expect(executingComplete).toBe(90);
+    expect(persistingNearlyDone).toBeGreaterThan(executingComplete);
+  });
+
   test('estimates remaining seconds from observed clone throughput', () => {
     expect(estimateTimeRemainingSeconds(1_000, 40, 100, 21_000)).toBe(30);
   });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import { resolveSimulationRuntimeConfig } from './simulationRuntime.js';
 
 dotenv.config();
 
@@ -63,31 +64,6 @@ function resolveEmbeddingConfig() {
     baseUrl: 'https://openrouter.ai/api/v1',
     model: 'openai/text-embedding-3-small',
     dimensions: 1536,
-  };
-}
-
-function parsePositiveIntEnv(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return undefined;
-  }
-
-  return parsed;
-}
-
-function resolveSimulationConfig() {
-  const nodeEnv = process.env.NODE_ENV || 'development';
-
-  return {
-    batchSize: parsePositiveIntEnv(process.env.SIMULATION_BATCH_SIZE) || 100,
-    cloneConcurrency: parsePositiveIntEnv(process.env.SIMULATION_CONCURRENCY) || 10,
-    workerConcurrency: parsePositiveIntEnv(process.env.SIMULATION_WORKER_CONCURRENCY)
-      || (nodeEnv === 'production' ? 20 : 5),
-    llmRpmLimit: parsePositiveIntEnv(process.env.LLM_RPM_LIMIT),
   };
 }
 
@@ -163,7 +139,7 @@ export const config = configSchema.parse({
     nodeEnv: process.env.NODE_ENV,
     logLevel: process.env.LOG_LEVEL,
   },
-  simulation: resolveSimulationConfig(),
+  simulation: resolveSimulationRuntimeConfig(),
   llm: resolveLLMConfig(),
   embedding: resolveEmbeddingConfig(),
   composio: {

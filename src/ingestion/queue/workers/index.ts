@@ -1195,11 +1195,18 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     // for the final batch we publish 'completed' only after results are stored
     // to avoid a race where the CLI reads 'completed' before results exist in Neo4j.
     if (!isFinalBatch) {
-      const progressSnapshot = createProgressSnapshot({
-        status: 'running',
-        phase: 'executing',
-        phaseProgress: Math.round((Math.min(processedClones, simulation.cloneCount) / simulation.cloneCount) * 100),
-      });
+      const allClonesFinished = processedClones >= simulation.cloneCount;
+      const progressSnapshot = allClonesFinished
+        ? createProgressSnapshot({
+            status: 'running',
+            phase: 'persisting',
+            phaseProgress: calculatePersistingPhaseProgress(completedBatches, totalBatches),
+          })
+        : createProgressSnapshot({
+            status: 'running',
+            phase: 'executing',
+            phaseProgress: Math.round((Math.min(processedClones, simulation.cloneCount) / simulation.cloneCount) * 100),
+          });
       await publishSimulationProgress(redis, simulationId, {
         ...progressSnapshot,
         completedBatches,
