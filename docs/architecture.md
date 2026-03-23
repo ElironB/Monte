@@ -171,8 +171,9 @@ The runtime path is:
 
 1. compile a scenario
 2. execute clones in batches
-3. persist each finished batch with a single Neo4j `UNWIND` write
-4. aggregate clone results into:
+3. batch concurrent LLM decisions for clones waiting on the same decision node inside a worker batch
+4. persist each finished batch with a single Neo4j `UNWIND` write
+5. aggregate clone results into:
    - histograms
    - outcome distribution
    - stratified breakdown
@@ -181,7 +182,12 @@ The runtime path is:
    - optional narrative output
    - rerun comparison data when evidence is present
 
-The persistence optimization matters because it removes the old per-clone Neo4j write tail that made simulations appear stuck near the end.
+The runtime optimization matters in two places:
+
+- decision batching reduces remote LLM round trips without replacing the decision layer with local heuristics
+- batch persistence removes the old per-clone Neo4j write tail that made simulations appear stuck near the end
+
+Decision batching is keyed by shared decision node and model mode. Multiple clones waiting on the same fork can be packaged into one structured LLM request, then mapped back to per-clone choices.
 
 ### Live progress architecture
 
@@ -224,6 +230,20 @@ Aggregation stages:
 - `writing_summary`
 
 The progress route prefers explicit live Redis payloads when they exist and falls back to the persisted simulation state when Redis is unavailable.
+
+### Runtime telemetry
+
+Completed simulations persist runtime telemetry alongside the aggregated results. The telemetry summarizes:
+
+- wall-clock runtime
+- execution, persistence, and aggregation timing
+- total LLM decision evaluations
+- batched vs single LLM call counts
+- limiter wait time
+- embedding time
+- per-node timing hotspots
+
+This gives operators a concrete breakdown of where simulation time is going and makes throughput tuning measurable rather than anecdotal.
 
 ### Outcome semantics
 

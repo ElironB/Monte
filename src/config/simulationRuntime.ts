@@ -2,6 +2,8 @@ export interface SimulationRuntimeConfig {
   batchSize: number;
   cloneConcurrency: number;
   workerConcurrency: number;
+  decisionBatchSize: number;
+  decisionBatchFlushMs: number;
   llmRpmLimit?: number;
 }
 
@@ -24,6 +26,8 @@ export function resolveSimulationRuntimeConfig(nodeEnv: string = process.env.NOD
     cloneConcurrency: parsePositiveIntEnv(process.env.SIMULATION_CONCURRENCY) || 10,
     workerConcurrency: parsePositiveIntEnv(process.env.SIMULATION_WORKER_CONCURRENCY)
       || (nodeEnv === 'production' ? 20 : 5),
+    decisionBatchSize: parsePositiveIntEnv(process.env.SIMULATION_DECISION_BATCH_SIZE) || 10,
+    decisionBatchFlushMs: parsePositiveIntEnv(process.env.SIMULATION_DECISION_BATCH_FLUSH_MS) || 15,
     llmRpmLimit: parsePositiveIntEnv(process.env.LLM_RPM_LIMIT),
   };
 }

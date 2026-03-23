@@ -25,6 +25,7 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
   - `stressResponse`
 - Monte currently ships 8 scenario types including `custom`.
 - The simulation stack includes a causal state model, belief state model, experiment recommendations, evidence capture, evidence-adjusted reruns, phase-aware live progress, and batched clone-result persistence.
+- Monte now also batches concurrent LLM decisions by decision node and stores runtime telemetry on completed simulations.
 - The benchmark harness is a first-class regression surface and must stay deterministic.
 - The npm package is `monte-engine`; the installed executable is `monte`.
 
@@ -44,6 +45,7 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - `src/simulation/engine.ts` -> clone execution
 - `src/simulation/resultAggregator.ts` -> aggregate results
 - `src/simulation/resultPersistence.ts` -> batched clone-result persistence
+- `src/simulation/runtimeTelemetry.ts` -> runtime telemetry rollup
 - `src/simulation/evidenceLoop.ts` -> evidence adjustments and rerun comparison
 - `src/simulation/progress.ts` -> phase-aware progress math
 - `src/benchmarks/fixtures.ts` -> seeded fixture corpus
@@ -148,6 +150,7 @@ npm run test:benchmarks
 - Scenario graph changes: update `src/simulation/decisionGraph.ts`, then rerun benchmarks.
 - Evidence-loop changes: audit `src/simulation/evidenceLoop.ts`, `src/api/routes/simulation.ts`, `src/cli/commands/simulation.ts`, `src/cli/commands/decide.ts`, and benchmark expectations.
 - Progress or wait-loop changes: audit `src/simulation/progress.ts`, `src/api/routes/stream.ts`, `src/ingestion/queue/workers/index.ts`, and `src/cli/commands/simulation.ts`.
+- Throughput changes: audit `src/simulation/forkEvaluator.ts`, `src/simulation/engine.ts`, `src/simulation/runtimeTelemetry.ts`, `src/ingestion/queue/workers/index.ts`, and the CLI results output together.
 - Dimension changes: audit `src/persona/dimensionMapper.ts`, persona graph and compression, CLI and report surfaces, and docs.
 - Benchmark changes: update both the harness and its tests.
 - Package and install changes: audit `package.json`, CLI entrypoints, and the major docs together.

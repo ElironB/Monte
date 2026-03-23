@@ -28,6 +28,18 @@ function formatSignedPoints(value: number): string {
   return value >= 0 ? chalk.green(points) : chalk.red(points);
 }
 
+function formatDurationMs(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0ms';
+  }
+
+  if (value < 1000) {
+    return `${Math.round(value)}ms`;
+  }
+
+  return formatDuration(Math.round(value / 1000));
+}
+
 function truncateText(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
@@ -416,6 +428,33 @@ simulationCommands
       console.log(
         `  ${infoLabel('Central:')} ${valueText(stratifiedBreakdown.central.count)} ${dimText('clones')} ${infoLabel('avg outcome:')} ${chalk.cyan(stratifiedBreakdown.central.avgOutcome.toFixed(2))}`,
       );
+
+      if (data.distributions.runtimeTelemetry) {
+        const telemetry = data.distributions.runtimeTelemetry;
+        const batchedDecisions = Math.max(0, telemetry.llm.totalDecisionEvaluations - telemetry.llm.singleCalls);
+        const averageBatchSize = telemetry.llm.batchCalls > 0
+          ? (batchedDecisions / telemetry.llm.batchCalls)
+          : 0;
+
+        console.log();
+        console.log(sectionHeader('Runtime Telemetry'));
+        console.log(`  ${infoLabel('Wall time:')} ${chalk.cyan(formatDurationMs(telemetry.wallClockDurationMs))}`);
+        console.log(`  ${infoLabel('Execution work:')} ${dimText(formatDurationMs(telemetry.executionDurationMs))}`);
+        console.log(`  ${infoLabel('Persistence work:')} ${dimText(formatDurationMs(telemetry.persistenceDurationMs))}`);
+        console.log(`  ${infoLabel('Aggregation:')} ${dimText(formatDurationMs(telemetry.aggregationDurationMs))}`);
+        console.log(`  ${infoLabel('LLM decisions:')} ${valueText(telemetry.llm.totalDecisionEvaluations)} ${dimText(`(${telemetry.llm.batchCalls} batched calls, ${telemetry.llm.singleCalls} single calls)`)}`);
+        console.log(`  ${infoLabel('Avg batch size:')} ${valueText(averageBatchSize > 0 ? averageBatchSize.toFixed(1) : 'n/a')}`);
+        console.log(`  ${infoLabel('LLM chat time:')} ${dimText(formatDurationMs(telemetry.llm.totalChatDurationMs))}`);
+        console.log(`  ${infoLabel('Limiter wait:')} ${dimText(formatDurationMs(telemetry.rateLimiter.totalWaitMs))}`);
+        console.log(`  ${infoLabel('Embedding time:')} ${dimText(formatDurationMs(telemetry.embeddings.totalDurationMs))}`);
+        console.log(`  ${infoLabel('Retries / 429s:')} ${valueText(`${telemetry.llm.rateLimitRetries}/${telemetry.llm.rateLimitErrors}`)}`);
+
+        if (telemetry.llm.nodeStats.length > 0) {
+          console.log(`  ${infoLabel('Slow nodes:')} ${dimText(telemetry.llm.nodeStats.slice(0, 3).map((node) =>
+            `${node.nodeId} (${formatDurationMs(node.totalDurationMs)})`,
+          ).join(', '))}`);
+        }
+      }
 
       if (rerunComparison) {
         console.log();

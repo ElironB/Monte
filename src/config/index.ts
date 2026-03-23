@@ -93,6 +93,8 @@ const configSchema = z.object({
     batchSize: z.number().int().min(1).default(100),
     cloneConcurrency: z.number().int().min(1).default(10),
     workerConcurrency: z.number().int().min(1).default(5),
+    decisionBatchSize: z.number().int().min(1).default(10),
+    decisionBatchFlushMs: z.number().int().min(1).default(15),
     llmRpmLimit: z.number().int().positive().optional(),
   }),
   llm: z.object({

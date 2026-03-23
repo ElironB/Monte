@@ -35,6 +35,7 @@ import {
   AggregatedResults,
   CloneResult,
   EvidenceResult,
+  SimulationRuntimeTelemetry,
 } from '../../../simulation/types.js';
 import { calculateKelly } from '../../../simulation/kellyCalculator.js';
 import {
@@ -42,6 +43,10 @@ import {
   createProgressSnapshot,
   estimateTimeRemainingSeconds,
 } from '../../../simulation/progress.js';
+import {
+  createEmptySimulationRuntimeTelemetry,
+  mergeSimulationRuntimeTelemetry,
+} from '../../../simulation/runtimeTelemetry.js';
 import { RateLimiter, createConcurrencyLimiter, detectProviderRPM } from '../../../utils/rateLimiter.js';
 
 const extractors = [
@@ -55,6 +60,7 @@ const extractors = [
 
 const semanticExtractor = new SemanticExtractor();
 const SIMULATION_PROGRESS_TTL_SECONDS = 300;
+const SIMULATION_RUNTIME_TTL_SECONDS = 86400;
 
 function getSimulationProgressKey(simulationId: string): string {
   return `sim:${simulationId}:progress`;
@@ -70,6 +76,46 @@ function getSimulationProgressStartedAtKey(simulationId: string): string {
 
 function getSimulationBatchProcessedClonesKey(simulationId: string, batchIndex: number): string {
   return `sim:${simulationId}:batch:${batchIndex}:processedClones`;
+}
+
+function getSimulationBatchTelemetryKey(simulationId: string, batchIndex: number): string {
+  return `sim:${simulationId}:batch:${batchIndex}:runtimeTelemetry`;
+}
+
+async function storeSimulationBatchTelemetry(
+  redis: Awaited<ReturnType<typeof getRedisClient>>,
+  simulationId: string,
+  batchIndex: number,
+  telemetry: SimulationRuntimeTelemetry,
+): Promise<void> {
+  await redis.setex(
+    getSimulationBatchTelemetryKey(simulationId, batchIndex),
+    SIMULATION_RUNTIME_TTL_SECONDS,
+    JSON.stringify(telemetry),
+  );
+}
+
+async function loadSimulationRuntimeTelemetry(
+  redis: Awaited<ReturnType<typeof getRedisClient>>,
+  simulationId: string,
+  totalBatches: number,
+): Promise<SimulationRuntimeTelemetry> {
+  const telemetryPayloads = await Promise.all(
+    Array.from({ length: totalBatches }, (_, index) =>
+      redis.get(getSimulationBatchTelemetryKey(simulationId, index))),
+  );
+
+  const parsed = telemetryPayloads
+    .filter((payload): payload is string => typeof payload === 'string' && payload.length > 0)
+    .map((payload) => {
+      try {
+        return JSON.parse(payload) as SimulationRuntimeTelemetry;
+      } catch {
+        return null;
+      }
+    });
+
+  return mergeSimulationRuntimeTelemetry(parsed);
 }
 
 async function publishSimulationProgress(
@@ -1144,7 +1190,27 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
       });
     }
 
+    const persistenceStartedAt = Date.now();
     await persistCloneResultsBatch(simulationId, results);
+    const persistenceDurationMs = Date.now() - persistenceStartedAt;
+    const engineRuntimeTelemetry = engine.getRuntimeTelemetry();
+    const batchRuntimeTelemetry: SimulationRuntimeTelemetry = {
+      ...createEmptySimulationRuntimeTelemetry(),
+      executionDurationMs: batchDuration,
+      executionMaxBatchDurationMs: batchDuration,
+      persistenceDurationMs,
+      persistenceMaxBatchDurationMs: persistenceDurationMs,
+      cloneCount: clones.length,
+      batchCount: 1,
+      cloneConcurrency: concurrency,
+      decisionBatchSize: config.simulation.decisionBatchSize,
+      decisionBatchFlushMs: config.simulation.decisionBatchFlushMs,
+      llmRpmLimit: rpm,
+      llm: engineRuntimeTelemetry.llm,
+      embeddings: engineRuntimeTelemetry.embeddings,
+      rateLimiter: engineRuntimeTelemetry.rateLimiter,
+    };
+    await storeSimulationBatchTelemetry(redis, simulationId, cloneBatchIndex, batchRuntimeTelemetry);
 
     if (processedClones >= simulation.cloneCount) {
       const persistCompleteSnapshot = createProgressSnapshot({
@@ -1238,6 +1304,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         return;
       }
 
+      const aggregationStartedAt = Date.now();
       {
         const aggregationSnapshot = createProgressSnapshot({
           status: 'aggregating',
@@ -1351,6 +1418,23 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         });
       }
 
+      const runtimeTelemetry = await loadSimulationRuntimeTelemetry(redis, simulationId, totalBatches);
+      runtimeTelemetry.wallClockDurationMs = Math.max(0, Date.now() - progressStartedAtMs);
+      runtimeTelemetry.aggregationDurationMs = Date.now() - aggregationStartedAt;
+      runtimeTelemetry.cloneCount = simulation.cloneCount;
+      runtimeTelemetry.batchCount = totalBatches;
+      runtimeTelemetry.cloneConcurrency = Math.max(runtimeTelemetry.cloneConcurrency, concurrency);
+      runtimeTelemetry.decisionBatchSize = Math.max(
+        runtimeTelemetry.decisionBatchSize,
+        config.simulation.decisionBatchSize,
+      );
+      runtimeTelemetry.decisionBatchFlushMs = Math.max(
+        runtimeTelemetry.decisionBatchFlushMs,
+        config.simulation.decisionBatchFlushMs,
+      );
+      runtimeTelemetry.llmRpmLimit = Math.max(runtimeTelemetry.llmRpmLimit, rpm);
+      finalResults.runtimeTelemetry = runtimeTelemetry;
+
       {
         const aggregationSnapshot = createProgressSnapshot({
           status: 'aggregating',
@@ -1377,12 +1461,14 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
              s.progress = 100,
              s.completedBatches = $totalBatches,
              s.results = $results,
+             s.runtimeTelemetry = $runtimeTelemetry,
              s.completedAt = datetime()
          RETURN s.id as id`,
         {
           simulationId,
           totalBatches,
           results: JSON.stringify(finalResults),
+          runtimeTelemetry: JSON.stringify(finalResults.runtimeTelemetry),
         }
       );
       
@@ -1411,7 +1497,7 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
         simulationId,
         cloneCount: finalResults.cloneCount,
         successRate: finalResults.statistics.successRate,
-        llmUsage: engine.getLLMUsage(),
+        runtimeTelemetry: finalResults.runtimeTelemetry,
       }, 'Simulation completed');
     }
     

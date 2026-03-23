@@ -292,6 +292,69 @@ export interface CloneResult {
   duration: number; // ms
 }
 
+export interface SimulationNodeRuntimeTelemetry {
+  nodeId: string;
+  batchCalls: number;
+  singleCalls: number;
+  standardCalls: number;
+  reasoningCalls: number;
+  cloneDecisions: number;
+  totalDurationMs: number;
+  totalBatchWaitMs: number;
+  maxBatchSize: number;
+}
+
+export interface SimulationLlmRuntimeTelemetry {
+  totalDecisionEvaluations: number;
+  batchCalls: number;
+  singleCalls: number;
+  standardCalls: number;
+  reasoningCalls: number;
+  repairCalls: number;
+  fallbackHeuristicCount: number;
+  rateLimitErrors: number;
+  rateLimitRetries: number;
+  totalTokens: number;
+  totalChatDurationMs: number;
+  totalRepairDurationMs: number;
+  totalBatchWaitMs: number;
+  maxBatchSize: number;
+  nodeStats: SimulationNodeRuntimeTelemetry[];
+}
+
+export interface SimulationEmbeddingRuntimeTelemetry {
+  calls: number;
+  batchCalls: number;
+  totalTexts: number;
+  totalDurationMs: number;
+}
+
+export interface SimulationRateLimiterTelemetry {
+  acquireCalls: number;
+  immediateGrants: number;
+  queuedAcquires: number;
+  totalWaitMs: number;
+  maxWaitMs: number;
+}
+
+export interface SimulationRuntimeTelemetry {
+  wallClockDurationMs: number;
+  executionDurationMs: number;
+  executionMaxBatchDurationMs: number;
+  persistenceDurationMs: number;
+  persistenceMaxBatchDurationMs: number;
+  aggregationDurationMs: number;
+  cloneCount: number;
+  batchCount: number;
+  cloneConcurrency: number;
+  decisionBatchSize: number;
+  decisionBatchFlushMs: number;
+  llmRpmLimit: number;
+  llm: SimulationLlmRuntimeTelemetry;
+  embeddings: SimulationEmbeddingRuntimeTelemetry;
+  rateLimiter: SimulationRateLimiterTelemetry;
+}
+
 // Narrative result — defined here (not in narrativeGenerator.ts) to avoid circular imports
 export interface NarrativeResult {
   executiveSummary: string;
@@ -317,6 +380,7 @@ export interface AggregatedResults {
   rerunComparison?: RerunComparison;
   narrative?: NarrativeResult;
   kelly?: KellyOutput;
+  runtimeTelemetry?: SimulationRuntimeTelemetry;
 }
 
 export interface Histogram {

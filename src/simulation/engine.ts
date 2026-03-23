@@ -630,6 +630,37 @@ export class SimulationEngine {
       maxLLMCalls: this.config.maxLLMCalls,
     };
   }
+
+  getRuntimeTelemetry(): {
+    llmCallsUsed: number;
+    maxLLMCalls: number;
+    llm: ReturnType<ForkEvaluator['getTelemetry']>['llm'];
+    embeddings: ReturnType<ForkEvaluator['getTelemetry']>['embeddings'];
+    rateLimiter: {
+      acquireCalls: number;
+      immediateGrants: number;
+      queuedAcquires: number;
+      totalWaitMs: number;
+      maxWaitMs: number;
+    };
+  } {
+    const evaluatorTelemetry = this.evaluator.getTelemetry();
+    const limiterStats = this.config.rateLimiter?.getStats?.() ?? {
+      acquireCalls: 0,
+      immediateGrants: 0,
+      queuedAcquires: 0,
+      totalWaitMs: 0,
+      maxWaitMs: 0,
+    };
+
+    return {
+      llmCallsUsed: this.llmCallsUsed,
+      maxLLMCalls: this.config.maxLLMCalls,
+      llm: evaluatorTelemetry.llm,
+      embeddings: evaluatorTelemetry.embeddings,
+      rateLimiter: limiterStats,
+    };
+  }
 }
 
 // Create engine factory
