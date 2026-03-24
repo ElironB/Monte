@@ -130,6 +130,105 @@ describe('ForkEvaluator JSON parsing', () => {
     expect(result.has(1)).toBe(false);
   });
 
+  test('parses stringified compact batches returned under d', () => {
+    const evaluator = new ForkEvaluator();
+    const items = createBatchItems(2);
+
+    const result = (evaluator as any).parseBatchLLMResponse(
+      '{"d":"[{\\"o\\":1,\\"c\\":0.91,\\"r\\":\\"Balanced persona hedges exposure.\\"},{\\"o\\":0,\\"c\\":0.82,\\"r\\":\\"Adaptive profile prefers flexibility.\\"}]"}',
+      items,
+    );
+
+    expect(result.get(0)).toMatchObject({
+      chosenOptionId: 'partial_commit',
+      confidence: 0.91,
+    });
+    expect(result.get(1)).toMatchObject({
+      chosenOptionId: 'adapt',
+      confidence: 0.82,
+    });
+  });
+
+  test('salvages complete entries from truncated compact batches', () => {
+    const evaluator = new ForkEvaluator();
+    const items = createBatchItems(3);
+
+    const result = (evaluator as any).parseBatchLLMResponse(
+      '{"d":[{"o":1,"c":0.91,"r":"Balanced persona hedges exposure."},{"o":0,"c":0.82,"r":"Adaptive profile prefers flexibility."},{"o":1,"c":0.77',
+      items,
+    );
+
+    expect(result.size).toBe(2);
+    expect(result.get(0)).toMatchObject({
+      chosenOptionId: 'partial_commit',
+      confidence: 0.91,
+    });
+    expect(result.get(1)).toMatchObject({
+      chosenOptionId: 'adapt',
+      confidence: 0.82,
+    });
+  });
+
+  test('parses batches keyed by request id objects', () => {
+    const evaluator = new ForkEvaluator();
+    const items = createBatchItems(2);
+
+    const result = (evaluator as any).parseBatchLLMResponse(
+      '{"decisions":{"case_1":{"o":1,"c":0.91,"r":"Balanced persona hedges exposure."},"case_2":{"o":0,"c":0.82,"r":"Adaptive profile prefers flexibility."}}}',
+      items,
+    );
+
+    expect(result.get(0)).toMatchObject({
+      chosenOptionId: 'partial_commit',
+      confidence: 0.91,
+    });
+    expect(result.get(1)).toMatchObject({
+      chosenOptionId: 'adapt',
+      confidence: 0.82,
+    });
+  });
+
+  test('parses batches nested inside wrapper objects', () => {
+    const evaluator = new ForkEvaluator();
+    const items = createBatchItems(2);
+
+    const result = (evaluator as any).parseBatchLLMResponse(
+      '{"response":{"results":[{"o":1,"c":0.91,"r":"Balanced persona hedges exposure."},{"o":0,"c":0.82,"r":"Adaptive profile prefers flexibility."}]}}',
+      items,
+    );
+
+    expect(result.get(0)).toMatchObject({
+      chosenOptionId: 'partial_commit',
+      confidence: 0.91,
+    });
+    expect(result.get(1)).toMatchObject({
+      chosenOptionId: 'adapt',
+      confidence: 0.82,
+    });
+  });
+
+  test('caps preferred batch size for OpenRouter providers', () => {
+    const evaluator = new ForkEvaluator();
+    (evaluator as any).isOpenRouterProvider = true;
+
+    expect(evaluator.getPreferredBatchSize('custom', false, 20)).toBe(2);
+    expect(evaluator.getPreferredBatchSize('custom', true, 20)).toBe(1);
+  });
+
+  test('retries transient transport failures', async () => {
+    const evaluator = new ForkEvaluator();
+    vi.spyOn(evaluator as any, 'getTransientRetryDelayMs').mockReturnValue(0);
+
+    const fn = vi.fn()
+      .mockRejectedValueOnce(new Error('Premature close'))
+      .mockResolvedValueOnce('ok');
+
+    const result = await (evaluator as any).callWithRetry(fn, 1);
+
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
   test('retries, splits, and only falls back to single calls for unresolved leaf batches', async () => {
     const evaluator = new ForkEvaluator();
     const items = createBatchItems(2);
