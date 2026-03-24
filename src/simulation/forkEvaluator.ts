@@ -105,6 +105,8 @@ type ParsedForkBatchResponse = {
   decisions?: unknown;
   evaluations?: unknown;
   choices?: unknown;
+  entries?: unknown;
+  results?: unknown;
 };
 
 export interface BatchEvaluationItem {
@@ -146,10 +148,12 @@ export class ForkEvaluator {
 
   private readonly MAX_REASONING_CALLS = 20;
   private readonly COMPLEXITY_THRESHOLD = 0.6;
+  private readonly isOpenRouterProvider =
+    (config.llm?.baseUrl || '').includes('openrouter.ai');
   // OpenRouter prepends '{"' when json_object mode is on, and the model also
   // starts with '{', producing the double-brace garbage '{"{".  Skip it.
   private readonly useJsonObjectMode =
-    !(config.llm?.baseUrl || '').includes('openrouter.ai');
+    !this.isOpenRouterProvider;
 
   constructor(options: ForkEvaluatorOptions = {}) {
     this.rateLimiter = options.rateLimiter ?? null;
@@ -229,11 +233,19 @@ export class ForkEvaluator {
     useReasoning: boolean,
     configuredBatchSize: number,
   ): number {
+    const providerCeiling = this.getProviderBatchSizeCeiling(useReasoning);
+    const normalizedConfiguredBatchSize = Math.max(
+      1,
+      Math.min(configuredBatchSize, providerCeiling),
+    );
     const ceiling = this.batchSizeCeilings.get(
       this.getBatchProfileKey(scenarioId, useReasoning),
     );
 
-    return Math.max(1, Math.min(configuredBatchSize, ceiling ?? configuredBatchSize));
+    return Math.max(
+      1,
+      Math.min(normalizedConfiguredBatchSize, ceiling ?? normalizedConfiguredBatchSize),
+    );
   }
 
   calculateComplexity(
@@ -315,6 +327,7 @@ export class ForkEvaluator {
     complexity: number,
     useReasoning: boolean,
     batchWaitMs: number,
+    malformedRetryCount: number = 0,
   ): Promise<LLMEvaluation> {
     if (!this.client) {
       throw new Error('LLM client not initialized - set OPENROUTER_API_KEY or GROQ_API_KEY');
@@ -322,6 +335,9 @@ export class ForkEvaluator {
 
     const prompt = this.buildPrompt(request);
     const model = (useReasoning && this.reasoningModel) ? this.reasoningModel : this.model;
+    const maxTokens = this.isOpenRouterProvider
+      ? (useReasoning ? 360 : 220)
+      : (useReasoning ? 600 : 400);
     const startTime = Date.now();
 
     const completion = await this.callWithRetry(async () => {
@@ -343,7 +359,7 @@ export class ForkEvaluator {
           ],
           model,
           temperature: 0.4 + (complexity * 0.3),
-          max_tokens: useReasoning ? 600 : 400,
+          max_tokens: maxTokens,
           ...(this.useJsonObjectMode ? { response_format: { type: 'json_object' as const } } : {}),
         });
       };
@@ -371,6 +387,24 @@ export class ForkEvaluator {
     const finishReason = choice?.finish_reason;
 
     if (!finishReason && content.length < 60) {
+      if (this.shouldRetryMalformedSingleResponse(content, malformedRetryCount)) {
+        logger.warn(
+          {
+            model,
+            complexity,
+            useReasoning,
+            preview: content.slice(0, 120),
+          },
+          'LLM returned a truncated single response, retrying once',
+        );
+        return this.callSingleLLM(
+          request,
+          complexity,
+          useReasoning,
+          batchWaitMs,
+          malformedRetryCount + 1,
+        );
+      }
       throw new Error('Provider returned truncated response (no finish_reason)');
     }
 
@@ -378,6 +412,24 @@ export class ForkEvaluator {
       return this.parseLLMResponse(content, request.decisionNode, complexity);
     } catch (error) {
       if (content.length < 40) {
+        if (this.shouldRetryMalformedSingleResponse(content, malformedRetryCount)) {
+          logger.warn(
+            {
+              model,
+              complexity,
+              useReasoning,
+              preview: content.slice(0, 120),
+            },
+            'LLM returned malformed single JSON, retrying once',
+          );
+          return this.callSingleLLM(
+            request,
+            complexity,
+            useReasoning,
+            batchWaitMs,
+            malformedRetryCount + 1,
+          );
+        }
         logger.debug(
           { model, preview: content.slice(0, 200) },
           'LLM response truncated, falling back to heuristic',
@@ -390,7 +442,7 @@ export class ForkEvaluator {
           model,
           complexity,
           useReasoning,
-          maxTokens: useReasoning ? 600 : 400,
+          maxTokens,
           preview: content.slice(0, 200),
         },
         'Failed to parse LLM response, retrying once with repair prompt',
@@ -568,8 +620,8 @@ export class ForkEvaluator {
             {
               role: 'system',
               content: strictRetry
-                ? 'You are a behavioral simulation engine. Return ONLY strict JSON with top-level key "d". The value must be an array in the same order as the provided cases. Every case must appear exactly once. Each entry must be {"o":number,"c":number,"r":string}. "o" must be the zero-based option index.'
-                : 'You are a behavioral simulation engine. Return ONLY strict JSON with top-level key "d". The value must be an array in the same order as the provided cases. Each entry must be {"o":number,"c":number,"r":string}. "o" must be the zero-based option index.',
+                ? 'You are a behavioral simulation engine. Return ONLY strict JSON with top-level key "d". The value must be an array in the same order as the provided cases. Every case must appear exactly once. Each entry must be {"o":number,"c":number,"r":string}. "o" must be the zero-based option index. Keep "r" under 12 words. No markdown, no prose, no code fences.'
+                : 'You are a behavioral simulation engine. Return ONLY strict JSON with top-level key "d". The value must be an array in the same order as the provided cases. Each entry must be {"o":number,"c":number,"r":string}. "o" must be the zero-based option index. Keep "r" under 12 words. No markdown, no prose, no code fences.',
             },
             {
               role: 'user',
@@ -577,8 +629,8 @@ export class ForkEvaluator {
             },
           ],
           model,
-          temperature: strictRetry ? 0 : 0.2 + (averageComplexity * 0.15),
-          max_tokens: Math.min(useReasoning ? 1800 : 1200, 180 + (items.length * 70)),
+          temperature: strictRetry ? 0 : 0.08 + (averageComplexity * 0.08),
+          max_tokens: Math.min(useReasoning ? 1200 : 800, 100 + (items.length * 40)),
           ...(this.useJsonObjectMode ? { response_format: { type: 'json_object' as const } } : {}),
         });
       };
@@ -620,8 +672,9 @@ export class ForkEvaluator {
     const sharedPersonaContext = this.describeMasterPersonaContext(masterPersona)
       .replace(/^\nRicher persona context:\n/, '')
       .trim();
-    const condensedPersonaContext = sharedPersonaContext.length > 500
-      ? `${sharedPersonaContext.slice(0, 497)}...`
+    const personaContextLimit = this.isOpenRouterProvider ? 240 : 500;
+    const condensedPersonaContext = sharedPersonaContext.length > personaContextLimit
+      ? `${sharedPersonaContext.slice(0, personaContextLimit - 3)}...`
       : sharedPersonaContext;
     const optionList = decisionNode.options
       .map((option, index) => `${index}:${option.label}`)
@@ -660,7 +713,7 @@ export class ForkEvaluator {
       `decision=${decisionNode.prompt}`,
       `options=${optionList}`,
       'Return JSON only. Use top-level {"d":[...]} and preserve case order.',
-      'Each entry: {"o":<zero-based option index>,"c":<0.70-0.95 confidence>,"r":"<short reason>"}',
+      'Each entry: {"o":<zero-based option index>,"c":<0.70-0.95 confidence>,"r":"<short reason under 12 words>"}',
       'cases:',
       cases,
     ]
@@ -672,52 +725,51 @@ export class ForkEvaluator {
     content: string,
     items: BatchEvaluationItem[],
   ): Map<number, LLMEvaluation> {
-    const parsed = parseJsonResponse<ParsedForkBatchResponse>(content);
     const result = new Map<number, LLMEvaluation>();
-    const itemsById = new Map(items.map((item) => [item.requestId, item]));
+    let parseError: Error | null = null;
 
-    if (Array.isArray(parsed.d)) {
-      parsed.d.forEach((rawEntry, index) => {
-        const item = items[index];
-        if (!item || typeof rawEntry !== 'object' || rawEntry === null) {
-          return;
-        }
-
-        const evaluation = this.parseBatchEntry(rawEntry as ParsedForkBatchEntry, item);
-        if (evaluation) {
-          result.set(item.index, evaluation);
-        }
-      });
+    try {
+      const parsed = parseJsonResponse<unknown>(content);
+      this.collectBatchEvaluations(parsed, items, result);
+    } catch (error) {
+      parseError = error as Error;
     }
 
-    const legacyEntries = Array.isArray(parsed.decisions)
-      ? parsed.decisions
-      : Array.isArray(parsed.evaluations)
-        ? parsed.evaluations
-        : Array.isArray(parsed.choices)
-          ? parsed.choices
-          : [];
+    if (result.size === 0 || parseError) {
+      this.collectBatchEvaluationsFromFragments(content, items, result);
+    }
 
-    for (const rawEntry of legacyEntries) {
+    if (result.size === 0) {
+      this.llmTelemetry.invalidBatchPayloadCount += 1;
+      throw parseError ?? new Error('LLM returned batched JSON but no usable decisions');
+    }
+
+    return result;
+  }
+
+  private collectBatchEvaluations(
+    payload: unknown,
+    items: BatchEvaluationItem[],
+    result: Map<number, LLMEvaluation>,
+  ): void {
+    const itemsById = new Map(items.map((item) => [item.requestId, item]));
+
+    for (const candidate of this.extractEntryCollection(payload)) {
+      const rawEntry = candidate.entry;
       if (typeof rawEntry !== 'object' || rawEntry === null) {
         continue;
       }
 
       const entry = rawEntry as ParsedForkBatchEntry;
-      const requestId = typeof entry.requestId === 'string'
-        ? entry.requestId
-        : typeof entry.caseId === 'string'
-          ? entry.caseId
-          : typeof entry.cloneId === 'string'
-            ? entry.cloneId
-            : null;
+      const keyedItem = candidate.requestId
+        ? itemsById.get(candidate.requestId)
+        : undefined;
+      const sequentialItem = candidate.index !== null && candidate.index < items.length
+        ? items[candidate.index]
+        : undefined;
+      const item = keyedItem ?? sequentialItem;
 
-      if (!requestId) {
-        continue;
-      }
-
-      const item = itemsById.get(requestId);
-      if (!item) {
+      if (!item || result.has(item.index) || !this.isBatchDecisionEntry(entry)) {
         continue;
       }
 
@@ -726,13 +778,187 @@ export class ForkEvaluator {
         result.set(item.index, evaluation);
       }
     }
+  }
 
-    if (result.size === 0) {
-      this.llmTelemetry.invalidBatchPayloadCount += 1;
-      throw new Error('LLM returned batched JSON but no usable decisions');
+  private extractEntryCollection(payload: unknown): Array<{
+    entry: unknown;
+    index: number | null;
+    requestId: string | null;
+  }> {
+    if (typeof payload === 'string') {
+      try {
+        return this.extractEntryCollection(parseJsonResponse<unknown>(payload));
+      } catch {
+        return [];
+      }
     }
 
-    return result;
+    if (Array.isArray(payload)) {
+      return payload.map((entry, index) => ({ entry, index, requestId: null }));
+    }
+
+    if (typeof payload !== 'object' || payload === null) {
+      return [];
+    }
+
+    const record = payload as ParsedForkBatchResponse & Record<string, unknown>;
+    const orderedPayload = record.d
+      ?? record.decisions
+      ?? record.evaluations
+      ?? record.choices
+      ?? record.entries
+      ?? record.results;
+
+    if (orderedPayload !== undefined) {
+      const orderedEntries = this.extractEntryCollection(orderedPayload);
+      if (orderedEntries.length > 0) {
+        return orderedEntries;
+      }
+    }
+
+    if (this.isBatchDecisionEntry(record as ParsedForkBatchEntry)) {
+      return [{
+        entry: record,
+        index: null,
+        requestId: this.resolveBatchEntryRequestId(record as ParsedForkBatchEntry),
+      }];
+    }
+
+    const directEntries = Object.entries(record)
+      .map(([key, value]) => ({
+        entry: value,
+        index: /^\d+$/.test(key) ? Number.parseInt(key, 10) : null,
+        requestId: /^\d+$/.test(key) ? null : key,
+      }))
+      .filter((candidate) => {
+        if (typeof candidate.entry !== 'object' || candidate.entry === null) {
+          return false;
+        }
+
+        return this.isBatchDecisionEntry(candidate.entry as ParsedForkBatchEntry);
+      });
+
+    if (directEntries.length > 0) {
+      return directEntries;
+    }
+
+    return Object.values(record)
+      .flatMap((value) => this.extractEntryCollection(value));
+  }
+
+  private collectBatchEvaluationsFromFragments(
+    content: string,
+    items: BatchEvaluationItem[],
+    result: Map<number, LLMEvaluation>,
+  ): void {
+    const itemsById = new Map(items.map((item) => [item.requestId, item]));
+    let sequentialIndex = 0;
+
+    for (const fragment of this.extractBalancedJsonObjects(content)) {
+      if (result.size >= items.length) {
+        break;
+      }
+
+      let parsed: ParsedForkBatchEntry;
+      try {
+        parsed = JSON.parse(fragment) as ParsedForkBatchEntry;
+      } catch {
+        continue;
+      }
+
+      if (!this.isBatchDecisionEntry(parsed)) {
+        continue;
+      }
+
+      const requestId = this.resolveBatchEntryRequestId(parsed);
+      const keyedItem = requestId ? itemsById.get(requestId) : undefined;
+
+      while (sequentialIndex < items.length && result.has(items[sequentialIndex].index)) {
+        sequentialIndex += 1;
+      }
+
+      const sequentialItem = sequentialIndex < items.length ? items[sequentialIndex] : undefined;
+      const item = keyedItem ?? sequentialItem;
+
+      if (!item || result.has(item.index)) {
+        continue;
+      }
+
+      const evaluation = this.parseBatchEntry(parsed, item);
+      if (evaluation) {
+        result.set(item.index, evaluation);
+        if (!keyedItem) {
+          sequentialIndex += 1;
+        }
+      }
+    }
+  }
+
+  private extractBalancedJsonObjects(raw: string): string[] {
+    const fragments: string[] = [];
+    const stack: number[] = [];
+    let inString = false;
+    let escaped = false;
+
+    for (let index = 0; index < raw.length; index += 1) {
+      const char = raw[index];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) {
+        continue;
+      }
+
+      if (char === '{') {
+        stack.push(index);
+        continue;
+      }
+
+      if (char === '}') {
+        const start = stack.pop();
+        if (start !== undefined) {
+          fragments.push(raw.slice(start, index + 1));
+        }
+      }
+    }
+
+    return fragments;
+  }
+
+  private isBatchDecisionEntry(entry: ParsedForkBatchEntry): boolean {
+    return (
+      typeof entry.o === 'number'
+      || typeof entry.c === 'number'
+      || typeof entry.r === 'string'
+      || typeof entry.chosenOptionId === 'string'
+      || typeof entry.option === 'string'
+      || typeof entry.choice === 'string'
+      || typeof entry.reasoning === 'string'
+      || typeof entry.explanation === 'string'
+    );
+  }
+
+  private resolveBatchEntryRequestId(entry: ParsedForkBatchEntry): string | null {
+    return typeof entry.requestId === 'string'
+      ? entry.requestId
+      : typeof entry.caseId === 'string'
+        ? entry.caseId
+        : typeof entry.cloneId === 'string'
+          ? entry.cloneId
+          : null;
   }
 
   private parseBatchEntry(
@@ -880,6 +1106,26 @@ export class ForkEvaluator {
     return `${scenarioId}:${useReasoning ? 'reasoning' : 'standard'}`;
   }
 
+  private getProviderBatchSizeCeiling(useReasoning: boolean): number {
+    if (!this.isOpenRouterProvider) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+
+    return useReasoning ? 1 : 2;
+  }
+
+  private shouldRetryMalformedSingleResponse(
+    content: string,
+    malformedRetryCount: number,
+  ): boolean {
+    if (!this.isOpenRouterProvider || malformedRetryCount > 0) {
+      return false;
+    }
+
+    const trimmed = content.trim();
+    return trimmed.length > 0 && trimmed.length < 40;
+  }
+
   private recordEmbeddingCall(textCount: number, durationMs: number): void {
     this.embeddingTelemetry.calls += 1;
     this.embeddingTelemetry.batchCalls += 1;
@@ -893,18 +1139,35 @@ export class ForkEvaluator {
       try {
         return await fn();
       } catch (error) {
-        if (!this.isRateLimitError(error) || attempt >= maxRetries) {
-          if (this.isRateLimitError(error)) {
+        if (this.isRateLimitError(error)) {
+          if (attempt >= maxRetries) {
             this.llmTelemetry.rateLimitErrors += 1;
+            throw error;
           }
-          throw error;
+
+          this.llmTelemetry.rateLimitErrors += 1;
+          this.llmTelemetry.rateLimitRetries += 1;
+          const delayMs = this.getRetryDelayMs(error, attempt);
+          logger.warn({ attempt: attempt + 1, delayMs }, 'LLM rate limited, retrying');
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
         }
 
-        this.llmTelemetry.rateLimitErrors += 1;
-        this.llmTelemetry.rateLimitRetries += 1;
-        const delayMs = this.getRetryDelayMs(error, attempt);
-        logger.warn({ attempt: attempt + 1, delayMs }, 'LLM rate limited, retrying');
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        if (this.isTransientTransportError(error) && attempt < maxRetries) {
+          const delayMs = this.getTransientRetryDelayMs(attempt);
+          logger.warn(
+            {
+              attempt: attempt + 1,
+              delayMs,
+              error: (error as Error).message,
+            },
+            'Transient LLM transport error, retrying',
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+
+        throw error;
       }
     }
 
@@ -925,12 +1188,62 @@ export class ForkEvaluator {
     return candidate.status === 429 || candidate.response?.status === 429 || candidate.code === 'rate_limit_exceeded';
   }
 
+  private isTransientTransportError(error: unknown): boolean {
+    if (typeof error !== 'object' || error === null) {
+      return false;
+    }
+
+    const candidate = error as {
+      status?: number;
+      code?: string;
+      message?: string;
+      response?: { status?: number };
+      cause?: { code?: string; message?: string } | null;
+    };
+
+    const status = candidate.status ?? candidate.response?.status;
+    if (typeof status === 'number' && [408, 409, 425, 500, 502, 503, 504].includes(status)) {
+      return true;
+    }
+
+    const errorDetails = [
+      candidate.code,
+      candidate.message,
+      candidate.cause?.code,
+      candidate.cause?.message,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .join(' ')
+      .toLowerCase();
+
+    return [
+      'premature close',
+      'fetch failed',
+      'socket hang up',
+      'econnreset',
+      'etimedout',
+      'timed out',
+      'connection terminated',
+      'network error',
+      'server disconnected',
+      'stream closed',
+      'unexpected end of json input',
+    ].some((fragment) => errorDetails.includes(fragment));
+  }
+
   private getRetryDelayMs(error: unknown, attempt: number): number {
     const retryAfterMs = this.parseRetryAfterMs(error);
     const baseDelayMs = retryAfterMs ?? Math.pow(2, attempt) * 1000;
     const jitterMultiplier = 0.8 + (Math.random() * 0.4);
 
     return Math.max(100, Math.round(baseDelayMs * jitterMultiplier));
+  }
+
+  private getTransientRetryDelayMs(attempt: number): number {
+    const baseDelayMs = 300 + (attempt * 450);
+    const jitterMultiplier = 0.85 + (Math.random() * 0.3);
+
+    return Math.max(150, Math.round(baseDelayMs * jitterMultiplier));
   }
 
   private parseRetryAfterMs(error: unknown): number | null {
