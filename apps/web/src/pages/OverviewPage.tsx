@@ -6,6 +6,10 @@ import { compactFormatter, formatDate, formatPercentFromRatio, formatTooltipNumb
 import type { AggregatedResults } from '../lib/types';
 import { EmptyState, ErrorPanel, LoadingPanel, MetricCard, Panel, StatusPill } from '../components/Ui';
 
+const CHART_GRID = 'rgba(27, 24, 20, 0.08)';
+const CHART_AXIS = '#7a7268';
+const CHART_FILL = '#7a5d2d';
+
 export function OverviewPage() {
   const userQuery = useQuery({ queryKey: ['user'], queryFn: api.getUser });
   const personaQuery = useQuery({ queryKey: ['persona'], queryFn: api.getPersona });
@@ -53,9 +57,9 @@ export function OverviewPage() {
 
   return (
     <div className="page-grid">
-      <Panel className="hero-panel" eyebrow="Demo surface" title="A product shell for showing Monte like a platform, not a terminal session.">
+      <Panel className="hero-panel" eyebrow="Demo surface" title="Show Monte as a working decision desk instead of asking people to watch terminal output.">
         <div className="hero-panel__content">
-          <div>
+          <div className="hero-panel__copy">
             <p className="hero-panel__lede">
               Live persona status, scenario coverage, runtime telemetry, evidence loops, and narrative output all pulled from the existing Fastify API.
             </p>
@@ -64,14 +68,28 @@ export function OverviewPage() {
               <StatusPill value={`${scenarioCoverage} scenarios`} />
               <StatusPill value={`${compactFormatter.format(totalSignals)} signals`} />
             </div>
+            <div className="hero-panel__actions">
+              <Link className="ghost-button ghost-button--filled" to="/simulations">
+                Launch a scenario
+              </Link>
+              <Link className="ghost-button" to="/results">
+                Inspect telemetry
+              </Link>
+            </div>
           </div>
-          <div className="hero-panel__actions">
-            <Link className="ghost-button ghost-button--filled" to="/simulations">
-              Launch a scenario
-            </Link>
-            <Link className="ghost-button" to="/results">
-              Inspect telemetry
-            </Link>
+          <div className="hero-panel__brief">
+            <div className="hero-panel__brief-item">
+              <span>Active run</span>
+              <strong>{latestRunningSimulation?.name ?? 'No simulation in flight'}</strong>
+            </div>
+            <div className="hero-panel__brief-item">
+              <span>Source inventory</span>
+              <strong>{sourcesQuery.data?.pagination.total ?? 0} registered inputs</strong>
+            </div>
+            <div className="hero-panel__brief-item">
+              <span>Operator</span>
+              <strong>{userQuery.data?.email ?? 'local-user@monte.local'}</strong>
+            </div>
           </div>
         </div>
       </Panel>
@@ -184,11 +202,11 @@ function OutcomeDistributionPreview({ results }: { results: AggregatedResults })
       <div className="chart-wrap chart-wrap--medium">
         <ResponsiveContainer>
           <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(164, 167, 181, 0.12)" />
-            <XAxis dataKey="label" stroke="#8f94a6" />
-            <YAxis tickFormatter={(value) => `${Math.round(value * 100)}%`} stroke="#8f94a6" />
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+            <XAxis dataKey="label" stroke={CHART_AXIS} />
+            <YAxis tickFormatter={(value) => `${Math.round(value * 100)}%`} stroke={CHART_AXIS} />
             <Tooltip formatter={(value) => formatTooltipNumber(value, formatPercentFromRatio)} />
-            <Bar dataKey="value" fill="#72e0a8" radius={[8, 8, 0, 0]} />
+            <Bar dataKey="value" fill={CHART_FILL} radius={[8, 8, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>

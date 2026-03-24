@@ -53,7 +53,7 @@ export function StatusPill({
 }: {
   value: string;
 }) {
-  const tone = value.toLowerCase();
+  const tone = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
   return <span className={`status-pill status-pill--${tone}`}>{value}</span>;
 }
@@ -69,6 +69,7 @@ export function EmptyState({
 }) {
   return (
     <div className="empty-state">
+      <p className="panel__eyebrow">Empty state</p>
       <h3>{title}</h3>
       <p>{body}</p>
       {action ? <div className="empty-state__action">{action}</div> : null}
@@ -79,8 +80,16 @@ export function EmptyState({
 export function LoadingPanel({ label = 'Loading Monte data...' }: { label?: string }) {
   return (
     <div className="loading-panel" role="status" aria-live="polite">
-      <span className="loading-panel__dot" />
-      {label}
+      <div className="loading-panel__copy">
+        <p className="panel__eyebrow">Loading</p>
+        <strong>{label}</strong>
+        <span>Fetching the next surface from the Monte API.</span>
+      </div>
+      <div className="loading-panel__skeleton" aria-hidden="true">
+        <span className="loading-panel__line" />
+        <span className="loading-panel__line loading-panel__line--short" />
+        <span className="loading-panel__line loading-panel__line--wide" />
+      </div>
     </div>
   );
 }
@@ -88,7 +97,10 @@ export function LoadingPanel({ label = 'Loading Monte data...' }: { label?: stri
 export function ErrorPanel({ message }: { message: string }) {
   return (
     <div className="error-panel" role="alert">
-      <strong>Could not load data.</strong>
+      <div>
+        <p className="panel__eyebrow">Error</p>
+        <strong>Could not load data.</strong>
+      </div>
       <span>{message}</span>
     </div>
   );

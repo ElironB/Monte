@@ -21,6 +21,11 @@ import {
 } from '../lib/formatters';
 import { EmptyState, ErrorPanel, LoadingPanel, MetricCard, Panel, StatusPill } from '../components/Ui';
 
+const CHART_GRID = 'rgba(27, 24, 20, 0.08)';
+const CHART_AXIS = '#7a7268';
+const CHART_FILL = '#7a5d2d';
+const CHART_FILL_SOFT = '#b69b71';
+
 export function ResultsPage() {
   const simulationsQuery = useQuery({
     queryKey: ['simulations', 'results'],
@@ -76,12 +81,26 @@ export function ResultsPage() {
     <div className="page-grid">
       <Panel className="hero-panel" eyebrow="Completed run" title={completedSimulation.name}>
         <div className="hero-panel__content">
-          <div>
+          <div className="hero-panel__copy">
             <p className="hero-panel__lede">{results.decisionIntelligence?.summary ?? 'Aggregated clone results are ready for review.'}</p>
             <div className="hero-panel__chips">
               <StatusPill value={completedSimulation.status} />
               <StatusPill value={titleCase(completedSimulation.scenarioType)} />
               <StatusPill value={`${results.cloneCount} clones`} />
+            </div>
+          </div>
+          <div className="hero-panel__brief">
+            <div className="hero-panel__brief-item">
+              <span>Success rate</span>
+              <strong>{formatPercentFromRatio(results.statistics.successRate)}</strong>
+            </div>
+            <div className="hero-panel__brief-item">
+              <span>Wall clock</span>
+              <strong>{formatDurationMs(telemetry?.wallClockDurationMs)}</strong>
+            </div>
+            <div className="hero-panel__brief-item">
+              <span>Peak frontier</span>
+              <strong>{telemetry?.peakActiveFrontier ?? 'n/a'}</strong>
             </div>
           </div>
         </div>
@@ -99,11 +118,11 @@ export function ResultsPage() {
           <div className="chart-wrap chart-wrap--medium">
             <ResponsiveContainer>
               <BarChart data={outcomeData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(164, 167, 181, 0.12)" />
-                <XAxis dataKey="label" stroke="#8f94a6" />
-                <YAxis tickFormatter={(value) => `${Math.round(value * 100)}%`} stroke="#8f94a6" />
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+                <XAxis dataKey="label" stroke={CHART_AXIS} />
+                <YAxis tickFormatter={(value) => `${Math.round(value * 100)}%`} stroke={CHART_AXIS} />
                 <Tooltip formatter={(value) => formatTooltipNumber(value, formatPercentFromRatio)} />
-                <Bar dataKey="value" fill="#7be0aa" radius={[10, 10, 0, 0]} />
+                <Bar dataKey="value" fill={CHART_FILL} radius={[10, 10, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -113,11 +132,11 @@ export function ResultsPage() {
           <div className="chart-wrap chart-wrap--medium">
             <ResponsiveContainer>
               <BarChart data={stratifiedData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(164, 167, 181, 0.12)" />
-                <XAxis dataKey="label" stroke="#8f94a6" />
-                <YAxis stroke="#8f94a6" />
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+                <XAxis dataKey="label" stroke={CHART_AXIS} />
+                <YAxis stroke={CHART_AXIS} />
                 <Tooltip formatter={(value) => formatTooltipNumber(value, compactFormatter.format)} />
-                <Bar dataKey="avgOutcome" fill="#68c6ff" radius={[10, 10, 0, 0]} />
+                <Bar dataKey="avgOutcome" fill={CHART_FILL_SOFT} radius={[10, 10, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -130,11 +149,11 @@ export function ResultsPage() {
             <div className="chart-wrap chart-wrap--medium">
               <ResponsiveContainer>
                 <LineChart data={timelineData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(164, 167, 181, 0.12)" />
-                  <XAxis dataKey="month" stroke="#8f94a6" />
-                  <YAxis stroke="#8f94a6" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+                  <XAxis dataKey="month" stroke={CHART_AXIS} />
+                  <YAxis stroke={CHART_AXIS} />
                   <Tooltip formatter={(value) => formatTooltipNumber(value, compactFormatter.format)} />
-                  <Line type="monotone" dataKey="value" stroke="#ffb562" strokeWidth={3} dot={false} />
+                  <Line type="monotone" dataKey="value" stroke={CHART_FILL} strokeWidth={3} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>

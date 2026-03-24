@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Radar, RadarChart, PolarAngleAxis, PolarGrid, ResponsiveContainer, Tooltip } from 'recharts';
 import { api } from '../lib/api';
-import { formatDate, formatPercentFromRatio, formatTooltipNumber, titleCase } from '../lib/formatters';
+import { formatDate, formatPercentFromRatio, titleCase } from '../lib/formatters';
 import type { PersonaTrait, PsychologicalProfile } from '../lib/types';
 import { EmptyState, ErrorPanel, KeyValueGrid, LoadingPanel, MiniBar, Panel, StatusPill } from '../components/Ui';
 
@@ -49,9 +48,48 @@ export function PersonaPage() {
   const dimensions = normalizeDimensions(traitsQuery.data ?? []);
   const psychologyData = psychologyQuery.data;
   const psychology = psychologyData && 'status' in psychologyData ? null : (psychologyData as PsychologicalProfile | null);
+  const bigFive: Array<[string, number]> = psychology
+    ? [
+        ['Openness', psychology.bigFive.openness],
+        ['Conscientiousness', psychology.bigFive.conscientiousness],
+        ['Extraversion', psychology.bigFive.extraversion],
+        ['Agreeableness', psychology.bigFive.agreeableness],
+        ['Neuroticism', psychology.bigFive.neuroticism],
+      ]
+    : [];
 
   return (
     <div className="page-grid">
+      <Panel className="hero-panel" eyebrow="Persona readout" title="Behavioral fingerprint, decision mechanics, and the readable psychology layer.">
+        <div className="hero-panel__content">
+          <div className="hero-panel__copy">
+            <p className="hero-panel__lede">
+              {psychology?.narrativeSummary ??
+                'Rebuild the persona after ingestion to populate the derived psychology layer and the scenario-sensitive reading.'}
+            </p>
+            <div className="hero-panel__chips">
+              <StatusPill value={persona && 'buildStatus' in persona ? persona.buildStatus : 'unknown'} />
+              <StatusPill value={`${dimensions.length} dimensions`} />
+              <StatusPill value={`${persona && 'memoryCount' in persona ? persona.memoryCount : 0} memories`} />
+            </div>
+          </div>
+          <div className="hero-panel__brief">
+            <div className="hero-panel__brief-item">
+              <span>Attachment style</span>
+              <strong>{psychology ? titleCase(psychology.attachment.style) : 'Unavailable'}</strong>
+            </div>
+            <div className="hero-panel__brief-item">
+              <span>Locus of control</span>
+              <strong>{psychology ? titleCase(psychology.locusOfControl.type) : 'Unavailable'}</strong>
+            </div>
+            <div className="hero-panel__brief-item">
+              <span>Profile version</span>
+              <strong>{persona && 'version' in persona ? persona.version : 'n/a'}</strong>
+            </div>
+          </div>
+        </div>
+      </Panel>
+
       <div className="three-column-grid">
         <Panel title="Persona state" eyebrow="Snapshot">
           <KeyValueGrid
@@ -112,28 +150,18 @@ export function PersonaPage() {
           </div>
         </Panel>
 
-        <Panel title="Big Five radar" eyebrow="Compressed psychology">
+        <Panel title="Big Five profile" eyebrow="Compressed psychology">
           {psychology ? (
-            <div className="chart-wrap chart-wrap--medium">
-              <ResponsiveContainer>
-                <RadarChart
-                  data={[
-                    { subject: 'Open', value: psychology.bigFive.openness },
-                    { subject: 'Conscientious', value: psychology.bigFive.conscientiousness },
-                    { subject: 'Extra', value: psychology.bigFive.extraversion },
-                    { subject: 'Agree', value: psychology.bigFive.agreeableness },
-                    { subject: 'Neuro', value: psychology.bigFive.neuroticism },
-                  ]}
-                >
-                  <PolarGrid stroke="rgba(164, 167, 181, 0.18)" />
-                  <PolarAngleAxis dataKey="subject" stroke="#8f94a6" />
-                  <Tooltip formatter={(value) => formatTooltipNumber(value, formatPercentFromRatio)} />
-                  <Radar dataKey="value" stroke="#7be0aa" fill="#7be0aa" fillOpacity={0.4} />
-                </RadarChart>
-              </ResponsiveContainer>
+            <div className="stack">
+              {bigFive.map(([label, value]) => (
+                <MiniBar key={label} label={label} value={value} hint={`${Math.round(value * 100)} percentile-style score`} />
+              ))}
+              <p className="muted">
+                Monte compresses the psychology layer into a readable summary rather than forcing reviewers to decode a radar chart.
+              </p>
             </div>
           ) : (
-            <EmptyState title="No psychology chart yet" body="Rebuild the persona once data sources are ingested." />
+            <EmptyState title="No psychology profile yet" body="Rebuild the persona once data sources are ingested." />
           )}
         </Panel>
       </div>
