@@ -35,12 +35,16 @@ export function getApiBaseUrl() {
 }
 
 async function request<T>(path: string, init?: RequestInit, searchParams?: Record<string, string | number | boolean | undefined>) {
+  const { headers: initHeaders, ...restInit } = init ?? {};
+  const headers = new Headers(initHeaders);
+
+  if (restInit.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
   const response = await fetch(buildUrl(path, searchParams), {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
-    ...init,
+    ...restInit,
+    headers,
   });
 
   if (!response.ok) {
@@ -89,12 +93,33 @@ export const api = {
       notes?: string;
     },
   ) =>
-    request<{ evidenceId?: string; evidenceCount?: number }> (`/simulation/${simulationId}/evidence`, {
+    request<{
+      evidence?: {
+        id: string;
+        uncertainty: string;
+        focusMetric: string;
+        recommendationIndex?: number;
+        recommendedExperiment: string;
+        result: 'positive' | 'negative' | 'mixed' | 'inconclusive';
+        confidence: number;
+        observedSignal: string;
+        notes?: string;
+        createdAt: string;
+      } | null;
+      evidenceCount: number;
+    }>(`/simulation/${simulationId}/evidence`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
   createRerun: (simulationId: string, payload?: { name?: string; cloneCount?: number; evidenceIds?: string[] }) =>
-    request<{ rerunSimulationId?: string; status?: string }>(`/simulation/${simulationId}/rerun`, {
+    request<{
+      simulationId: string;
+      name: string;
+      status: string;
+      cloneCount: number;
+      sourceSimulationId: string;
+      evidenceCount: number;
+    }>(`/simulation/${simulationId}/rerun`, {
       method: 'POST',
       body: JSON.stringify(payload ?? {}),
     }),

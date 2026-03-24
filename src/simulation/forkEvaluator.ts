@@ -335,6 +335,9 @@ export class ForkEvaluator {
 
     const prompt = this.buildPrompt(request);
     const model = (useReasoning && this.reasoningModel) ? this.reasoningModel : this.model;
+    const maxTokens = this.isOpenRouterProvider
+      ? (useReasoning ? 360 : 220)
+      : (useReasoning ? 600 : 400);
     const startTime = Date.now();
 
     const completion = await this.callWithRetry(async () => {
@@ -356,9 +359,7 @@ export class ForkEvaluator {
           ],
           model,
           temperature: 0.4 + (complexity * 0.3),
-          max_tokens: this.isOpenRouterProvider
-            ? (useReasoning ? 360 : 220)
-            : (useReasoning ? 600 : 400),
+          max_tokens: maxTokens,
           ...(this.useJsonObjectMode ? { response_format: { type: 'json_object' as const } } : {}),
         });
       };
@@ -441,7 +442,7 @@ export class ForkEvaluator {
           model,
           complexity,
           useReasoning,
-          maxTokens: useReasoning ? 600 : 400,
+          maxTokens,
           preview: content.slice(0, 200),
         },
         'Failed to parse LLM response, retrying once with repair prompt',

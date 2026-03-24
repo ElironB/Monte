@@ -48,10 +48,10 @@ export function EvidencePage() {
 
   const rerunMutation = useMutation({
     mutationFn: () => api.createRerun(selectedSimulation!.id, {}),
-    onSuccess: (response: { rerunSimulationId?: string } | null) => {
+    onSuccess: (response) => {
       setFeedback({
         tone: 'success',
-        message: `Rerun queued${response?.rerunSimulationId ? `: ${response.rerunSimulationId}` : '.'}`,
+        message: `Rerun queued${response?.simulationId ? `: ${response.simulationId}` : '.'}`,
       });
       queryClient.invalidateQueries({ queryKey: ['simulations'] });
     },
