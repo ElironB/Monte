@@ -989,6 +989,22 @@ kbd {
   background: rgba(122, 93, 45, 0.06);
 }
 
+.sources-layout {
+  align-items: start;
+}
+
+.sources-detail-panel {
+  align-self: start;
+}
+
+.sources-detail-body {
+  align-content: start;
+}
+
+.source-preview__meta {
+  align-items: flex-start;
+}
+
 .signal-list {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }

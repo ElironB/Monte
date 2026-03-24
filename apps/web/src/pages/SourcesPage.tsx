@@ -43,7 +43,7 @@ export function SourcesPage() {
         <MetricCard label="Observed signals" value={integerFormatter.format(totalSignals)} tone="warm" />
       </div>
 
-      <div className="two-column-grid">
+      <div className="two-column-grid sources-layout">
         <Panel title="Source inventory" eyebrow="Ingestion layer">
           <div className="source-list">
             {sourcesQuery.data.data.map((source) => (
@@ -66,10 +66,10 @@ export function SourcesPage() {
           </div>
         </Panel>
 
-        <Panel title={activeSource?.name ?? 'Source detail'} eyebrow="Signal preview">
+        <Panel className="sources-detail-panel" title={activeSource?.name ?? 'Source detail'} eyebrow="Signal preview">
           {activeSource ? (
-            <div className="stack">
-              <div className="pill-list">
+            <div className="stack sources-detail-body">
+              <div className="pill-list source-preview__meta">
                 <span className="inline-pill">{titleCase(activeSource.sourceType)}</span>
                 <span className="inline-pill">{formatDate(activeSource.createdAt)}</span>
                 <span className="inline-pill">{integerFormatter.format(activeSource.signalCount)} signals</span>
