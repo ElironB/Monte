@@ -13,6 +13,7 @@ import { compareCommands } from './commands/compare.js';
 import { doctorCommands } from './commands/doctor.js';
 import { decideCommands } from './commands/decide.js';
 import { exampleCommands } from './commands/example.js';
+import { startCommands } from './commands/start.js';
 import { loadConfig } from './config.js';
 
 const program = new Command();
@@ -38,6 +39,7 @@ program.addCommand(compareCommands);
 program.addCommand(doctorCommands);
 program.addCommand(decideCommands);
 program.addCommand(exampleCommands);
+program.addCommand(startCommands);
 
 // Default help
 if (process.argv.length === 2) {

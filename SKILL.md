@@ -28,7 +28,8 @@ Keep that loop in mind and most of the repository will make sense.
 
 ## Files that matter most
 
-- `src/index.ts` -> API bootstrap
+- `src/server.ts` -> shared API bootstrap and bundled dashboard serving
+- `src/index.ts` -> default runtime entrypoint
 - `src/api/routes/persona.ts` -> persona endpoints
 - `src/api/routes/simulation.ts` -> simulations, evidence, reruns
 - `src/api/routes/stream.ts` -> live progress REST and SSE
@@ -73,7 +74,8 @@ Keep that loop in mind and most of the repository will make sense.
 - The npm package is `monte-engine`; the installed executable is `monte`.
 - The globally installed CLI can store provider credentials in `~/.monte/config.json`.
 - A bundled starter persona ships under `examples/personas/starter` and is exposed by `monte example`.
-- A repo-local dashboard lives in `apps/web`, runs on `3001` by default, and targets the Fastify API on `3000` via `VITE_MONTE_API_BASE_URL`.
+- Monte now ships a bundled dashboard in the npm package and serves it from the Fastify app when built assets are present.
+- A repo-local dashboard still lives in `apps/web`, runs on `3001` by default during development, and targets the Fastify API on `3000` via `VITE_MONTE_API_BASE_URL`.
 
 ## Practical guardrails
 
@@ -144,6 +146,7 @@ npm run benchmark:pretty
 npm pack
 npm run cli:dev -- doctor
 npm run web:build
+monte start
 ```
 
 ## Useful CLI flows
@@ -151,6 +154,7 @@ npm run web:build
 Installed and agent-facing usage:
 
 ```bash
+monte start
 monte config set-api http://localhost:3000
 monte config set-provider openrouter
 monte config set-api-key <key>
@@ -164,6 +168,8 @@ monte simulate results <simulation-id> -f json
 Repo-local development usage:
 
 ```bash
+npm run dev
+npm run web:dev
 npm run cli:dev -- ingest ./path/to/data
 npm run cli:dev -- persona build
 npm run cli:dev -- simulate "should I do this?" --wait

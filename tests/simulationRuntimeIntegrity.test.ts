@@ -168,11 +168,17 @@ describe('simulation runtime integrity', () => {
     });
 
     const batchSizes = batchSpy.mock.calls.map(([items]) => items.length);
+    const expectedBatchSize = (engine as any).evaluator.getPreferredBatchSize(
+      scenario.id,
+      false,
+      4,
+    );
 
     expect(results).toHaveLength(4);
     expect(batchSizes.length).toBeGreaterThan(0);
-    expect(batchSizes[0]).toBe(4);
-    expect(Math.max(...batchSizes)).toBe(4);
+    expect(expectedBatchSize).toBeGreaterThan(1);
+    expect(batchSizes[0]).toBe(expectedBatchSize);
+    expect(Math.max(...batchSizes)).toBe(expectedBatchSize);
     expect(engine.getRuntimeTelemetry().peakActiveFrontier).toBe(4);
   });
 

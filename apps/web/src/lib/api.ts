@@ -14,7 +14,9 @@ import type {
   UserSummary,
 } from './types';
 
-const apiBaseUrl = (import.meta.env.VITE_MONTE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? 'http://localhost:3000';
+const apiBaseUrl =
+  (import.meta.env.VITE_MONTE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ??
+  (import.meta.env.DEV ? 'http://localhost:3000' : window.location.origin);
 
 function buildUrl(path: string, searchParams?: Record<string, string | number | boolean | undefined>) {
   const url = new URL(`${apiBaseUrl}${path}`);

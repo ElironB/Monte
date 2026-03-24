@@ -19,6 +19,7 @@ import {
   RocketIcon,
 } from "@radix-ui/react-icons";
 import { LoadingPanel } from "./components/Ui";
+import { getApiBaseUrl } from "./lib/api";
 
 const OverviewPage = lazy(async () => ({
   default: (await import("./pages/OverviewPage")).OverviewPage,
@@ -121,6 +122,9 @@ const navigationItems: NavigationItem[] = [
 
 function AppShell() {
   const location = useLocation();
+  const apiBaseUrl = getApiBaseUrl();
+  const isSameOrigin =
+    typeof window !== "undefined" && apiBaseUrl === window.location.origin;
   const activeItem =
     navigationItems.find((item) =>
       item.to === "/"
@@ -187,11 +191,19 @@ function AppShell() {
             <p className="sidebar__section-label">Runtime</p>
             <div className="status-line">
               <span className="status-dot status-dot--live" />
-              <span>Fastify API on :3000</span>
+              <span>
+                {isSameOrigin
+                  ? "Fastify API + dashboard on one origin"
+                  : `Fastify API at ${apiBaseUrl}`}
+              </span>
             </div>
             <div className="status-line">
               <span className="status-dot status-dot--warm" />
-              <span>React dashboard on :3001</span>
+              <span>
+                {isSameOrigin
+                  ? "Bundled showcase shell ready"
+                  : "Vite showcase shell ready"}
+              </span>
             </div>
           </section>
         </aside>

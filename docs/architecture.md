@@ -8,7 +8,8 @@ The current shipped architecture includes:
 
 - a Fastify API
 - a globally installable Commander CLI
-- a repo-local Vite + React dashboard in `apps/web`
+- a bundled dashboard served from the npm package by the Fastify app
+- a repo-local Vite + React dashboard in `apps/web` for local development
 - BullMQ workers for background jobs
 - Neo4j for graph persistence
 - Redis for cache, live progress, and queue transport
@@ -21,7 +22,9 @@ The npm package name is `monte-engine`. The installed executable is `monte`.
 
 ### API process
 
-`src/index.ts` bootstraps Fastify, registers plugins, initializes schema and tracing, starts background workers, and mounts route groups for:
+`src/server.ts` builds the Fastify app, initializes schema and tracing, starts background workers, mounts the HTTP routes, and serves the bundled dashboard when compiled assets are present. `src/index.ts` is the default runtime entrypoint for that shared bootstrap.
+
+The API mounts route groups for:
 
 - health
 - users
@@ -39,6 +42,10 @@ The agent-facing entrypoint is:
 
 - `monte decide`
 
+The installed server entrypoint is:
+
+- `monte start`
+
 The machine-readable readiness entrypoint is:
 
 - `monte doctor --json`
@@ -49,9 +56,9 @@ Bundled starter assets are exposed through:
 - `monte example path starter`
 - `monte example ingest starter`
 
-### Dashboard process
+### Dashboard surface
 
-`apps/web` is a standalone Vite + React client used to showcase the product with an actual UI rather than a CLI recording. It consumes the existing Fastify routes directly, defaults to `http://localhost:3001` in development, and targets the API on `http://localhost:3000` via `VITE_MONTE_API_BASE_URL`.
+`apps/web` is the source for the dashboard Monte ships to end users. In the published npm package, the built assets are served by Fastify on the same origin as the API so installed users can start everything with `monte start`. In repo-local development, `apps/web` still runs as a standalone Vite + React client on `http://localhost:3001` and targets the API on `http://localhost:3000` via `VITE_MONTE_API_BASE_URL`.
 
 The dashboard currently organizes:
 
@@ -373,6 +380,7 @@ Swagger documentation is exposed at `/docs`.
 
 Installed usage prefers:
 
+- `monte start`
 - `monte simulate`
 - `monte simulate progress <id> --json`
 - `monte simulate results <id> -f json`
@@ -386,6 +394,8 @@ Installed usage prefers:
 Repo-local development usage prefers:
 
 ```bash
+npm run dev
+npm run web:dev
 npm run cli:dev -- simulate "should I do this?" --wait
 npm run cli:dev -- decide "should I do this?" --mode standard --wait --json
 ```

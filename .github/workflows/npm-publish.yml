@@ -24,7 +24,9 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run web:install
       - run: npm run build
+      - run: npm run web:build
       - run: npm test -- --run
       - run: npm run test:benchmarks
       - run: npm run benchmark:pretty
@@ -51,6 +53,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run web:install
       - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

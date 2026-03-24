@@ -4,11 +4,11 @@ This file is a durable orientation document for contributors and coding agents. 
 
 ## One-paragraph summary
 
-Monte is a self-hosted TypeScript decision engine. It ingests exported personal data, extracts rule-based behavioral signals, compresses them into a 9-dimension master persona, derives a psychology layer, generates stratified clone variants, and runs scenario simulations that can be updated with evidence and validated with a seeded benchmark harness. The shipped operator model is a Fastify API plus a globally installable `monte` CLI from the npm package `monte-engine`.
+Monte is a self-hosted TypeScript decision engine. It ingests exported personal data, extracts rule-based behavioral signals, compresses them into a 9-dimension master persona, derives a psychology layer, generates stratified clone variants, and runs scenario simulations that can be updated with evidence and validated with a seeded benchmark harness. The shipped operator model is a Fastify API that can serve a bundled dashboard plus a globally installable `monte` CLI from the npm package `monte-engine`.
 
 ## System snapshot
 
-- Runtime: Fastify API plus Commander CLI, with a repo-local Vite + React dashboard under `apps/web`
+- Runtime: Fastify API plus Commander CLI, with a bundled same-origin dashboard in the npm package and a repo-local Vite + React dashboard under `apps/web` for development
 - Distribution: npm package `monte-engine`, global executable `monte`
 - CLI config: `~/.monte/config.json` stores the target API URL plus optional provider credentials for the globally installed CLI
 - Bundled examples: `examples/personas/starter` ships in the npm package and is surfaced by `monte example`
@@ -153,6 +153,7 @@ Primary user-facing commands:
 
 - `monte doctor`
 - `monte doctor --json`
+- `monte start`
 - `monte config set-provider <provider>`
 - `monte config set-api-key <key>`
 - `monte config set-embedding-key <key>`
@@ -174,6 +175,10 @@ Repo-local dashboard commands:
 - `npm run web:dev`
 - `npm run web:build`
 - `npm run web:preview`
+
+Installed dashboard command:
+
+- `monte start`
 
 Relevant runtime tuning env vars:
 
@@ -213,7 +218,8 @@ Monte currently ships 8 scenario types including `custom`:
 
 ## Main entrypoints
 
-- `src/index.ts` -> Fastify bootstrap
+- `src/server.ts` -> shared Fastify bootstrap plus bundled dashboard serving
+- `src/index.ts` -> default runtime entrypoint
 - `src/api/routes/` -> HTTP surface
 - `src/cli/index.ts` -> CLI bootstrap
 - `src/cli/commands/` -> command groups including `decide` and `doctor --json`

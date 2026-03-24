@@ -1,6 +1,6 @@
 # AGENTS
 
-This repository is a self-hosted Monte backend. Treat the current product as a Fastify API plus a globally installable and repo-local CLI for persona-driven decision simulation, evidence-adjusted reruns, machine-readable agent workflows, and deterministic benchmark validation.
+This repository is a self-hosted Monte backend. Treat the current product as a Fastify API that can serve a bundled dashboard plus a globally installable and repo-local CLI for persona-driven decision simulation, evidence-adjusted reruns, machine-readable agent workflows, and deterministic benchmark validation.
 
 ## Read first
 
@@ -31,11 +31,13 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - The npm package is `monte-engine`; the installed executable is `monte`.
 - The globally installed CLI can store provider credentials in `~/.monte/config.json`.
 - A bundled starter persona is shipped in `examples/personas/starter` and exposed by `monte example`.
-- A repo-local dashboard lives in `apps/web`, runs on port `3001` by default, and talks to the Fastify API on port `3000` through `VITE_MONTE_API_BASE_URL`.
+- The npm package now ships a bundled dashboard that Fastify can serve on the same origin as the API.
+- A repo-local dashboard still lives in `apps/web`, runs on port `3001` by default, and talks to the Fastify API on port `3000` through `VITE_MONTE_API_BASE_URL`.
 
 ## High-leverage files
 
-- `src/index.ts` -> runtime bootstrap
+- `src/server.ts` -> shared runtime bootstrap and bundled dashboard serving
+- `src/index.ts` -> default runtime entrypoint
 - `src/api/routes/persona.ts` -> persona API
 - `src/api/routes/simulation.ts` -> simulation, evidence, and rerun API
 - `src/api/routes/stream.ts` -> progress REST and SSE
@@ -98,6 +100,7 @@ For dashboard changes:
 
 ```bash
 npm run web:build
+monte start
 ```
 
 For docs-only changes, at minimum review the working tree and make sure the major docs stay internally consistent.
@@ -144,6 +147,12 @@ monte simulate results <simulation-id> -f json
 ```
 
 ### Dashboard workflow
+
+```bash
+monte start
+```
+
+Repo-local development with live frontend edits:
 
 ```bash
 npm run dev

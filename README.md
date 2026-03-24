@@ -21,9 +21,9 @@ For career moves, money choices, relocations, relationships, or any irreversible
 
 Monte currently ships as:
 
-- a Fastify API
-- a globally installable Commander CLI
-- a repo-local Vite + React dashboard in `apps/web` for showcasing persona, simulation, telemetry, evidence, and source data
+- a Fastify API that can serve the bundled dashboard from the npm package
+- a globally installable Commander CLI, including `monte start`
+- a repo-local Vite + React dashboard in `apps/web` for local development and UI iteration
 - BullMQ workers for ingestion, persona builds, and simulation batches
 - Neo4j for graph persistence
 - Redis for cache, live progress, and queue transport
@@ -101,6 +101,7 @@ npm run web:dev
 ```
 
 The demo UI starts on `http://localhost:3001` by default and talks to the API on `http://localhost:3000` unless `VITE_MONTE_API_BASE_URL` is overridden.
+This two-process flow is for repo-local development with live frontend edits.
 
 ### 5. Install the global CLI
 
@@ -147,6 +148,25 @@ For local development inside this repo, use the source-running variant instead:
 ```bash
 npm run cli:dev -- doctor
 ```
+
+### Installed Dashboard And API
+
+If Docker dependencies are already running and your current working directory contains the Monte `.env`, the globally installed package can start the API, workers, and bundled dashboard with one command:
+
+```bash
+monte start
+```
+
+Then open `http://localhost:3000`.
+
+Useful variants:
+
+```bash
+monte start --port 3001
+monte start --no-dashboard
+```
+
+Repo contributors should still use `npm run dev` plus `npm run web:dev` when they want live backend and frontend reloads at the same time.
 
 ## Agent Integration
 
