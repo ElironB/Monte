@@ -29,6 +29,7 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - The batched evaluator can now learn smaller preferred batch sizes after repeated provider-side batch failures; do not remove that adaptive recovery without replacing the performance guardrail.
 - The benchmark harness is a first-class regression surface and must stay deterministic.
 - The npm package is `monte-engine`; the installed executable is `monte`.
+- A GitHub Packages mirror is published as `@elironb/monte-engine` for repository-linked package visibility.
 - The globally installed CLI can store provider credentials in `~/.monte/config.json`.
 - A bundled starter persona is shipped in `examples/personas/starter` and exposed by `monte example`.
 - The npm package now ships a bundled dashboard that Fastify can serve on the same origin as the API.

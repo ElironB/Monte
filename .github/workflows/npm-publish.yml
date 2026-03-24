@@ -57,3 +57,31 @@ jobs:
       - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-github-packages:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      NODE_ENV: test
+      NEO4J_PASSWORD: ci-test-password
+      MINIO_ACCESS_KEY: ci-test-access-key
+      MINIO_SECRET_KEY: ci-test-secret-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com/
+          cache: npm
+
+      - run: npm ci
+      - run: npm run web:install
+      - run: npm pkg set name=@elironb/monte-engine repository.type=git repository.url=git+https://github.com/ElironB/Monte.git
+      - run: npm publish --registry https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

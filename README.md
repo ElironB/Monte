@@ -123,7 +123,7 @@ npm run web:build
 
 ## Global CLI Install
 
-The published npm package is `monte-engine`, but the executable on your `PATH` is `monte`.
+The primary published package is `monte-engine`, and the executable on your `PATH` is `monte`.
 
 ```bash
 npm install -g monte-engine
@@ -142,6 +142,8 @@ monte config set-embedding-key <your-embedding-key>
 ```
 
 CLI key storage lives in `~/.monte/config.json`. Environment variables still take precedence if both are set.
+
+Monte also publishes a GitHub Packages mirror as `@elironb/monte-engine` so the package can be associated with this repository and show up in GitHub Packages. GitHub Packages is a secondary distribution path here, not the main install path, and it still requires npm auth against `https://npm.pkg.github.com`.
 
 For local development inside this repo, use the source-running variant instead:
 
@@ -361,6 +363,7 @@ Current fixture corpus:
 ## Publish To npm
 
 The npm package name is currently `monte-engine`, while the installed executable is still `monte`.
+GitHub Packages publishing is handled automatically by the release workflow as a mirror at `@elironb/monte-engine`, so the manual steps below are for npmjs.org only.
 
 Release checklist:
 
