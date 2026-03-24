@@ -46,6 +46,8 @@ The machine-readable readiness entrypoint is:
 Bundled starter assets are exposed through:
 
 - `monte example list`
+- `monte example path starter`
+- `monte example ingest starter`
 
 ### Dashboard process
 
@@ -59,8 +61,6 @@ The dashboard currently organizes:
 - results, narrative output, and runtime telemetry
 - evidence capture and rerun actions
 - source and signal previews
-- `monte example path starter`
-- `monte example ingest starter`
 
 ### Background jobs
 

@@ -13,7 +13,10 @@ export function EvidencePage() {
     observedSignal: '',
     notes: '',
   });
-  const [message, setMessage] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{
+    tone: 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   const simulationsQuery = useQuery({
     queryKey: ['simulations', 'evidence'],
@@ -35,22 +38,25 @@ export function EvidencePage() {
   const addEvidenceMutation = useMutation({
     mutationFn: (payload: Parameters<typeof api.addEvidence>[1]) => api.addEvidence(selectedSimulation!.id, payload),
     onSuccess: () => {
-      setMessage('Evidence recorded successfully.');
+      setFeedback({ tone: 'success', message: 'Evidence recorded successfully.' });
       queryClient.invalidateQueries({ queryKey: ['simulation-results', selectedSimulation?.id] });
     },
     onError: (error: Error) => {
-      setMessage(error.message);
+      setFeedback({ tone: 'error', message: error.message });
     },
   });
 
   const rerunMutation = useMutation({
     mutationFn: () => api.createRerun(selectedSimulation!.id, {}),
     onSuccess: (response: { rerunSimulationId?: string } | null) => {
-      setMessage(`Rerun queued${response?.rerunSimulationId ? `: ${response.rerunSimulationId}` : '.'}`);
+      setFeedback({
+        tone: 'success',
+        message: `Rerun queued${response?.rerunSimulationId ? `: ${response.rerunSimulationId}` : '.'}`,
+      });
       queryClient.invalidateQueries({ queryKey: ['simulations'] });
     },
     onError: (error: Error) => {
-      setMessage(error.message);
+      setFeedback({ tone: 'error', message: error.message });
     },
   });
 
@@ -99,6 +105,7 @@ export function EvidencePage() {
             className="form-grid"
             onSubmit={(event) => {
               event.preventDefault();
+              setFeedback(null);
 
               addEvidenceMutation.mutate({
                 recommendationIndex: formState.recommendationIndex ? Number(formState.recommendationIndex) : undefined,
@@ -166,13 +173,21 @@ export function EvidencePage() {
               />
             </label>
 
-            {message ? <p className="form-message form-message--success">{message}</p> : null}
+            {feedback ? <p className={`form-message form-message--${feedback.tone}`}>{feedback.message}</p> : null}
 
             <div className="button-row">
               <button className="ghost-button ghost-button--filled" type="submit" disabled={addEvidenceMutation.isPending}>
                 {addEvidenceMutation.isPending ? 'Saving...' : 'Record evidence'}
               </button>
-              <button className="ghost-button" type="button" disabled={rerunMutation.isPending} onClick={() => rerunMutation.mutate()}>
+              <button
+                className="ghost-button"
+                type="button"
+                disabled={rerunMutation.isPending}
+                onClick={() => {
+                  setFeedback(null);
+                  rerunMutation.mutate();
+                }}
+              >
                 {rerunMutation.isPending ? 'Queueing rerun...' : 'Create rerun'}
               </button>
             </div>
