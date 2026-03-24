@@ -363,6 +363,7 @@ Current fixture corpus:
 ## Publish To npm
 
 The npm package name is currently `monte-engine`, while the installed executable is still `monte`.
+GitHub Packages publishing is handled automatically by the release workflow as a mirror at `@elironb/monte-engine`, so the manual steps below are for npmjs.org only.
 
 Release checklist:
 
