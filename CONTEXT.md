@@ -9,7 +9,7 @@ Monte is a self-hosted TypeScript decision engine. It ingests exported personal 
 ## System snapshot
 
 - Runtime: Fastify API plus Commander CLI, with a bundled same-origin dashboard in the npm package and a repo-local Vite + React dashboard under `apps/web` for development
-- Distribution: npm package `monte-engine`, global executable `monte`
+- Distribution: npm package `monte-engine` as the primary install target, plus a GitHub Packages mirror at `@elironb/monte-engine`; global executable remains `monte`
 - CLI config: `~/.monte/config.json` stores the target API URL plus optional provider credentials for the globally installed CLI
 - Bundled examples: `examples/personas/starter` ships in the npm package and is surfaced by `monte example`
 - Storage: Neo4j for graph data, Redis for cache, queues, and live progress, MinIO for uploaded source blobs

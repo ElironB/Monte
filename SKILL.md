@@ -72,6 +72,7 @@ Keep that loop in mind and most of the repository will make sense.
 - Signal extraction is rule-based.
 - The benchmark harness is part of the product contract, not an optional extra.
 - The npm package is `monte-engine`; the installed executable is `monte`.
+- A GitHub Packages mirror is published as `@elironb/monte-engine` for repository-linked package visibility.
 - The globally installed CLI can store provider credentials in `~/.monte/config.json`.
 - A bundled starter persona ships under `examples/personas/starter` and is exposed by `monte example`.
 - Monte now ships a bundled dashboard in the npm package and serves it from the Fastify app when built assets are present.

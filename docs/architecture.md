@@ -16,7 +16,7 @@ The current shipped architecture includes:
 - MinIO for uploaded source storage
 - OpenAI-compatible chat and embedding providers
 
-The npm package name is `monte-engine`. The installed executable is `monte`.
+The primary npm package name is `monte-engine`. A GitHub Packages mirror is also published as `@elironb/monte-engine` so the package can be linked to this repository in GitHub Packages. The installed executable is still `monte`.
 
 ## Runtime topology
 
