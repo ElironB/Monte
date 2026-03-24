@@ -32,6 +32,9 @@ Keep that loop in mind and most of the repository will make sense.
 - `src/api/routes/persona.ts` -> persona endpoints
 - `src/api/routes/simulation.ts` -> simulations, evidence, reruns
 - `src/api/routes/stream.ts` -> live progress REST and SSE
+- `apps/web/src/App.tsx` -> dashboard shell and route map
+- `apps/web/src/lib/api.ts` -> frontend API client
+- `apps/web/src/pages/` -> showcase UI screens backed by the existing API
 - `src/cli/commands/simulation.ts` -> simulation workflow and wait loop
 - `src/cli/commands/decide.ts` -> agent-first decision command
 - `src/cli/commands/doctor.ts` -> readiness checks and `--json`
@@ -70,6 +73,7 @@ Keep that loop in mind and most of the repository will make sense.
 - The npm package is `monte-engine`; the installed executable is `monte`.
 - The globally installed CLI can store provider credentials in `~/.monte/config.json`.
 - A bundled starter persona ships under `examples/personas/starter` and is exposed by `monte example`.
+- A repo-local dashboard lives in `apps/web`, runs on `3001` by default, and targets the Fastify API on `3000` via `VITE_MONTE_API_BASE_URL`.
 
 ## Practical guardrails
 
@@ -139,6 +143,7 @@ npm run test:benchmarks
 npm run benchmark:pretty
 npm pack
 npm run cli:dev -- doctor
+npm run web:build
 ```
 
 ## Useful CLI flows

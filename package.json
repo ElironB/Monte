@@ -6,6 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "web:dev": "npm --prefix apps/web run dev",
+    "web:build": "npm --prefix apps/web run build",
+    "web:preview": "npm --prefix apps/web run preview",
     "build": "tsc",
     "prepare": "npm run build",
     "prepack": "npm run build",

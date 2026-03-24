@@ -8,6 +8,7 @@ The current shipped architecture includes:
 
 - a Fastify API
 - a globally installable Commander CLI
+- a repo-local Vite + React dashboard in `apps/web`
 - BullMQ workers for background jobs
 - Neo4j for graph persistence
 - Redis for cache, live progress, and queue transport
@@ -45,6 +46,19 @@ The machine-readable readiness entrypoint is:
 Bundled starter assets are exposed through:
 
 - `monte example list`
+
+### Dashboard process
+
+`apps/web` is a standalone Vite + React client used to showcase the product with an actual UI rather than a CLI recording. It consumes the existing Fastify routes directly, defaults to `http://localhost:3001` in development, and targets the API on `http://localhost:3000` via `VITE_MONTE_API_BASE_URL`.
+
+The dashboard currently organizes:
+
+- persona dimensions and psychology
+- simulation launch and history
+- live progress via REST plus SSE
+- results, narrative output, and runtime telemetry
+- evidence capture and rerun actions
+- source and signal previews
 - `monte example path starter`
 - `monte example ingest starter`
 

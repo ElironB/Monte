@@ -31,6 +31,7 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - The npm package is `monte-engine`; the installed executable is `monte`.
 - The globally installed CLI can store provider credentials in `~/.monte/config.json`.
 - A bundled starter persona is shipped in `examples/personas/starter` and exposed by `monte example`.
+- A repo-local dashboard lives in `apps/web`, runs on port `3001` by default, and talks to the Fastify API on port `3000` through `VITE_MONTE_API_BASE_URL`.
 
 ## High-leverage files
 
@@ -38,6 +39,9 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - `src/api/routes/persona.ts` -> persona API
 - `src/api/routes/simulation.ts` -> simulation, evidence, and rerun API
 - `src/api/routes/stream.ts` -> progress REST and SSE
+- `apps/web/src/App.tsx` -> dashboard shell and route map
+- `apps/web/src/lib/api.ts` -> frontend API client
+- `apps/web/src/pages/` -> overview, persona, simulation, live run, results, evidence, and sources views
 - `src/cli/commands/simulation.ts` -> simulation CLI
 - `src/cli/commands/decide.ts` -> agent-first decision CLI
 - `src/cli/commands/doctor.ts` -> readiness CLI
@@ -90,6 +94,12 @@ npm run cli:dev -- doctor
 monte doctor --json
 ```
 
+For dashboard changes:
+
+```bash
+npm run web:build
+```
+
 For docs-only changes, at minimum review the working tree and make sure the major docs stay internally consistent.
 
 ## Common workflows
@@ -131,6 +141,13 @@ Installed CLI:
 monte simulate "should I quit my job and start a business?" --wait
 monte simulate progress <simulation-id> --json
 monte simulate results <simulation-id> -f json
+```
+
+### Dashboard workflow
+
+```bash
+npm run dev
+npm run web:dev
 ```
 
 ### Agent workflow

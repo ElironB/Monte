@@ -8,7 +8,7 @@ Monte is a self-hosted TypeScript decision engine. It ingests exported personal 
 
 ## System snapshot
 
-- Runtime: Fastify API plus Commander CLI
+- Runtime: Fastify API plus Commander CLI, with a repo-local Vite + React dashboard under `apps/web`
 - Distribution: npm package `monte-engine`, global executable `monte`
 - CLI config: `~/.monte/config.json` stores the target API URL plus optional provider credentials for the globally installed CLI
 - Bundled examples: `examples/personas/starter` ships in the npm package and is surfaced by `monte example`
@@ -169,6 +169,12 @@ Primary user-facing commands:
 
 For repo development, the equivalent source-running form is `npm run cli:dev -- ...`.
 
+Repo-local dashboard commands:
+
+- `npm run web:dev`
+- `npm run web:build`
+- `npm run web:preview`
+
 Relevant runtime tuning env vars:
 
 - `SIMULATION_BATCH_SIZE`
@@ -211,6 +217,8 @@ Monte currently ships 8 scenario types including `custom`:
 - `src/api/routes/` -> HTTP surface
 - `src/cli/index.ts` -> CLI bootstrap
 - `src/cli/commands/` -> command groups including `decide` and `doctor --json`
+- `apps/web/src/App.tsx` -> dashboard shell and route map
+- `apps/web/src/lib/api.ts` -> frontend API client against the Fastify routes
 - `src/persona/` -> persona pipeline
 - `src/simulation/` -> simulation engine, evidence loop, progress, and result persistence
 - `src/benchmarks/` -> regression harness

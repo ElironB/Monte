@@ -23,6 +23,7 @@ Monte currently ships as:
 
 - a Fastify API
 - a globally installable Commander CLI
+- a repo-local Vite + React dashboard in `apps/web` for showcasing persona, simulation, telemetry, evidence, and source data
 - BullMQ workers for ingestion, persona builds, and simulation batches
 - Neo4j for graph persistence
 - Redis for cache, live progress, and queue transport
@@ -71,6 +72,12 @@ docker compose up -d neo4j redis minio
 npm install
 ```
 
+Optional frontend env for the dashboard:
+
+```bash
+cp apps/web/.env.example apps/web/.env
+```
+
 ### 3. Run the Monte API
 
 ```bash
@@ -79,7 +86,15 @@ npm run dev
 
 The API starts on `http://localhost:3000` by default. Swagger docs are available at `http://localhost:3000/docs`.
 
-### 4. Install the global CLI
+### 4. Run the dashboard
+
+```bash
+npm run web:dev
+```
+
+The demo UI starts on `http://localhost:3001` by default and talks to the API on `http://localhost:3000` unless `VITE_MONTE_API_BASE_URL` is overridden.
+
+### 5. Install the global CLI
 
 ```bash
 npm install -g monte-engine
@@ -88,12 +103,13 @@ monte config set-provider openrouter
 monte config set-api-key <your-openrouter-key>
 ```
 
-### 5. Verify the stack
+### 6. Verify the stack
 
 ```bash
 monte doctor
 monte doctor --json
 monte config show
+npm run web:build
 ```
 
 ## Global CLI Install
