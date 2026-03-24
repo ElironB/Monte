@@ -31,6 +31,14 @@ Monte currently ships as:
 
 In self-hosted OSS mode, auth is stubbed to a local injected user.
 
+## Dashboard Preview
+
+The repo-local dashboard gives Monte a fast five-minute product walkthrough instead of a terminal recording.
+
+![Monte dashboard overview](docs/images/monte-dashboard-overview.png)
+
+For more UI screens, see [docs/dashboard.md](docs/dashboard.md).
+
 ## Quickstart
 
 ### Requirements
