@@ -9,26 +9,70 @@ import {
 } from '../lib/graph';
 import type { SimulationGraphEnvelope, SimulationGraphSnapshot } from '../lib/types';
 
-function getNodeLabelLines(label: string): string[] {
-  const words = label.split(' ');
+const MIN_SCALE = 0.42;
+const MAX_SCALE = 3.2;
+const ZOOM_STEP = 0.12;
+const DRAG_THRESHOLD = 4;
+
+function truncateText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
+}
+
+function getWrappedNodeLabelLines(label: string, maxCharsPerLine: number): string[] {
+  const words = label.replace(/\s+/g, ' ').trim().split(' ');
   const lines: string[] = [];
   let current = '';
 
   for (const word of words) {
     const next = current ? `${current} ${word}` : word;
-    if (next.length > 22 && current) {
+    if (next.length > maxCharsPerLine && current) {
       lines.push(current);
       current = word;
+
+      if (lines.length === 2) {
+        break;
+      }
     } else {
-      current = next;
+      current = next.length > maxCharsPerLine ? truncateText(next, maxCharsPerLine) : next;
     }
   }
 
-  if (current) {
+  const consumedWords = lines.join(' ').split(' ').filter(Boolean).length + (current ? current.split(' ').filter(Boolean).length : 0);
+  const hasRemainingWords = consumedWords < words.length;
+
+  if (current && lines.length < 2) {
     lines.push(current);
   }
 
+  if (lines.length === 0) {
+    return [truncateText(label, maxCharsPerLine)];
+  }
+
+  if (hasRemainingWords) {
+    lines[Math.min(lines.length - 1, 1)] = truncateText(lines[Math.min(lines.length - 1, 1)], maxCharsPerLine);
+    if (!lines[Math.min(lines.length - 1, 1)].endsWith('...')) {
+      lines[Math.min(lines.length - 1, 1)] = truncateText(`${lines[Math.min(lines.length - 1, 1)]}...`, maxCharsPerLine);
+    }
+  }
+
   return lines.slice(0, 2);
+}
+
+function clampScale(value: number) {
+  return Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number(value.toFixed(3))));
+}
+
+function getCompactEdgeLabel(label: string) {
+  const normalized = label.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 24) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 21).trimEnd()}...`;
 }
 
 export function SimulationGraphCanvas({
@@ -48,11 +92,15 @@ export function SimulationGraphCanvas({
   const nodeMap = new Map(layout.nodes.map((node) => [node.id, node]));
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
+    pointerId: number;
     startX: number;
     startY: number;
     originX: number;
     originY: number;
+    moved: boolean;
+    targetNodeId: string | null;
   } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [viewport, setViewport] = useState({ x: 32, y: 32, scale: 1 });
 
   const fitToView = () => {
@@ -70,7 +118,7 @@ export function SimulationGraphCanvas({
       availableHeight / Math.max(layout.height, 1),
     );
     setViewport({
-      scale: Math.max(0.62, Number(scale.toFixed(3))),
+      scale: Math.max(0.62, clampScale(scale)),
       x: Math.max((container.clientWidth - layout.width * scale) / 2, 20),
       y: Math.max((container.clientHeight - layout.height * scale) / 2, 20),
     });
@@ -80,6 +128,30 @@ export function SimulationGraphCanvas({
     fitToView();
   }, [graph.simulationId]);
 
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const direction = event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+      setViewport((current) => ({
+        ...current,
+        scale: clampScale(current.scale + direction),
+      }));
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, []);
+
   const maxEdgeCount = Math.max(
     ...[...(snapshot?.edges ?? []).map((edge) => edge.transitionCount), 1],
   );
@@ -87,6 +159,7 @@ export function SimulationGraphCanvas({
   const visibleTraces = (snapshot?.sampledTraces ?? []).filter((trace) =>
     selectedNodeId ? trace.pathNodeIds.includes(selectedNodeId) : true,
   );
+  const shouldShowGlobalEdgeLabels = !selectedNodeId && viewport.scale >= 1.45;
 
   return (
     <div className="graph-canvas">
@@ -97,10 +170,10 @@ export function SimulationGraphCanvas({
           <span>{snapshot?.sampledTraces.length ?? 0} sampled traces</span>
         </div>
         <div className="button-row">
-          <button className="ghost-button" type="button" onClick={() => setViewport((current) => ({ ...current, scale: Math.min(1.8, current.scale + 0.12) }))}>
+          <button className="ghost-button" type="button" onClick={() => setViewport((current) => ({ ...current, scale: clampScale(current.scale + ZOOM_STEP) }))}>
             Zoom in
           </button>
-          <button className="ghost-button" type="button" onClick={() => setViewport((current) => ({ ...current, scale: Math.max(0.55, current.scale - 0.12) }))}>
+          <button className="ghost-button" type="button" onClick={() => setViewport((current) => ({ ...current, scale: clampScale(current.scale - ZOOM_STEP) }))}>
             Zoom out
           </button>
           <button className="ghost-button" type="button" onClick={fitToView}>
@@ -114,45 +187,71 @@ export function SimulationGraphCanvas({
 
       <div
         ref={containerRef}
-        className={`graph-stage${dragRef.current ? ' graph-stage--dragging' : ''}`}
-        onWheel={(event) => {
-          event.preventDefault();
-          const direction = event.deltaY > 0 ? -0.08 : 0.08;
-          setViewport((current) => ({
-            ...current,
-            scale: Math.max(0.55, Math.min(1.8, Number((current.scale + direction).toFixed(3)))),
-          }));
-        }}
+        className={`graph-stage${isDragging ? ' graph-stage--dragging' : ''}`}
         onPointerDown={(event) => {
           if (event.button !== 0) {
             return;
           }
 
+          window.getSelection()?.removeAllRanges();
+          const targetNodeId = (event.target as Element)
+            .closest('[data-node-id]')
+            ?.getAttribute('data-node-id');
           dragRef.current = {
+            pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
             originX: viewport.x,
             originY: viewport.y,
+            moved: false,
+            targetNodeId: targetNodeId ?? null,
           };
         }}
         onPointerMove={(event) => {
-          if (!dragRef.current) {
+          if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) {
             return;
           }
 
           const deltaX = event.clientX - dragRef.current.startX;
           const deltaY = event.clientY - dragRef.current.startY;
+
+          if (!dragRef.current.moved && (Math.abs(deltaX) >= DRAG_THRESHOLD || Math.abs(deltaY) >= DRAG_THRESHOLD)) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            dragRef.current.moved = true;
+            setIsDragging(true);
+          }
+
+          if (!dragRef.current.moved) {
+            return;
+          }
+
+          event.preventDefault();
           setViewport((current) => ({
             ...current,
             x: (dragRef.current?.originX ?? current.x) + deltaX,
             y: (dragRef.current?.originY ?? current.y) + deltaY,
           }));
         }}
-        onPointerUp={() => {
+        onPointerUp={(event) => {
+          if (!dragRef.current || dragRef.current.pointerId !== event.pointerId) {
+            return;
+          }
+
+          if (dragRef.current.moved && event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          if (!dragRef.current.moved && dragRef.current.targetNodeId) {
+            onSelectNode(dragRef.current.targetNodeId);
+          }
           dragRef.current = null;
+          setIsDragging(false);
         }}
-        onPointerLeave={() => {
+        onPointerCancel={(event) => {
+          if (dragRef.current?.moved && event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
           dragRef.current = null;
+          setIsDragging(false);
         }}
       >
         <svg className="graph-stage__svg" viewBox={`0 0 ${layout.width} ${layout.height}`}>
@@ -186,6 +285,7 @@ export function SimulationGraphCanvas({
               const toNode = nodeMap.get(edge.toNodeId);
               const labelX = ((fromNode?.centerX ?? 0) + (toNode?.centerX ?? 0)) / 2;
               const labelY = ((fromNode?.centerY ?? 0) + (toNode?.centerY ?? 0)) / 2 - 10;
+              const showLabel = selected ? true : shouldShowGlobalEdgeLabels;
 
               return (
                 <g key={edge.id}>
@@ -194,13 +294,16 @@ export function SimulationGraphCanvas({
                     d={edge.path}
                     style={{ strokeWidth }}
                   />
-                  <text
-                    className="graph-edge__label"
-                    x={labelX}
-                    y={labelY}
-                  >
-                    {edge.label}
-                  </text>
+                  {showLabel ? (
+                    <text
+                      className="graph-edge__label"
+                      x={labelX}
+                      y={labelY}
+                      textAnchor="middle"
+                    >
+                      {getCompactEdgeLabel(edge.label)}
+                    </text>
+                  ) : null}
                 </g>
               );
             })}
@@ -210,17 +313,15 @@ export function SimulationGraphCanvas({
               const selected = selectedNodeId === node.id;
               const visitRatio = formatNodeVisitRatio(stats, Math.max(snapshot?.cloneCount ?? 0, 1));
               const outcomeTone = getNodeOutcomeTone(stats);
-              const labelLines = getNodeLabelLines(node.label);
+              const maxCharsPerLine = Math.max(14, Math.floor((node.width - 42) / 8.4));
+              const labelLines = getWrappedNodeLabelLines(node.label, maxCharsPerLine);
 
               return (
                 <g
                   key={node.id}
+                  data-node-id={node.id}
                   className={`graph-node graph-node--${node.type} graph-node--${outcomeTone}${selected ? ' graph-node--selected' : ''}${(stats?.activeCount ?? 0) > 0 ? ' graph-node--active' : ''}`}
                   transform={`translate(${node.x} ${node.y})`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSelectNode(node.id);
-                  }}
                 >
                   <rect className="graph-node__body" width={node.width} height={node.height} rx={node.type === 'decision' ? 14 : 12} />
                   <rect

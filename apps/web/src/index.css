@@ -909,6 +909,25 @@ kbd {
   resize: vertical;
 }
 
+.form-helper {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.preset-note {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(249, 247, 242, 0.84);
+}
+
+.preset-note p:last-child {
+  color: var(--muted-strong);
+  line-height: 1.7;
+}
+
 .form-message {
   padding: 0.92rem 1rem;
   border-radius: 10px;
@@ -1049,7 +1068,7 @@ kbd {
 
 .graph-stage {
   position: relative;
-  min-height: 680px;
+  min-height: 620px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -1057,6 +1076,14 @@ kbd {
     radial-gradient(circle at top right, rgba(122, 93, 45, 0.05), transparent 28%),
     rgba(255, 255, 255, 0.78);
   cursor: grab;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.graph-stage,
+.graph-stage * {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .graph-stage--dragging {
@@ -1066,7 +1093,7 @@ kbd {
 .graph-stage__svg {
   width: 100%;
   height: 100%;
-  min-height: 680px;
+  min-height: 620px;
   display: block;
 }
 
@@ -1074,6 +1101,7 @@ kbd {
   fill: none;
   stroke: rgba(27, 24, 20, 0.18);
   transition: stroke var(--transition), opacity var(--transition), stroke-width var(--transition);
+  pointer-events: none;
 }
 
 .graph-edge--selected {
@@ -1082,10 +1110,15 @@ kbd {
 
 .graph-edge__label {
   fill: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.58rem;
   font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  pointer-events: none;
+  paint-order: stroke fill;
+  stroke: rgba(247, 246, 243, 0.94);
+  stroke-width: 6px;
+  stroke-linejoin: round;
 }
 
 .graph-trace {
@@ -1094,6 +1127,7 @@ kbd {
   stroke-linecap: round;
   stroke-linejoin: round;
   opacity: 0.22;
+  pointer-events: none;
 }
 
 .graph-trace--active {
@@ -1109,8 +1143,6 @@ kbd {
 }
 
 .graph-node__body {
-  width: 100%;
-  height: 100%;
   fill: rgba(255, 255, 255, 0.94);
   stroke: var(--border-strong);
   stroke-width: 1.2;
@@ -1151,6 +1183,7 @@ kbd {
   font-size: 0.92rem;
   font-weight: 600;
   letter-spacing: -0.02em;
+  pointer-events: none;
 }
 
 .graph-node__meta,
@@ -1160,6 +1193,7 @@ kbd {
   font-size: 0.68rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  pointer-events: none;
 }
 
 .graph-inspector__intro,
@@ -1288,7 +1322,7 @@ kbd {
 
   .graph-stage,
   .graph-stage__svg {
-    min-height: 560px;
+    min-height: 520px;
   }
 }
 
@@ -1320,6 +1354,6 @@ kbd {
 
   .graph-stage,
   .graph-stage__svg {
-    min-height: 460px;
+    min-height: 420px;
   }
 }
