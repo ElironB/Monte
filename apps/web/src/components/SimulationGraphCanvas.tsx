@@ -144,8 +144,8 @@ export function SimulationGraphCanvas({
           const deltaY = event.clientY - dragRef.current.startY;
           setViewport((current) => ({
             ...current,
-            x: dragRef.current?.originX ?? current.x + deltaX,
-            y: dragRef.current?.originY ?? current.y + deltaY,
+            x: (dragRef.current?.originX ?? current.x) + deltaX,
+            y: (dragRef.current?.originY ?? current.y) + deltaY,
           }));
         }}
         onPointerUp={() => {
