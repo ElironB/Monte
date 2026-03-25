@@ -1,6 +1,6 @@
 {
   "name": "monte-engine",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Probabilistic life simulation platform",
   "main": "dist/index.js",
   "type": "module",
