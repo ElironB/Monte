@@ -14,6 +14,7 @@ export * from './scenarioCompiler.js';
 export * from './experimentPlanner.js';
 export * from './causalModel.js';
 export * from './evidenceLoop.js';
+export * from './graphSnapshot.js';
 
 // World Agents
 export * from './worldAgents/base.js';

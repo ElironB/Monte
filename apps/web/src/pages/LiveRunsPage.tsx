@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, getApiBaseUrl } from '../lib/api';
 import { formatDate, formatDurationMs, integerFormatter, titleCase } from '../lib/formatters';
@@ -96,6 +97,11 @@ export function LiveRunsPage() {
               <StatusPill value={progress.status} />
               <StatusPill value={`${Math.round(progress.progress)}% overall`} />
               {progress.aggregationStage ? <StatusPill value={progress.aggregationStage} /> : null}
+            </div>
+            <div className="button-row">
+              <Link className="ghost-button" to={`/graph?simulationId=${selectedSimulationId}`}>
+                Open graph
+              </Link>
             </div>
           </div>
         </div>

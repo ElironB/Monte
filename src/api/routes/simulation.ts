@@ -4,16 +4,23 @@ import { runQuery, runQuerySingle, runWriteSingle } from '../../config/neo4j.js'
 import { NarrativeGenerator } from '../../simulation/narrativeGenerator.js';
 import {
   AggregatedResults,
+  CloneResult,
   EvidenceResult,
   ExperimentRecommendation,
 } from '../../simulation/types.js';
 import { deriveEvidenceAdjustments } from '../../simulation/evidenceLoop.js';
+import {
+  buildCompletedSimulationGraphSnapshot,
+  buildSimulationGraphStructure,
+  createSimulationGraphEnvelope,
+} from '../../simulation/graphSnapshot.js';
+import { compileScenario } from '../../simulation/scenarioCompiler.js';
 import { BehavioralSignal } from '../../ingestion/types.js';
 import { DimensionMapper } from '../../persona/dimensionMapper.js';
 import { getDimensionConceptEmbeddings } from '../../embeddings/dimensionConcepts.js';
 import { EmbeddingService } from '../../embeddings/embeddingService.js';
 import { logger } from '../../utils/logger.js';
-import { cacheGet, cacheSet } from '../../config/redis.js';
+import { cacheGet, cacheSet, getRedisClient } from '../../config/redis.js';
 import { scheduleSimulationBatch } from '../../ingestion/queue/ingestionQueue.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -91,6 +98,11 @@ const listQuerySchema = z.object({
 });
 
 const CACHE_TTL = 60; // 1 minute for simulation lists
+const GRAPH_SAMPLE_TRACE_LIMIT = 12;
+
+function getSimulationGraphKey(simulationId: string): string {
+  return `sim:${simulationId}:graph`;
+}
 
 const parseJson = <T>(value: string | null | undefined, fallback: T): T => {
   if (!value) {
@@ -730,6 +742,107 @@ async function simulationRoutes(fastify: FastifyInstance) {
         status: sim.status,
         distributions,
       };
+    },
+  });
+
+  fastify.get('/:id/graph', {
+    preHandler: [fastify.authenticate],
+    handler: async (request) => {
+      const { id } = request.params as { id: string };
+      const simulation = await runQuerySingle<{
+        id: string;
+        name: string;
+        scenarioType: string;
+        status: string;
+        parameters: string;
+        cloneCount: number;
+        capitalAtRisk: number | null;
+      }>(
+        `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(:Persona)-[:HAS_SIMULATION]->(s:Simulation {id: $simId})
+         RETURN s.id as id,
+                s.name as name,
+                s.scenarioType as scenarioType,
+                s.status as status,
+                s.parameters as parameters,
+                s.cloneCount as cloneCount,
+                s.capitalAtRisk as capitalAtRisk`,
+        { userId: request.user.userId, simId: id },
+      );
+
+      if (!simulation) {
+        throw new NotFoundError('Simulation');
+      }
+
+      const parsedParameters = JSON.parse(simulation.parameters) as Record<string, unknown>;
+      const acceptedEvidence = Array.isArray(parsedParameters.evidence)
+        ? parsedParameters.evidence as EvidenceResult[]
+        : [];
+      const scenario = compileScenario({
+        scenarioType: simulation.scenarioType,
+        name: simulation.name,
+        parameters: parsedParameters,
+        capitalAtRisk: simulation.capitalAtRisk,
+        evidence: acceptedEvidence,
+      });
+      const structure = buildSimulationGraphStructure(scenario);
+
+      let snapshot = null;
+      if (simulation.status === 'completed') {
+        const rows = await runQuery<{
+          cloneId: string;
+          path: string;
+          finalState: string;
+          metrics: string;
+          category: 'edge' | 'central' | 'typical';
+          percentile: number;
+        }>(
+          `MATCH (s:Simulation {id: $simulationId})-[:HAS_RESULT]->(cr:CloneResult)
+           RETURN cr.cloneId as cloneId,
+                  cr.path as path,
+                  cr.finalState as finalState,
+                  cr.metrics as metrics,
+                  cr.category as category,
+                  cr.percentile as percentile`,
+          { simulationId: id },
+        );
+
+        const cloneResults: CloneResult[] = rows.map((row) => ({
+          cloneId: row.cloneId,
+          parameters: {} as CloneResult['parameters'],
+          stratification: {
+            percentile: row.percentile,
+            category: row.category,
+          },
+          path: JSON.parse(row.path) as string[],
+          finalState: JSON.parse(row.finalState),
+          metrics: JSON.parse(row.metrics),
+          duration: 0,
+        }));
+
+        snapshot = buildCompletedSimulationGraphSnapshot(
+          structure,
+          cloneResults,
+          GRAPH_SAMPLE_TRACE_LIMIT,
+        );
+      } else {
+        const redis = await getRedisClient();
+        const liveSnapshot = await redis.get(getSimulationGraphKey(id));
+        if (liveSnapshot) {
+          try {
+            snapshot = JSON.parse(liveSnapshot);
+          } catch (error) {
+            logger.warn({ error, simulationId: id }, 'Failed to parse live graph snapshot');
+          }
+        }
+      }
+
+      return createSimulationGraphEnvelope({
+        simulationId: id,
+        status: simulation.status,
+        scenarioType: simulation.scenarioType,
+        structure,
+        snapshot,
+      });
     },
   });
 

@@ -65,6 +65,7 @@ The dashboard currently organizes:
 - persona dimensions and psychology
 - simulation launch and history
 - live progress via REST plus SSE
+- a dedicated Graph tab with a clickable scenario DAG, live clone occupancy, edge flow, and sampled traces
 - results, narrative output, and runtime telemetry
 - evidence capture and rerun actions
 - source and signal previews
@@ -82,7 +83,7 @@ These queues separate raw source processing, persona builds, and clone-batch sim
 ### Storage
 
 - Neo4j stores users, personas, traits, memories, simulations, clone results, and evidence relationships.
-- Redis handles cache lookups, BullMQ transport, and live simulation progress snapshots.
+- Redis handles cache lookups, BullMQ transport, live simulation progress snapshots, and live graph snapshots.
 - MinIO stores uploaded files and other raw source artifacts.
 
 ### Auth model
@@ -242,6 +243,12 @@ Simulation progress is published to Redis and exposed through `/stream/simulatio
 - `resolvedDecisions`
 - `estimatedDecisionCount`
 - `localStepDurationMs`
+
+The graph surface uses:
+
+- `/simulation/:id/graph` for the compiled scenario DAG plus the best available snapshot
+- `/stream/simulation/:id/graph` for live SSE updates
+- `/stream/simulation/:id/graph-rest` for polling fallback
 
 Current phase model:
 

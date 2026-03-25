@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   Bar,
   BarChart,
@@ -87,6 +88,11 @@ export function ResultsPage() {
               <StatusPill value={completedSimulation.status} />
               <StatusPill value={titleCase(completedSimulation.scenarioType)} />
               <StatusPill value={`${results.cloneCount} clones`} />
+            </div>
+            <div className="button-row">
+              <Link className="ghost-button" to={`/graph?simulationId=${completedSimulation.id}`}>
+                Open graph
+              </Link>
             </div>
           </div>
           <div className="hero-panel__brief">
