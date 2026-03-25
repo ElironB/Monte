@@ -32,10 +32,11 @@ Keep that loop in mind and most of the repository will make sense.
 - `src/index.ts` -> default runtime entrypoint
 - `src/api/routes/persona.ts` -> persona endpoints
 - `src/api/routes/simulation.ts` -> simulations, evidence, reruns
-- `src/api/routes/stream.ts` -> live progress REST and SSE
+- `src/api/routes/stream.ts` -> live progress and graph REST/SSE
 - `apps/web/src/App.tsx` -> dashboard shell and route map
 - `apps/web/src/lib/api.ts` -> frontend API client
-- `apps/web/src/pages/` -> showcase UI screens backed by the existing API
+- `apps/web/src/pages/` -> showcase UI screens backed by the existing API, including the graph view
+- `src/simulation/graphSnapshot.ts` -> live/completed graph snapshot structure and aggregation
 - `src/cli/commands/simulation.ts` -> simulation workflow and wait loop
 - `src/cli/commands/decide.ts` -> agent-first decision command
 - `src/cli/commands/doctor.ts` -> readiness checks and `--json`

@@ -10,9 +10,15 @@ import {
   LLMEvaluation,
   OutcomeNode,
   Scenario,
+  SimulationGraphSnapshot,
   SimulationState,
 } from './types.js';
 import { categorizeOutcome, findNode } from './decisionGraph.js';
+import {
+  buildLiveSimulationGraphSnapshot,
+  buildSimulationGraphStructure,
+  withSnapshotTimestamp,
+} from './graphSnapshot.js';
 import {
   applyEffectsToState,
   applyOutcomeNodeResults,
@@ -112,6 +118,7 @@ export interface SimulationExecutionProgress {
   resolvedDecisions: number;
   estimatedDecisionCount: number;
   localStepDurationMs: number;
+  graphSnapshot?: SimulationGraphSnapshot;
 }
 
 const MAX_ITERATIONS = 100;
@@ -126,6 +133,7 @@ export class SimulationEngine {
   private peakActiveFrontier = 0;
   private peakWaitingDecisions = 0;
   private readonly decisionNodeCount: number;
+  private readonly graphStructure: ReturnType<typeof buildSimulationGraphStructure>;
 
   constructor(scenario: Scenario, config: Partial<SimulationConfig> = {}) {
     this.scenario = scenario;
@@ -145,6 +153,7 @@ export class SimulationEngine {
       1,
       this.scenario.graph.filter((node) => node.type === 'decision').length,
     );
+    this.graphStructure = buildSimulationGraphStructure(this.scenario);
   }
 
   async executeClone(
@@ -249,6 +258,7 @@ export class SimulationEngine {
 
     const emitProgress = async (waitingDecisions: number): Promise<void> => {
       this.peakWaitingDecisions = Math.max(this.peakWaitingDecisions, waitingDecisions);
+      const timestamp = new Date().toISOString();
       await options.onProgress?.({
         completedClones: results.length,
         totalClones: clones.length,
@@ -257,6 +267,24 @@ export class SimulationEngine {
         resolvedDecisions,
         estimatedDecisionCount,
         localStepDurationMs: this.localStepDurationMs,
+        graphSnapshot: withSnapshotTimestamp(
+          buildLiveSimulationGraphSnapshot({
+            structure: this.graphStructure,
+            cloneCount: clones.length,
+            completedResults: results,
+            activeTraces: activeSessions.map((session) => ({
+              cloneId: session.cloneId,
+              category: session.stratification.category,
+              currentNodeId: session.context.currentNodeId,
+              pathNodeIds: session.context.path,
+              state: session.context.state,
+            })),
+            waitingNodeIds: activeSessions
+              .map((session) => session.waitingDecision?.node.id)
+              .filter((nodeId): nodeId is string => typeof nodeId === 'string'),
+          }),
+          timestamp,
+        ),
       });
     };
 

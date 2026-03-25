@@ -41,10 +41,11 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - `src/index.ts` -> default runtime entrypoint
 - `src/api/routes/persona.ts` -> persona API
 - `src/api/routes/simulation.ts` -> simulation, evidence, and rerun API
-- `src/api/routes/stream.ts` -> progress REST and SSE
+- `src/api/routes/stream.ts` -> progress and graph REST/SSE
 - `apps/web/src/App.tsx` -> dashboard shell and route map
 - `apps/web/src/lib/api.ts` -> frontend API client
-- `apps/web/src/pages/` -> overview, persona, simulation, live run, results, evidence, and sources views
+- `apps/web/src/pages/` -> overview, persona, simulation, live run, graph, results, evidence, and sources views
+- `src/simulation/graphSnapshot.ts` -> graph structure and snapshot aggregation for live/completed runs
 - `src/cli/commands/simulation.ts` -> simulation CLI
 - `src/cli/commands/decide.ts` -> agent-first decision CLI
 - `src/cli/commands/doctor.ts` -> readiness CLI

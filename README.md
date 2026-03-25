@@ -161,6 +161,8 @@ monte start
 
 Then open `http://localhost:3000`.
 
+The bundled dashboard now includes a dedicated `Graph` tab for a clickable scenario DAG with live clone occupancy, edge flow, and sampled trace overlays alongside the existing overview, persona, live run, results, evidence, and sources surfaces.
+
 Useful variants:
 
 ```bash

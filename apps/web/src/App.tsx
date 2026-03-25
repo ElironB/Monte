@@ -13,6 +13,7 @@ import {
   ArchiveIcon,
   ArrowRightIcon,
   BarChartIcon,
+  CubeIcon,
   DashboardIcon,
   MixerHorizontalIcon,
   PersonIcon,
@@ -32,6 +33,9 @@ const SimulationsPage = lazy(async () => ({
 }));
 const LiveRunsPage = lazy(async () => ({
   default: (await import("./pages/LiveRunsPage")).LiveRunsPage,
+}));
+const GraphPage = lazy(async () => ({
+  default: (await import("./pages/GraphPage")).GraphPage,
 }));
 const ResultsPage = lazy(async () => ({
   default: (await import("./pages/ResultsPage")).ResultsPage,
@@ -92,8 +96,17 @@ const navigationItems: NavigationItem[] = [
     note: "Monte already exposes richer progress than a spinner. This surface turns that into something a teammate can follow in real time.",
   },
   {
-    to: "/results",
+    to: "/graph",
     index: "05",
+    label: "Graph",
+    icon: CubeIcon,
+    eyebrow: "Clone flow",
+    caption: "Clickable node graph for live occupancy, edge flow, and sampled traces.",
+    note: "This is Monte's most legible execution surface. It should feel analytical and tactile, not like a generic workflow editor.",
+  },
+  {
+    to: "/results",
+    index: "06",
     label: "Results",
     icon: BarChartIcon,
     eyebrow: "Outcome readout",
@@ -102,7 +115,7 @@ const navigationItems: NavigationItem[] = [
   },
   {
     to: "/evidence",
-    index: "06",
+    index: "07",
     label: "Evidence",
     icon: MixerHorizontalIcon,
     eyebrow: "Feedback loop",
@@ -111,7 +124,7 @@ const navigationItems: NavigationItem[] = [
   },
   {
     to: "/sources",
-    index: "07",
+    index: "08",
     label: "Sources",
     icon: ArchiveIcon,
     eyebrow: "Observation index",
@@ -262,6 +275,7 @@ function App() {
         <Route path="/persona" element={<PersonaPage />} />
         <Route path="/simulations" element={<SimulationsPage />} />
         <Route path="/live" element={<LiveRunsPage />} />
+        <Route path="/graph" element={<GraphPage />} />
         <Route path="/results" element={<ResultsPage />} />
         <Route path="/evidence" element={<EvidencePage />} />
         <Route path="/sources" element={<SourcesPage />} />

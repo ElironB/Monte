@@ -28,6 +28,11 @@ import { parseTimestamp, detectSequences } from '../../extractors/temporalUtils.
 // Phase 4: Simulation Engine imports
 import { SimulationEngine } from '../../../simulation/engine.js';
 import { compileScenario } from '../../../simulation/scenarioCompiler.js';
+import {
+  buildSimulationGraphStructure,
+  mergeSimulationGraphSnapshots,
+  withSnapshotTimestamp,
+} from '../../../simulation/graphSnapshot.js';
 import { createAggregator } from '../../../simulation/resultAggregator.js';
 import { persistCloneResultsBatch } from '../../../simulation/resultPersistence.js';
 import { buildRerunComparison } from '../../../simulation/evidenceLoop.js';
@@ -35,6 +40,7 @@ import {
   AggregatedResults,
   CloneResult,
   EvidenceResult,
+  SimulationGraphSnapshot,
   SimulationRuntimeTelemetry,
 } from '../../../simulation/types.js';
 import { calculateKelly } from '../../../simulation/kellyCalculator.js';
@@ -54,6 +60,10 @@ import {
   detectProviderRPM,
   type ConcurrencyLimiter,
 } from '../../../utils/rateLimiter.js';
+import {
+  broadcastSimulationGraphSnapshot,
+  broadcastSimulationProgress,
+} from '../../../api/routes/stream.js';
 
 const extractors = [
   new SearchHistoryExtractor(),
@@ -85,6 +95,10 @@ function getSimulationProgressKey(simulationId: string): string {
   return `sim:${simulationId}:progress`;
 }
 
+function getSimulationGraphKey(simulationId: string): string {
+  return `sim:${simulationId}:graph`;
+}
+
 function getSimulationProcessedClonesKey(simulationId: string): string {
   return `sim:${simulationId}:processedClones`;
 }
@@ -103,6 +117,10 @@ function getSimulationBatchTelemetryKey(simulationId: string, batchIndex: number
 
 function getSimulationBatchExecutionKey(simulationId: string, batchIndex: number): string {
   return `sim:${simulationId}:batch:${batchIndex}:execution`;
+}
+
+function getSimulationBatchGraphKey(simulationId: string, batchIndex: number): string {
+  return `sim:${simulationId}:batch:${batchIndex}:graph`;
 }
 
 function getSharedSimulationRateLimiter(rpm: number): RateLimiter {
@@ -164,15 +182,70 @@ async function publishSimulationProgress(
   simulationId: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
+  const stampedPayload = {
+    simulationId,
+    ...payload,
+    lastUpdated: new Date().toISOString(),
+  };
   await redis.setex(
     getSimulationProgressKey(simulationId),
     SIMULATION_PROGRESS_TTL_SECONDS,
-    JSON.stringify({
-      simulationId,
-      ...payload,
-      lastUpdated: new Date().toISOString(),
-    }),
+    JSON.stringify(stampedPayload),
   );
+  broadcastSimulationProgress(simulationId, { type: 'progress', data: stampedPayload });
+}
+
+async function storeSimulationBatchGraphSnapshot(
+  redis: Awaited<ReturnType<typeof getRedisClient>>,
+  simulationId: string,
+  batchIndex: number,
+  snapshot: SimulationGraphSnapshot,
+): Promise<void> {
+  await redis.setex(
+    getSimulationBatchGraphKey(simulationId, batchIndex),
+    SIMULATION_PROGRESS_TTL_SECONDS,
+    JSON.stringify(snapshot),
+  );
+}
+
+async function loadSimulationGraphSnapshot(
+  redis: Awaited<ReturnType<typeof getRedisClient>>,
+  simulationId: string,
+  totalBatches: number,
+  structure: ReturnType<typeof buildSimulationGraphStructure>,
+): Promise<SimulationGraphSnapshot> {
+  const payloads = await Promise.all(
+    Array.from({ length: totalBatches }, (_, index) =>
+      redis.get(getSimulationBatchGraphKey(simulationId, index))),
+  );
+
+  const snapshots = payloads.map((payload) => {
+    if (!payload) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(payload) as SimulationGraphSnapshot;
+    } catch {
+      return null;
+    }
+  });
+
+  return mergeSimulationGraphSnapshots(structure, snapshots, 'live');
+}
+
+async function publishSimulationGraph(
+  redis: Awaited<ReturnType<typeof getRedisClient>>,
+  simulationId: string,
+  snapshot: SimulationGraphSnapshot,
+): Promise<void> {
+  const stampedSnapshot = withSnapshotTimestamp(snapshot);
+  await redis.setex(
+    getSimulationGraphKey(simulationId),
+    SIMULATION_PROGRESS_TTL_SECONDS,
+    JSON.stringify(stampedSnapshot),
+  );
+  broadcastSimulationGraphSnapshot(simulationId, { type: 'graph', data: stampedSnapshot });
 }
 
 async function storeSimulationBatchExecutionState(
@@ -1060,13 +1133,14 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     delete sanitizedScenarioParameters.evidence;
     delete sanitizedScenarioParameters.sourceSimulationId;
     delete sanitizedScenarioParameters.rerunMode;
-    const scenario = compileScenario({
-      scenarioType,
-      name: simulation.name,
-      parameters: sanitizedScenarioParameters,
-      capitalAtRisk: simulation.capitalAtRisk,
-      evidence: acceptedEvidence,
-    });
+      const scenario = compileScenario({
+        scenarioType,
+        name: simulation.name,
+        parameters: sanitizedScenarioParameters,
+        capitalAtRisk: simulation.capitalAtRisk,
+        evidence: acceptedEvidence,
+      });
+      const graphStructure = buildSimulationGraphStructure(scenario);
     
     // Calculate batch size (100 clones per batch by default)
     const batchSize = config.simulation.batchSize;
@@ -1202,10 +1276,10 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
     let lastCompletedClones = 0;
     const defaultEstimatedDecisionCount = simulation.cloneCount * engine.getDecisionNodeCount();
 
-    const results = await engine.executeFrontierBatch(clones, {
-      activeFrontier,
-      decisionBatchSize: config.simulation.decisionBatchSize,
-      onProgress: async (progress) => {
+      const results = await engine.executeFrontierBatch(clones, {
+        activeFrontier,
+        decisionBatchSize: config.simulation.decisionBatchSize,
+        onProgress: async (progress) => {
         const completedDelta = Math.max(0, progress.completedClones - lastCompletedClones);
         if (completedDelta > 0) {
           await Promise.all([
@@ -1229,6 +1303,21 @@ async function processSimulation(job: Job<SimulationJobData>): Promise<void> {
           estimatedDecisionCount: progress.estimatedDecisionCount,
           localStepDurationMs: progress.localStepDurationMs,
         });
+        if (progress.graphSnapshot) {
+          await storeSimulationBatchGraphSnapshot(
+            redis,
+            simulationId,
+            cloneBatchIndex,
+            progress.graphSnapshot,
+          );
+          const mergedGraphSnapshot = await loadSimulationGraphSnapshot(
+            redis,
+            simulationId,
+            totalBatches,
+            graphStructure,
+          );
+          await publishSimulationGraph(redis, simulationId, mergedGraphSnapshot);
+        }
 
         const [processedClonesRaw, executionState] = await Promise.all([
           redis.get(processedClonesKey),

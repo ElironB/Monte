@@ -13,6 +13,7 @@ Monte is a self-hosted TypeScript decision engine. It ingests exported personal 
 - CLI config: `~/.monte/config.json` stores the target API URL plus optional provider credentials for the globally installed CLI
 - Bundled examples: `examples/personas/starter` ships in the npm package and is surfaced by `monte example`
 - Storage: Neo4j for graph data, Redis for cache, queues, and live progress, MinIO for uploaded source blobs
+- Dashboard surface: bundled and repo-local UI now include a dedicated Graph tab for clickable scenario DAGs, live clone occupancy, edge flow, and sampled trace overlays
 - Background execution: BullMQ queues and workers for ingestion, persona builds, and simulation batches
 - Auth model: self-hosted OSS mode injects `local-user`; there is no hosted auth flow in the current repo
 - API docs: `/docs`

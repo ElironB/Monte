@@ -8,6 +8,8 @@ import type {
   ScenarioDefinition,
   SimulationCreateInput,
   SimulationDetail,
+  SimulationGraphEnvelope,
+  SimulationGraphSnapshot,
   SimulationListResponse,
   SimulationProgress,
   SimulationResultsEnvelope,
@@ -70,9 +72,13 @@ export const api = {
   getSimulations: (searchParams?: Record<string, string | number | boolean | undefined>) =>
     request<SimulationListResponse>('/simulation', undefined, searchParams),
   getSimulation: (simulationId: string) => request<SimulationDetail>(`/simulation/${simulationId}`),
+  getSimulationGraph: (simulationId: string) =>
+    request<SimulationGraphEnvelope>(`/simulation/${simulationId}/graph`),
   getSimulationResults: (simulationId: string, narrative = true) =>
     request<SimulationResultsEnvelope>(`/simulation/${simulationId}/results`, undefined, { narrative }),
   getSimulationProgress: (simulationId: string) => request<SimulationProgress>(`/stream/simulation/${simulationId}/progress-rest`),
+  getSimulationGraphSnapshot: (simulationId: string) =>
+    request<SimulationGraphSnapshot | null>(`/stream/simulation/${simulationId}/graph-rest`),
   getScenarios: () => request<ScenarioDefinition[]>('/simulation/scenarios'),
   getSources: (searchParams?: Record<string, string | number | boolean | undefined>) =>
     request<DataSourceListResponse>('/ingestion/sources', undefined, searchParams),

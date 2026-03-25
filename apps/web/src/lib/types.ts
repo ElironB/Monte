@@ -328,6 +328,76 @@ export interface SimulationCreateInput {
   capitalAtRisk?: number;
 }
 
+export type SimulationGraphNodeType = 'decision' | 'event' | 'outcome';
+export type SimulationGraphEdgeKind = 'decision' | 'event';
+export type SimulationGraphOutcome = 'success' | 'failure' | 'neutral';
+
+export interface SimulationGraphNode {
+  id: string;
+  type: SimulationGraphNodeType;
+  label: string;
+  detail: string;
+}
+
+export interface SimulationGraphEdge {
+  id: string;
+  fromNodeId: string;
+  toNodeId: string;
+  kind: SimulationGraphEdgeKind;
+  branchId: string;
+  label: string;
+}
+
+export interface SimulationGraphNodeStats {
+  nodeId: string;
+  visitCount: number;
+  activeCount: number;
+  waitingCount: number;
+  completedCount: number;
+  successCount: number;
+  failureCount: number;
+  neutralCount: number;
+}
+
+export interface SimulationGraphEdgeStats {
+  edgeId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  transitionCount: number;
+}
+
+export interface SimulationGraphTraceSample {
+  cloneId: string;
+  category: 'edge' | 'central' | 'typical';
+  status: 'active' | 'completed';
+  currentNodeId?: string;
+  pathNodeIds: string[];
+  outcome?: SimulationGraphOutcome;
+}
+
+export interface SimulationGraphSnapshot {
+  mode: 'live' | 'completed';
+  cloneCount: number;
+  completedClones: number;
+  activeClones: number;
+  waitingClones: number;
+  sampledTraceLimit: number;
+  nodes: SimulationGraphNodeStats[];
+  edges: SimulationGraphEdgeStats[];
+  sampledTraces: SimulationGraphTraceSample[];
+  lastUpdated?: string;
+}
+
+export interface SimulationGraphEnvelope {
+  simulationId: string;
+  status: string;
+  scenarioType: string;
+  entryNodeId: string;
+  nodes: SimulationGraphNode[];
+  edges: SimulationGraphEdge[];
+  snapshot: SimulationGraphSnapshot | null;
+}
+
 export interface DataSourceListItem {
   id: string;
   sourceType: string;
