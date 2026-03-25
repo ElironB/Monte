@@ -355,6 +355,9 @@ export interface SimulationGraphSnapshot {
 
 export interface SimulationGraphEnvelope {
   simulationId: string;
+  name: string;
+  title: string;
+  primaryQuestion: string;
   status: string;
   scenarioType: string;
   entryNodeId: string;

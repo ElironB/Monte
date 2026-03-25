@@ -17,6 +17,83 @@ For career moves, money choices, relocations, relationships, or any irreversible
 - Evidence capture plus reruns after the world gives you new information
 - A deterministic benchmark harness for regression-testing the simulation layer
 
+## Evidence, explained simply
+
+`Evidence` means new information you learn in real life after a simulation runs.
+
+Think of the loop like this:
+
+- Monte simulates a decision
+- reality gives you a new signal
+- you record that signal as evidence
+- Monte reruns the decision with the updated information
+
+Example:
+
+- original question: `Should I take a job offer for 120K a year or keep looking?`
+- new evidence: `The company gave me a signed offer, but the hiring manager hinted there is little growth in the role.`
+- rerun: Monte updates the decision using that new signal instead of pretending nothing changed
+
+In plain English:
+
+- persona data tells Monte who you are
+- evidence tells Monte what the world just taught you about this specific decision
+
+That is why evidence lives after the first simulation, not before it.
+
+## Best Data To Feed Monte
+
+Monte works best on traces of what you actually do, not polished summaries of who you think you are.
+
+### S tier
+
+- `search_history`: what you repeatedly look up when stressed, curious, ambitious, or stuck
+- `financial`: spending, saving, subscriptions, impulse buys, risk behavior, and constraint signals
+- `ai_chat`: real conversations with ChatGPT, Claude, or other AI tools where you ask for help, vent, plan, or debate decisions
+
+These are the strongest sources because they capture revealed preferences instead of self-marketing.
+
+### A tier
+
+- `notes`: journals, reflections, private writing, planning docs, and long-form thought dumps
+- `watch_history`: what you spend time learning from, doomscrolling through, or aspirationally consuming
+- `files`: personal docs with genuine authored content, especially `.md`, `.txt`, `.pdf`, `.docx`, and similar artifacts
+
+These are excellent when they are personal and unfiltered.
+
+### B tier
+
+- `social_media`: posts, comments, replies, and public writing across Reddit, X, forums, or similar surfaces
+
+Useful, but more performative than private data. People often posture in public.
+
+### C tier
+
+- `files` that are mostly screenshots, random exports, or generic documents with little actual authored text
+- thin or highly one-sided datasets, even if the format is technically supported
+
+Monte can ingest them, but signal quality is usually weaker.
+
+### D tier
+
+- polished bios, resumes, one-page self-descriptions, and "about me" summaries
+- heavily curated or AI-generated personal summaries
+- tiny datasets that only show one mood, one week, or one context
+
+This kind of input is usually too cleaned up and too self-conscious to model real behavior well.
+
+### Practical rule
+
+If you only have time to feed Monte a few things, start with:
+
+1. search history
+2. financial data
+3. AI chat exports
+4. private notes
+5. watch history
+
+That mix usually gives Monte the fastest jump in behavioral signal quality.
+
 ## Current product shape
 
 Monte currently ships as:

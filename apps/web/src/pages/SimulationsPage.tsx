@@ -344,7 +344,10 @@ export function SimulationsPage() {
                 {simulationsQuery.data.data.map((simulation) => (
                   <tr key={simulation.id}>
                     <td>
-                      <strong>{simulation.name}</strong>
+                      <strong>{simulation.title ?? simulation.name}</strong>
+                      {simulation.primaryQuestion && simulation.primaryQuestion !== (simulation.title ?? simulation.name) ? (
+                        <p className="table-subcopy">{simulation.primaryQuestion}</p>
+                      ) : null}
                     </td>
                     <td>{titleCase(simulation.scenarioType)}</td>
                     <td>

@@ -17,12 +17,12 @@ export function GraphPage() {
 
   const searchParams = new URLSearchParams(window.location.search);
   const requestedSimulationId = searchParams.get('simulationId');
-  const fallbackSimulation = requestedSimulationId
+  const selectedSimulation = requestedSimulationId
     ? simulationsQuery.data?.data.find((simulation) => simulation.id === requestedSimulationId)
-    : simulationsQuery.data?.data.find((simulation) => simulation.status === 'running' || simulation.status === 'pending')
-      ?? simulationsQuery.data?.data.find((simulation) => simulation.status === 'completed')
+    : simulationsQuery.data?.data.find((simulation) => simulation.status === 'completed')
+      ?? simulationsQuery.data?.data.find((simulation) => simulation.status === 'running' || simulation.status === 'pending')
       ?? simulationsQuery.data?.data[0];
-  const selectedSimulationId = requestedSimulationId ?? fallbackSimulation?.id ?? null;
+  const selectedSimulationId = requestedSimulationId ?? selectedSimulation?.id ?? null;
 
   const graphQuery = useQuery({
     queryKey: ['simulation-graph', selectedSimulationId],
@@ -45,17 +45,16 @@ export function GraphPage() {
     setSelectedNodeId(graphQuery.data?.entryNodeId ?? null);
   }, [graphQuery.data?.entryNodeId, selectedSimulationId]);
 
-  if (simulationsQuery.isLoading || graphQuery.isLoading) {
+  if (simulationsQuery.isLoading || (selectedSimulationId ? graphQuery.isLoading : false)) {
     return <LoadingPanel label="Loading simulation graph and clone flow..." />;
   }
 
-  if (simulationsQuery.error || graphQuery.error || liveGraph.error) {
+  if (simulationsQuery.error || graphQuery.error) {
     return (
       <ErrorPanel
         message={
           (simulationsQuery.error as Error | undefined)?.message
           ?? (graphQuery.error as Error | undefined)?.message
-          ?? liveGraph.error?.message
           ?? 'Unknown error'
         }
       />
@@ -71,11 +70,21 @@ export function GraphPage() {
     );
   }
 
+  const heroTitle = graphQuery.data?.title ?? selectedSimulation?.title ?? graphQuery.data?.name ?? selectedSimulation?.name ?? 'Simulation graph';
+  const heroQuestion = graphQuery.data?.primaryQuestion ?? selectedSimulation?.primaryQuestion ?? null;
+  const heroRunName = graphQuery.data?.name ?? selectedSimulation?.name ?? null;
+
   return (
     <div className="page-grid">
-      <Panel className="hero-panel" eyebrow="Clone graph" title={fallbackSimulation?.name ?? 'Simulation graph'}>
+      <Panel className="hero-panel" eyebrow="Clone graph" title={heroTitle}>
         <div className="hero-panel__content">
           <div className="hero-panel__copy">
+            {heroQuestion && heroQuestion !== heroTitle ? (
+              <p className="hero-panel__question">{heroQuestion}</p>
+            ) : null}
+            {heroRunName && heroRunName !== heroTitle ? (
+              <p className="hero-panel__context">Run name: {heroRunName}</p>
+            ) : null}
             <p className="hero-panel__lede">
               This canvas keeps the scenario graph stable while clone traffic, waiting decisions, and sampled traces move through it in real time.
             </p>
@@ -85,11 +94,16 @@ export function GraphPage() {
               <StatusPill value={snapshot?.mode ?? 'static'} />
               <StatusPill value={liveGraph.transport} />
             </div>
+            {liveGraph.error ? (
+              <p className="hero-panel__notice">
+                Live graph updates are temporarily unavailable. Monte is keeping the last successful graph payload on screen instead of dropping the whole page.
+              </p>
+            ) : null}
           </div>
           <div className="hero-panel__brief">
             <div className="hero-panel__brief-item">
               <span>Clone pool</span>
-              <strong>{integerFormatter.format(snapshot?.cloneCount ?? fallbackSimulation?.cloneCount ?? 0)}</strong>
+              <strong>{integerFormatter.format(snapshot?.cloneCount ?? selectedSimulation?.cloneCount ?? 0)}</strong>
             </div>
             <div className="hero-panel__brief-item">
               <span>Completed</span>

@@ -518,6 +518,9 @@ export function withSnapshotTimestamp(
 
 export function createSimulationGraphEnvelope(options: {
   simulationId: string;
+  name: string;
+  title: string;
+  primaryQuestion: string;
   status: string;
   scenarioType: string;
   structure: GraphStructure;
@@ -525,6 +528,9 @@ export function createSimulationGraphEnvelope(options: {
 }): SimulationGraphEnvelope {
   return {
     simulationId: options.simulationId,
+    name: options.name,
+    title: options.title,
+    primaryQuestion: options.primaryQuestion,
     status: options.status,
     scenarioType: options.scenarioType,
     entryNodeId: options.structure.entryNodeId,

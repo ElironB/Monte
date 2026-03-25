@@ -15,8 +15,11 @@ export function LiveRunsPage() {
 
   const searchParams = new URLSearchParams(window.location.search);
   const requestedSimulationId = searchParams.get('simulationId');
-  const fallbackSimulation = simulationsQuery.data?.data.find((simulation) => simulation.status === 'pending' || simulation.status === 'running') ?? simulationsQuery.data?.data[0];
-  const selectedSimulationId = requestedSimulationId ?? fallbackSimulation?.id ?? null;
+  const selectedSimulation = requestedSimulationId
+    ? simulationsQuery.data?.data.find((simulation) => simulation.id === requestedSimulationId)
+    : simulationsQuery.data?.data.find((simulation) => simulation.status === 'pending' || simulation.status === 'running')
+      ?? simulationsQuery.data?.data[0];
+  const selectedSimulationId = requestedSimulationId ?? selectedSimulation?.id ?? null;
 
   const progressQuery = useQuery({
     queryKey: ['simulation-progress', selectedSimulationId],
@@ -89,7 +92,13 @@ export function LiveRunsPage() {
     <div className="page-grid">
       <Panel className="hero-panel" eyebrow="Live execution" title={`${titleCase(progress.phase)} phase`}>
         <div className="hero-panel__content">
-          <div>
+          <div className="hero-panel__copy">
+            {selectedSimulation?.primaryQuestion ? (
+              <p className="hero-panel__question">{selectedSimulation.primaryQuestion}</p>
+            ) : null}
+            {selectedSimulation?.title && selectedSimulation.title !== selectedSimulation.primaryQuestion ? (
+              <p className="hero-panel__context">{selectedSimulation.title}</p>
+            ) : null}
             <p className="hero-panel__lede">
               Monte reports phase-aware progress rather than sitting at 99%. This view listens to the SSE stream and falls back to REST polling.
             </p>

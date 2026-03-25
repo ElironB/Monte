@@ -81,6 +81,8 @@ export interface PsychologicalProfile {
 export interface SimulationListItem {
   id: string;
   name: string;
+  title?: string;
+  primaryQuestion?: string;
   scenarioType: string;
   status: string;
   progress: number;
@@ -187,6 +189,20 @@ export interface SimulationRuntimeTelemetry {
 export interface AggregatedResults {
   scenarioId: string;
   cloneCount: number;
+  decisionFrame?: {
+    title: string;
+    primaryQuestion: string;
+    contextSummary: string;
+    timeframeMonths: number;
+    capitalAtRisk: number;
+    runwayMonths: number;
+    fallbackPlan: string;
+    reversibilityScore: number;
+    socialExposure: number;
+    uncertaintyLoad: number;
+    downsideSeverity: number;
+    keyUnknowns: string[];
+  };
   histograms: HistogramEntry[];
   outcomeDistribution: {
     success: number;
@@ -283,6 +299,8 @@ export interface AggregatedResults {
 export interface SimulationDetail {
   id: string;
   name: string;
+  title?: string;
+  primaryQuestion?: string;
   scenarioType: string;
   status: string;
   progress: number;
@@ -390,6 +408,9 @@ export interface SimulationGraphSnapshot {
 
 export interface SimulationGraphEnvelope {
   simulationId: string;
+  name: string;
+  title: string;
+  primaryQuestion: string;
   status: string;
   scenarioType: string;
   entryNodeId: string;

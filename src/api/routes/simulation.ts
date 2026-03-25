@@ -14,7 +14,7 @@ import {
   buildSimulationGraphStructure,
   createSimulationGraphEnvelope,
 } from '../../simulation/graphSnapshot.js';
-import { compileScenario } from '../../simulation/scenarioCompiler.js';
+import { buildDecisionFrame, compileScenario } from '../../simulation/scenarioCompiler.js';
 import { BehavioralSignal } from '../../ingestion/types.js';
 import { DimensionMapper } from '../../persona/dimensionMapper.js';
 import { getDimensionConceptEmbeddings } from '../../embeddings/dimensionConcepts.js';
@@ -116,6 +116,29 @@ const parseJson = <T>(value: string | null | undefined, fallback: T): T => {
   }
 };
 
+function deriveSimulationDisplayCopy(options: {
+  name: string;
+  scenarioType: string;
+  parameters?: string | Record<string, unknown> | null;
+  capitalAtRisk?: number | null;
+}) {
+  const parsedParameters = typeof options.parameters === 'string'
+    ? parseJson<Record<string, unknown>>(options.parameters, {})
+    : options.parameters ?? {};
+  const decisionFrame = buildDecisionFrame({
+    scenarioType: options.scenarioType,
+    name: options.name,
+    parameters: parsedParameters,
+    capitalAtRisk: options.capitalAtRisk,
+  });
+
+  return {
+    parameters: parsedParameters,
+    title: decisionFrame.title,
+    primaryQuestion: decisionFrame.primaryQuestion,
+  };
+}
+
 const parseEvidenceRow = (row: {
   id: string;
   uncertainty: string;
@@ -214,11 +237,14 @@ async function simulationRoutes(fastify: FastifyInstance) {
           progress: number;
           cloneCount: number;
           createdAt: string;
+          parameters: string;
+          capitalAtRisk: number | null;
         }>(
           `MATCH (u:User {id: $userId})-[:HAS_PERSONA]->(p:Persona)-[:HAS_SIMULATION]->(s:Simulation)
            ${whereClause}
            RETURN s.id as id, s.name as name, s.scenarioType as scenarioType, s.status as status,
-                  s.progress as progress, s.cloneCount as cloneCount, s.createdAt as createdAt
+                  s.progress as progress, s.cloneCount as cloneCount, s.createdAt as createdAt,
+                  s.parameters as parameters, s.capitalAtRisk as capitalAtRisk
            ORDER BY s.${query.sortBy} ${query.sortOrder.toUpperCase()}
            SKIP $skip LIMIT $limit`,
           params
@@ -233,9 +259,23 @@ async function simulationRoutes(fastify: FastifyInstance) {
 
       const total = countResult?.total ?? 0;
       const totalPages = Math.ceil(total / query.limit);
+      const simulationSummaries = simulations.map((simulation) => {
+        const displayCopy = deriveSimulationDisplayCopy(simulation);
+        return {
+          id: simulation.id,
+          name: simulation.name,
+          title: displayCopy.title,
+          primaryQuestion: displayCopy.primaryQuestion,
+          scenarioType: simulation.scenarioType,
+          status: simulation.status,
+          progress: simulation.progress,
+          cloneCount: simulation.cloneCount,
+          createdAt: simulation.createdAt,
+        };
+      });
 
       const result = {
-        data: simulations,
+        data: simulationSummaries,
         pagination: {
           page: query.page,
           limit: query.limit,
@@ -658,10 +698,13 @@ async function simulationRoutes(fastify: FastifyInstance) {
         { userId: request.user.userId, simId: id }
       );
       if (!sim) throw new NotFoundError('Simulation');
+      const displayCopy = deriveSimulationDisplayCopy(sim);
 
       const result = {
         ...sim,
-        parameters: JSON.parse(sim.parameters),
+        title: displayCopy.title,
+        primaryQuestion: displayCopy.primaryQuestion,
+        parameters: displayCopy.parameters,
         results: sim.results ? JSON.parse(sim.results) : null,
       };
 
@@ -773,7 +816,8 @@ async function simulationRoutes(fastify: FastifyInstance) {
         throw new NotFoundError('Simulation');
       }
 
-      const parsedParameters = JSON.parse(simulation.parameters) as Record<string, unknown>;
+      const displayCopy = deriveSimulationDisplayCopy(simulation);
+      const parsedParameters = displayCopy.parameters;
       const acceptedEvidence = Array.isArray(parsedParameters.evidence)
         ? parsedParameters.evidence as EvidenceResult[]
         : [];
@@ -838,6 +882,9 @@ async function simulationRoutes(fastify: FastifyInstance) {
 
       return createSimulationGraphEnvelope({
         simulationId: id,
+        name: simulation.name,
+        title: scenario.decisionFrame?.title ?? displayCopy.title,
+        primaryQuestion: scenario.decisionFrame?.primaryQuestion ?? displayCopy.primaryQuestion,
         status: simulation.status,
         scenarioType: simulation.scenarioType,
         structure,

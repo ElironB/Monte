@@ -77,12 +77,17 @@ export function ResultsPage() {
         value: results.timeline.metrics[timelineMetric]?.[index] ?? 0,
       }))
     : [];
+  const heroTitle = results.decisionFrame?.title ?? completedSimulation.title ?? completedSimulation.name;
+  const heroQuestion = results.decisionFrame?.primaryQuestion ?? completedSimulation.primaryQuestion ?? null;
 
   return (
     <div className="page-grid">
-      <Panel className="hero-panel" eyebrow="Completed run" title={completedSimulation.name}>
+      <Panel className="hero-panel" eyebrow="Completed run" title={heroTitle}>
         <div className="hero-panel__content">
           <div className="hero-panel__copy">
+            {heroQuestion && heroQuestion !== heroTitle ? (
+              <p className="hero-panel__question">{heroQuestion}</p>
+            ) : null}
             <p className="hero-panel__lede">{results.decisionIntelligence?.summary ?? 'Aggregated clone results are ready for review.'}</p>
             <div className="hero-panel__chips">
               <StatusPill value={completedSimulation.status} />
