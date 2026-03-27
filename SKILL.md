@@ -27,6 +27,40 @@ Keep that loop in mind and most of the repository will make sense.
 - `docs/architecture.md` -> deeper architecture
 - `AGENTS.md` -> repo guardrails for coding agents
 
+## If you are operating Monte for a user
+
+If the user says something like:
+
+`Install monte-engine. My files are in /temp.`
+
+that is enough to begin the default personalization workflow.
+
+Use this sequence first:
+
+```bash
+npm install -g monte-engine
+monte ingest /temp
+monte persona build
+monte persona status
+monte personalize profile --json
+```
+
+If the user also gave you a live task, continue with:
+
+```bash
+monte personalize context "Help me with this task" --json
+```
+
+Interpret the product like this:
+
+- `monte ingest <path>` scans the user's files and uploads supported inputs.
+- `monte persona build` creates the derived persona from those inputs.
+- `monte persona status` tells you when the persona is actually ready.
+- `monte personalize ...` is the default agent-facing surface for adapting to the user.
+- `monte decide ...` is only for simulation-style judgment calls, not ordinary personalization.
+
+If local commands fail because the API stack is missing, read the setup flow in `README.md` and bring up the required services before continuing.
+
 ## Files that matter most
 
 - `src/server.ts` -> shared API bootstrap and bundled dashboard serving
