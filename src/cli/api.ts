@@ -43,6 +43,17 @@ export const api = {
   getPersonaHistory: () => makeRequest('/persona/history'),
   getPersonaTraits: () => makeRequest('/persona/traits'),
   getPersonaPsychology: () => makeRequest('/persona/psychology'),
+  getPersonalizationProfile: () => makeRequest('/personalization/profile'),
+  getPersonalizationContext: (payload: {
+    task: string;
+    mode?: string;
+    agentName?: string;
+    additionalContext?: string;
+  }) =>
+    makeRequest('/personalization/context', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   // Simulations
   listSimulations: () => makeRequest('/simulation'),

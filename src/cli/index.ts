@@ -14,6 +14,7 @@ import { doctorCommands } from './commands/doctor.js';
 import { decideCommands } from './commands/decide.js';
 import { exampleCommands } from './commands/example.js';
 import { startCommands } from './commands/start.js';
+import { personalizeCommands } from './commands/personalize.js';
 import { loadConfig } from './config.js';
 
 const program = new Command();
@@ -30,6 +31,7 @@ program.option('--api <url>', 'API endpoint', loadConfig().apiUrl || 'http://loc
 // Commands
 program.addCommand(simulationCommands);
 program.addCommand(personaCommands);
+program.addCommand(personalizeCommands);
 program.addCommand(ingestionCommands);
 program.addCommand(configCommands);
 program.addCommand(connectCommands);

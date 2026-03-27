@@ -2,7 +2,7 @@
 
 ## Overview
 
-Monte is a self-hosted TypeScript system that turns personal behavioral data into a probabilistic decision model. It ingests raw sources, extracts behavioral signals, compresses them into a master persona, generates clone variants, simulates scenario outcomes, and lets the operator rerun the model after new evidence is collected.
+Monte is a self-hosted TypeScript system that turns personal behavioral data into a probabilistic decision model. It ingests raw sources, extracts behavioral signals, compresses them into a master persona, exposes additive agent-personalization outputs, generates clone variants, simulates scenario outcomes, and lets the operator rerun the model after new evidence is collected.
 
 The current shipped architecture includes:
 
@@ -30,6 +30,7 @@ The API mounts route groups for:
 - users
 - ingestion
 - persona
+- personalization
 - simulation
 - cli
 - stream
@@ -41,6 +42,7 @@ The API mounts route groups for:
 The agent-facing entrypoint is:
 
 - `monte decide`
+- `monte personalize`
 
 The installed server entrypoint is:
 
@@ -97,13 +99,14 @@ In open-source and self-hosted mode, auth is intentionally simplified. `src/api/
 3. Rule-based extractors derive `BehavioralSignal` records.
 4. Contradiction detection identifies tension between signals.
 5. Persona build maps signals into dimensions, stores trait and memory nodes, and compresses them into a master persona.
-6. Clone generation creates a stratified distribution around that persona.
-7. Scenario compilation builds a runnable decision graph.
-8. Simulation batches execute clones and batch-persist their results.
-9. Aggregation reduces the full result set into distributions, decision intelligence, and optional narrative output.
-10. Evidence can be recorded against a completed simulation.
-11. Evidence-adjusted reruns reuse the scenario with updated causal and belief state.
-12. The benchmark harness exercises a seeded corpus to catch regressions.
+6. The personalization layer reuses the latest ready persona to build deterministic guidance for agent tone, pacing, structure, and task framing.
+7. Clone generation creates a stratified distribution around that persona.
+8. Scenario compilation builds a runnable decision graph.
+9. Simulation batches execute clones and batch-persist their results.
+10. Aggregation reduces the full result set into distributions, decision intelligence, and optional narrative output.
+11. Evidence can be recorded against a completed simulation.
+12. Evidence-adjusted reruns reuse the scenario with updated causal and belief state.
+13. The benchmark harness exercises a seeded corpus to catch regressions.
 
 ## Persona system
 
@@ -145,6 +148,17 @@ The psychology layer derives:
 - narrative and technical summaries
 
 This layer is synchronous and deterministic relative to the dimension scores. It is not a separate service.
+
+### Agent personalization
+
+The personalization surface is additive and deterministic. It reads the latest ready persona plus trait confidence and exposes:
+
+- `/personalization/profile` for a stable agent-facing profile
+- `/personalization/context` for task-aware guidance
+- `monte personalize profile`
+- `monte personalize context`
+
+The personalization surface does not expose raw memories, raw signal evidence, or uploaded source content.
 
 ### Clone model
 

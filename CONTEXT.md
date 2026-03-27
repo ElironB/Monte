@@ -4,7 +4,7 @@ This file is a durable orientation document for contributors and coding agents. 
 
 ## One-paragraph summary
 
-Monte is a self-hosted TypeScript decision engine. It ingests exported personal data, extracts rule-based behavioral signals, compresses them into a 9-dimension master persona, derives a psychology layer, generates stratified clone variants, and runs scenario simulations that can be updated with evidence and validated with a seeded benchmark harness. The shipped operator model is a Fastify API that can serve a bundled dashboard plus a globally installable `monte` CLI from the npm package `monte-engine`.
+Monte is a self-hosted TypeScript decision engine. It ingests exported personal data, extracts rule-based behavioral signals, compresses them into a 9-dimension master persona, derives a psychology layer, exposes an additive agent-personalization surface, generates stratified clone variants, and runs scenario simulations that can be updated with evidence and validated with a seeded benchmark harness. The shipped operator model is a Fastify API that can serve a bundled dashboard plus a globally installable `monte` CLI from the npm package `monte-engine`.
 
 ## System snapshot
 
@@ -14,6 +14,7 @@ Monte is a self-hosted TypeScript decision engine. It ingests exported personal 
 - Bundled examples: `examples/personas/starter` ships in the npm package and is surfaced by `monte example`
 - Storage: Neo4j for graph data, Redis for cache, queues, and live progress, MinIO for uploaded source blobs
 - Dashboard surface: bundled and repo-local UI now include a dedicated Graph tab for clickable scenario DAGs, live clone occupancy, edge flow, and sampled trace overlays
+- Personalization surface: the API now exposes `/personalization/profile` and `/personalization/context`, and the CLI now exposes `monte personalize profile` plus `monte personalize context`
 - Background execution: BullMQ queues and workers for ingestion, persona builds, and simulation batches
 - Auth model: self-hosted OSS mode injects `local-user`; there is no hosted auth flow in the current repo
 - API docs: `/docs`
@@ -62,11 +63,22 @@ The psychology layer derives:
 - risk flags
 - narrative and technical summaries
 
-### 4. Clone generation
+### 4. Agent personalization
+
+The personalization layer is additive. It reuses the latest ready persona, trait confidence, and derived psychology outputs to return deterministic agent guidance without running a simulation.
+
+Current surfaces:
+
+- `GET /personalization/profile`
+- `POST /personalization/context`
+- `monte personalize profile`
+- `monte personalize context "<task>"`
+
+### 5. Clone generation
 
 Monte does not simulate a single user. It generates a stratified clone population with edge, central, and typical variants. Clone generation also applies psychology-derived modifiers to relevant subsets.
 
-### 5. Simulation
+### 6. Simulation
 
 Simulations compile a scenario, execute clone runs through a node-frontier scheduler, batch LLM decisions for clones waiting on the same node, batch-persist clone results with Neo4j `UNWIND` writes, and aggregate:
 
@@ -85,7 +97,7 @@ The scheduler keeps an active frontier of clones in memory, advances them locall
 
 Batch recovery is adaptive. If a provider repeatedly fails on a large batched decision payload, the evaluator lowers the preferred batch size for the rest of that scenario/mode instead of repeating the same failing request size on later decision waves.
 
-### 6. Live progress
+### 7. Live progress
 
 Simulation progress is phase-aware and published through Redis-backed live payloads plus a REST fallback. Current phases:
 
@@ -129,11 +141,11 @@ Completed simulations also carry runtime telemetry that summarizes:
 - embedding time
 - slowest decision nodes
 
-### 7. Evidence loop
+### 8. Evidence loop
 
 Completed simulations can accept experiment results. Evidence is translated into causal and belief adjustments, applied to the state and decision frame, and then used to create evidence-adjusted reruns. Reruns compare belief deltas and recommendation changes against the source simulation.
 
-### 8. Benchmark harness
+### 9. Benchmark harness
 
 The benchmark harness is deterministic and seeded. It evaluates a built-in corpus across:
 
@@ -162,6 +174,8 @@ Primary user-facing commands:
 - `monte example list`
 - `monte example ingest starter`
 - `monte persona build`
+- `monte personalize profile --json`
+- `monte personalize context "<task>" --json`
 - `monte simulate`
 - `monte simulate progress <id> --json`
 - `monte simulate results <id> -f json`

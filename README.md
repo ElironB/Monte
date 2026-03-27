@@ -6,11 +6,14 @@ Monte turns your personal data into a behavioral decision model that AI agents c
 
 For career moves, money choices, relocations, relationships, or any irreversible bet, Monte gives agents more than a one-shot answer: it returns outcome distributions, dominant uncertainties, recommended experiments, and evidence-adjusted reruns so decisions can improve as reality unfolds.
 
+Monte also exposes an additive personalization surface so agents can adapt how they explain, plan, and guide work for a specific user without running a simulation first.
+
 **Core loop:** Data -> Signals -> Persona -> Clones -> Simulation -> Evidence loop
 
 ## What Monte gives you
 
 - A judgment engine AI agents can call before making expensive, emotional, or irreversible decisions
+- A deterministic personalization profile agents can call to adapt tone, pacing, structure, and decision framing
 - Outcome distributions instead of a single yes/no answer
 - A persona built from revealed behavioral signals, not just self-reported traits
 - Decision intelligence with dominant uncertainties and recommended experiments
@@ -197,7 +200,22 @@ monte doctor
 monte doctor --json
 monte config show
 npm run web:build
+monte personalize profile --json
 ```
+
+## Agent personalization
+
+Once you have ingested data and built a persona, agents can use Monte without starting a simulation:
+
+```bash
+monte personalize profile --json
+monte personalize context "Help me plan next week" --json
+```
+
+The API exposes the same additive surface:
+
+- `GET /personalization/profile`
+- `POST /personalization/context`
 
 ## Global CLI Install
 
