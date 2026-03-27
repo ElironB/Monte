@@ -1,6 +1,6 @@
 # AGENTS
 
-This repository is a self-hosted Monte backend. Treat the current product as a Fastify API that can serve a bundled dashboard plus a globally installable and repo-local CLI for persona-driven decision simulation, evidence-adjusted reruns, machine-readable agent workflows, and deterministic benchmark validation.
+This repository is a self-hosted Monte backend. Treat the current product as a Fastify API that can serve a bundled dashboard plus a globally installable and repo-local CLI for persona-driven decision simulation, additive agent personalization, evidence-adjusted reruns, machine-readable agent workflows, and deterministic benchmark validation.
 
 ## Read first
 
@@ -25,6 +25,7 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
   - `stressResponse`
 - Monte currently ships 8 scenario types including `custom`.
 - The simulation stack includes a causal state model, belief state model, experiment recommendations, evidence capture, evidence-adjusted reruns, phase-aware live progress, and batched clone-result persistence.
+- Monte also exposes an additive personalization surface through `/personalization/profile`, `/personalization/context`, and `monte personalize ...`.
 - Monte now also uses a node-frontier scheduler, batches concurrent LLM decisions by decision node, and stores runtime telemetry on completed simulations.
 - The batched evaluator can now learn smaller preferred batch sizes after repeated provider-side batch failures; do not remove that adaptive recovery without replacing the performance guardrail.
 - The benchmark harness is a first-class regression surface and must stay deterministic.
@@ -40,6 +41,7 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - `src/server.ts` -> shared runtime bootstrap and bundled dashboard serving
 - `src/index.ts` -> default runtime entrypoint
 - `src/api/routes/persona.ts` -> persona API
+- `src/api/routes/personalization.ts` -> personalization API
 - `src/api/routes/simulation.ts` -> simulation, evidence, and rerun API
 - `src/api/routes/stream.ts` -> progress and graph REST/SSE
 - `apps/web/src/App.tsx` -> dashboard shell and route map
@@ -48,6 +50,7 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
 - `src/simulation/graphSnapshot.ts` -> graph structure and snapshot aggregation for live/completed runs
 - `src/cli/commands/simulation.ts` -> simulation CLI
 - `src/cli/commands/decide.ts` -> agent-first decision CLI
+- `src/cli/commands/personalize.ts` -> additive personalization CLI
 - `src/cli/commands/doctor.ts` -> readiness CLI
 - `src/persona/dimensionMapper.ts` -> source of truth for dimensions
 - `src/persona/psychologyLayer.ts` -> derived psychology model

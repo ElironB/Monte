@@ -25,13 +25,14 @@ import userRoutes from './api/routes/users.js';
 import healthRoutes from './api/routes/health.js';
 import ingestionRoutes from './api/routes/ingestion.js';
 import personaRoutes from './api/routes/persona.js';
+import personalizationRoutes from './api/routes/personalization.js';
 import simulationRoutes from './api/routes/simulation.js';
 import cliRoutes from './api/routes/cli.js';
 import streamRoutes from './api/routes/stream.js';
 
 import { getErrorResponse } from './utils/errors.js';
 
-const RESERVED_ROUTE_PREFIXES = ['/health', '/users', '/ingestion', '/persona', '/simulation', '/cli', '/stream', '/docs'];
+const RESERVED_ROUTE_PREFIXES = ['/health', '/users', '/ingestion', '/persona', '/personalization', '/simulation', '/cli', '/stream', '/docs'];
 
 const LOCAL_USER_ID = 'local-user';
 const LOCAL_USER_EMAIL = 'local@monte.localhost';
@@ -116,6 +117,7 @@ export async function createMonteServer(options: CreateMonteServerOptions = {}):
   await app.register(userRoutes, { prefix: '/users' });
   await app.register(ingestionRoutes, { prefix: '/ingestion' });
   await app.register(personaRoutes, { prefix: '/persona' });
+  await app.register(personalizationRoutes, { prefix: '/personalization' });
   await app.register(simulationRoutes, { prefix: '/simulation' });
   await app.register(cliRoutes, { prefix: '/cli' });
   await app.register(streamRoutes, { prefix: '/stream' });
