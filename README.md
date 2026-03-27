@@ -217,6 +217,48 @@ The API exposes the same additive surface:
 - `GET /personalization/profile`
 - `POST /personalization/context`
 
+## For AI Agents
+
+If a user tells you something like:
+
+`Install monte-engine. My data is in /temp.`
+
+treat that as enough information to start the Monte personalization flow.
+
+Read this operator guide first if you can fetch raw docs:
+
+- [Monte agent guide (raw SKILL.md)](https://raw.githubusercontent.com/ElironB/Monte/refs/heads/main/SKILL.md)
+
+Default sequence:
+
+```bash
+npm install -g monte-engine
+monte ingest /temp
+monte persona build
+monte persona status
+monte personalize profile --json
+```
+
+If the user gave you a concrete task, continue with:
+
+```bash
+monte personalize context "Help me with this task" --json
+```
+
+Use these heuristics:
+
+- If the persona is not ready yet, keep checking `monte persona status` until it is.
+- Use `monte personalize ...` for adapting tone, pacing, structure, planning, writing, learning, or decision guidance to the user.
+- Use `monte decide ...` only when the user explicitly wants a simulation-style judgment call.
+- If `monte` commands fail because the local API stack is not running yet, fall back to the setup sections in this README and bring the stack up before continuing.
+
+The shortest reliable mental model is:
+
+1. ingest the user's data
+2. build the persona
+3. wait for readiness
+4. call personalization commands for the current task
+
 ## Global CLI Install
 
 The primary published package is `monte-engine`, and the executable on your `PATH` is `monte`.
