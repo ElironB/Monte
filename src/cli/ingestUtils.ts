@@ -1,110 +1,141 @@
 import { readFileSync, readdirSync, statSync } from 'fs';
-import { basename, extname, join, resolve } from 'path';
+import { basename, extname, join, relative, resolve } from 'path';
 import { api } from './api.js';
 
-export const SUPPORTED_EXTENSIONS = new Set([
-  '.json', '.csv', '.txt', '.md', '.pdf', '.docx',
-  '.png', '.jpg', '.jpeg', '.gif', '.webp',
+export const DOCUMENT_EXTENSIONS = new Set([
+  '.json',
+  '.csv',
+  '.txt',
+  '.md',
+  '.pdf',
+  '.docx',
+]);
+
+export const MEDIA_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
 ]);
 
 const SKIP_DIRS = new Set([
-  'node_modules', '.git', '__pycache__', '.DS_Store', '.obsidian',
+  'node_modules',
+  '.git',
+  '__pycache__',
+  '.DS_Store',
+  '.obsidian',
 ]);
 
 export interface DiscoveredFile {
   path: string;
+  relativePath: string;
   filename: string;
   extension: string;
   sourceType: string;
   mimetype: string;
+  sizeBytes: number;
+}
+
+export interface SkippedFile {
+  path: string;
+  relativePath: string;
+  filename: string;
+  extension: string;
+  reason: string;
 }
 
 export interface UploadProgressHooks {
-  onGroupStart?: (sourceType: string, files: DiscoveredFile[]) => void;
-  onBatchStart?: (sourceType: string, batchIndex: number, totalBatches: number, batchSize: number) => void;
-  onBatchComplete?: (
-    sourceType: string,
-    batchIndex: number,
-    totalBatches: number,
-    batchSize: number,
-    result: { sourceId: string; status: string },
+  onSourceCreated?: (source: { sourceId: string; sourceType: string; name: string }, files: DiscoveredFile[]) => void;
+  onFileStart?: (file: DiscoveredFile, index: number, total: number) => void;
+  onFileComplete?: (
+    file: DiscoveredFile,
+    index: number,
+    total: number,
+    result: { sourceId: string; fileId: string; status: string; detectedSourceType: string },
   ) => void;
+  onFinalize?: (result: { sourceId: string; status: string }) => void;
 }
 
 export interface DiscoveryOptions {
   excludeFilenames?: string[];
+  includeMedia?: boolean;
 }
 
-function walkDirectory(dirPath: string, options: DiscoveryOptions = {}): DiscoveredFile[] {
-  const files: DiscoveredFile[] = [];
-  const excludedFilenames = new Set(options.excludeFilenames ?? []);
+export interface DiscoveryResult {
+  absolutePath: string;
+  files: DiscoveredFile[];
+  skipped: SkippedFile[];
+  isDirectory: boolean;
+}
 
-  function walk(dir: string) {
-    const entries = readdirSync(dir);
-    for (const entry of entries) {
-      if (entry.startsWith('.') || SKIP_DIRS.has(entry) || excludedFilenames.has(entry)) {
-        continue;
-      }
+function isHiddenEntry(entry: string): boolean {
+  return entry.startsWith('.');
+}
 
-      const fullPath = join(dir, entry);
-      const stat = statSync(fullPath);
-
-      if (stat.isDirectory()) {
-        walk(fullPath);
-        continue;
-      }
-
-      if (!stat.isFile()) {
-        continue;
-      }
-
-      const ext = extname(entry).toLowerCase();
-      if (!SUPPORTED_EXTENSIONS.has(ext)) {
-        continue;
-      }
-
-      files.push({
-        path: fullPath,
-        filename: basename(entry),
-        extension: ext,
-        sourceType: detectSourceType(fullPath, ext),
-        mimetype: getMimetype(ext),
-      });
-    }
+function readTextPreview(filePath: string): string {
+  try {
+    return readFileSync(filePath, 'utf-8').slice(0, 4000).toLowerCase();
+  } catch {
+    return '';
   }
+}
 
-  walk(dirPath);
-  return files;
+function looksLikeChatGptExport(content: string): boolean {
+  return content.includes('mapping') && content.includes('message') && content.includes('author');
+}
+
+function looksLikeClaudeExport(content: string): boolean {
+  return content.includes('chat_messages') && content.includes('sender') && content.includes('human');
+}
+
+function looksLikeGeminiActivityExport(content: string): boolean {
+  return content.includes('activitycontrols') && content.includes('products');
+}
+
+function looksLikeGrokExport(content: string): boolean {
+  return content.includes('grok') && (content.includes('conversation') || content.includes('messages'));
 }
 
 export function detectSourceType(filePath: string, ext: string): string {
-  if (ext === '.md' || ext === '.txt') return 'notes';
-  if (['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) return 'files';
+  if (ext === '.md' || ext === '.txt') {
+    return 'notes';
+  }
+
+  if (ext === '.pdf' || ext === '.docx') {
+    return 'files';
+  }
+
+  if (MEDIA_EXTENSIONS.has(ext)) {
+    return 'files';
+  }
 
   if (ext === '.json') {
-    try {
-      const content = readFileSync(filePath, 'utf-8').slice(0, 2000).toLowerCase();
-      if (content.includes('mapping') && content.includes('message') && content.includes('author')) return 'ai_chat';
-      if (content.includes('chat_messages') && content.includes('sender') && content.includes('human')) return 'ai_chat';
-      if (content.includes('gemini') && content.includes('activitycontrols')) return 'ai_chat';
-      if (content.includes('grok') && (content.includes('conversation') || content.includes('messages'))) return 'ai_chat';
-      if (content.includes('search') || content.includes('query')) return 'search_history';
-      if (content.includes('watch') || content.includes('video') || content.includes('youtube')) return 'watch_history';
-      if (content.includes('transaction') || content.includes('amount') || content.includes('balance')) return 'financial';
-      if (content.includes('post') || content.includes('comment') || content.includes('subreddit') || content.includes('tweet')) return 'social_media';
-    } catch {
-      return 'files';
+    const content = readTextPreview(filePath);
+
+    if (looksLikeChatGptExport(content) || looksLikeClaudeExport(content) || looksLikeGeminiActivityExport(content) || looksLikeGrokExport(content)) {
+      return 'ai_chat';
+    }
+    if (content.includes('search') || content.includes('query')) {
+      return 'search_history';
+    }
+    if (content.includes('watch') || content.includes('video') || content.includes('youtube')) {
+      return 'watch_history';
+    }
+    if (content.includes('transaction') || content.includes('amount') || content.includes('balance')) {
+      return 'financial';
+    }
+    if (content.includes('post') || content.includes('comment') || content.includes('subreddit') || content.includes('tweet')) {
+      return 'social_media';
     }
 
     return 'files';
   }
 
   if (ext === '.csv') {
-    try {
-      const firstLine = readFileSync(filePath, 'utf-8').split('\n')[0].toLowerCase();
-      if (firstLine.includes('amount') || firstLine.includes('transaction') || firstLine.includes('debit') || firstLine.includes('credit')) return 'financial';
-    } catch {
-      return 'files';
+    const firstLine = readTextPreview(filePath).split('\n')[0] ?? '';
+    if (firstLine.includes('amount') || firstLine.includes('transaction') || firstLine.includes('debit') || firstLine.includes('credit')) {
+      return 'financial';
     }
 
     return 'files';
@@ -131,69 +162,227 @@ export function getMimetype(ext: string): string {
   return mimeMap[ext] || 'application/octet-stream';
 }
 
+function classifyPath(
+  absolutePath: string,
+  rootPath: string,
+  options: DiscoveryOptions,
+): { include: true; file: DiscoveredFile } | { include: false; skipped: SkippedFile } {
+  const extension = extname(absolutePath).toLowerCase();
+  const filename = basename(absolutePath);
+  const relativePath = relative(rootPath, absolutePath) || filename;
+  const sizeBytes = statSync(absolutePath).size;
+
+  if (options.excludeFilenames?.includes(filename)) {
+    return {
+      include: false,
+      skipped: {
+        path: absolutePath,
+        relativePath,
+        filename,
+        extension,
+        reason: 'Excluded by CLI option.',
+      },
+    };
+  }
+
+  if (DOCUMENT_EXTENSIONS.has(extension)) {
+    return {
+      include: true,
+      file: {
+        path: absolutePath,
+        relativePath,
+        filename,
+        extension,
+        sourceType: detectSourceType(absolutePath, extension),
+        mimetype: getMimetype(extension),
+        sizeBytes,
+      },
+    };
+  }
+
+  if (MEDIA_EXTENSIONS.has(extension)) {
+    if (!options.includeMedia) {
+      return {
+        include: false,
+        skipped: {
+          path: absolutePath,
+          relativePath,
+          filename,
+          extension,
+          reason: 'Skipped media by default. Re-run with --include-media to upload anyway.',
+        },
+      };
+    }
+
+    return {
+      include: true,
+      file: {
+        path: absolutePath,
+        relativePath,
+        filename,
+        extension,
+        sourceType: 'files',
+        mimetype: getMimetype(extension),
+        sizeBytes,
+      },
+    };
+  }
+
+  return {
+    include: false,
+    skipped: {
+      path: absolutePath,
+      relativePath,
+      filename,
+      extension,
+      reason: 'Unsupported extension for v1 ingestion.',
+    },
+  };
+}
+
+function walkDirectory(rootPath: string, options: DiscoveryOptions): Pick<DiscoveryResult, 'files' | 'skipped'> {
+  const files: DiscoveredFile[] = [];
+  const skipped: SkippedFile[] = [];
+
+  function walk(currentPath: string) {
+    const entries = readdirSync(currentPath);
+    for (const entry of entries) {
+      if (SKIP_DIRS.has(entry)) {
+        skipped.push({
+          path: join(currentPath, entry),
+          relativePath: relative(rootPath, join(currentPath, entry)) || entry,
+          filename: entry,
+          extension: '',
+          reason: 'Skipped system or tooling directory.',
+        });
+        continue;
+      }
+
+      if (isHiddenEntry(entry)) {
+        skipped.push({
+          path: join(currentPath, entry),
+          relativePath: relative(rootPath, join(currentPath, entry)) || entry,
+          filename: entry,
+          extension: extname(entry).toLowerCase(),
+          reason: 'Skipped hidden file or directory.',
+        });
+        continue;
+      }
+
+      const fullPath = join(currentPath, entry);
+      const stats = statSync(fullPath);
+
+      if (stats.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+
+      if (!stats.isFile()) {
+        continue;
+      }
+
+      const classified = classifyPath(fullPath, rootPath, options);
+      if (classified.include) {
+        files.push(classified.file);
+      } else {
+        skipped.push(classified.skipped);
+      }
+    }
+  }
+
+  walk(rootPath);
+  return { files, skipped };
+}
+
 export function resolveDiscoveredFiles(
   inputPath: string,
   options: DiscoveryOptions = {},
-): { absolutePath: string; files: DiscoveredFile[]; isDirectory: boolean } {
+): DiscoveryResult {
   const absolutePath = resolve(inputPath);
-  const stat = statSync(absolutePath);
+  const stats = statSync(absolutePath);
 
-  if (stat.isDirectory()) {
+  if (stats.isDirectory()) {
+    const walked = walkDirectory(absolutePath, options);
     return {
       absolutePath,
-      files: walkDirectory(absolutePath, options),
+      files: walked.files,
+      skipped: walked.skipped,
       isDirectory: true,
     };
   }
 
-  const ext = extname(absolutePath).toLowerCase();
+  const classified = classifyPath(absolutePath, absolutePath, options);
   return {
     absolutePath,
-    files: [{
-      path: absolutePath,
-      filename: basename(absolutePath),
-      extension: ext,
-      sourceType: detectSourceType(absolutePath, ext),
-      mimetype: getMimetype(ext),
-    }],
+    files: classified.include ? [classified.file] : [],
+    skipped: classified.include ? [] : [classified.skipped],
     isDirectory: false,
   };
 }
 
-export function groupDiscoveredFiles(files: DiscoveredFile[]): Map<string, DiscoveredFile[]> {
-  const groups = new Map<string, DiscoveredFile[]>();
-
-  for (const file of files) {
-    const group = groups.get(file.sourceType) || [];
-    group.push(file);
-    groups.set(file.sourceType, group);
-  }
-
-  return groups;
-}
-
 export async function uploadDiscoveredFiles(
-  groups: Map<string, DiscoveredFile[]>,
-  hooks: UploadProgressHooks = {},
-): Promise<void> {
-  const batchSize = 10;
-
-  for (const [sourceType, typeFiles] of groups) {
-    hooks.onGroupStart?.(sourceType, typeFiles);
-
-    const fileData = typeFiles.map((file) => ({
-      filename: file.filename,
-      content: readFileSync(file.path).toString('base64'),
-      mimetype: file.mimetype,
-    }));
-
-    const totalBatches = Math.ceil(fileData.length / batchSize);
-    for (let index = 0; index < fileData.length; index += batchSize) {
-      const batchIndex = Math.floor(index / batchSize) + 1;
-      const batch = fileData.slice(index, index + batchSize);
-      hooks.onBatchStart?.(sourceType, batchIndex, totalBatches, batch.length);
-      const result = await api.uploadFiles(batch, sourceType) as { sourceId: string; status: string };
-      hooks.onBatchComplete?.(sourceType, batchIndex, totalBatches, batch.length, result);
-    }
+  discovery: DiscoveryResult,
+  options: {
+    sourceName?: string;
+    metadata?: Record<string, unknown>;
+    hooks?: UploadProgressHooks;
+  } = {},
+): Promise<{ sourceId: string; status: string; fileCount: number }> {
+  if (discovery.files.length === 0) {
+    throw new Error('No files available to upload.');
   }
+
+  const distinctSourceTypes = Array.from(new Set(discovery.files.map((file) => file.sourceType)));
+  const sourceType = distinctSourceTypes.length === 1 ? distinctSourceTypes[0] : 'mixed';
+  const name = options.sourceName ?? basename(discovery.absolutePath);
+  const source = await api.createDataSource(
+    sourceType,
+    name,
+    {
+      rootPath: discovery.absolutePath,
+      includedSourceTypes: distinctSourceTypes,
+      skippedFileCount: discovery.skipped.length,
+      ...options.metadata,
+    },
+    discovery.files.length,
+  ) as { id: string; sourceType: string; name: string };
+
+  options.hooks?.onSourceCreated?.({
+    sourceId: source.id,
+    sourceType: source.sourceType,
+    name: source.name,
+  }, discovery.files);
+
+  for (let index = 0; index < discovery.files.length; index++) {
+    const file = discovery.files[index];
+    options.hooks?.onFileStart?.(file, index + 1, discovery.files.length);
+
+    const buffer = readFileSync(file.path);
+    const result = await api.uploadSourceFile(source.id, {
+      filename: file.filename,
+      mimetype: file.mimetype,
+      buffer,
+      originalPath: file.relativePath,
+      detectedSourceType: file.sourceType,
+    }) as {
+      sourceId: string;
+      fileId: string;
+      status: string;
+      detectedSourceType: string;
+    };
+
+    options.hooks?.onFileComplete?.(file, index + 1, discovery.files.length, result);
+  }
+
+  const finalized = await api.finalizeDataSourceUpload(source.id) as { id?: string; status: string };
+  options.hooks?.onFinalize?.({
+    sourceId: source.id,
+    status: finalized.status,
+  });
+
+  return {
+    sourceId: source.id,
+    status: finalized.status,
+    fileCount: discovery.files.length,
+  };
 }

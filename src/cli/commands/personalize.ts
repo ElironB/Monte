@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import type {
+  PersonalizationBootstrapPayload,
   PersonalizationContextPayload,
   PersonalizationProfile,
   PersonalizationProfilePayload,
@@ -79,8 +80,80 @@ export function renderPersonalizationContext(payload: PersonalizationContextPayl
   return lines.join('\n');
 }
 
+export function renderPersonalizationBootstrap(payload: PersonalizationBootstrapPayload): string {
+  const lines: string[] = [];
+
+  lines.push(`\n${sectionHeader('Agent Bootstrap')}`);
+  lines.push(`  ${infoLabel('Status:')} ${valueText(payload.status)}`);
+  lines.push(`  ${infoLabel('Task:')} ${dimText(payload.task)}`);
+  lines.push(`  ${infoLabel('Mode:')} ${valueText(payload.mode)}`);
+  lines.push(`  ${infoLabel('Preferred surface:')} ${valueText(payload.recommendedSurface)}`);
+  lines.push(`  ${infoLabel('Next action:')} ${dimText(`${payload.nextAction.command} — ${payload.nextAction.description}`)}`);
+
+  if (payload.reasonIfNotReady) {
+    lines.push(`  ${infoLabel('Reason:')} ${dimText(payload.reasonIfNotReady)}`);
+  }
+
+  if (payload.profile) {
+    lines.push(renderPersonalizationProfile(payload.profile));
+  }
+
+  if (payload.taskAdaptation) {
+    lines.push(`\n${sectionHeader('Task Adaptation')}`);
+    lines.push(`  ${infoLabel('Response shape:')} ${dimText(payload.taskAdaptation.responseShape)}`);
+    lines.push(`\n${sectionHeader('Bootstrap Instruction Block')}`);
+    lines.push(payload.instructionBlock);
+    return lines.join('\n');
+  }
+
+  lines.push(`\n${sectionHeader('Bootstrap Instruction Block')}`);
+  lines.push(payload.instructionBlock);
+  return lines.join('\n');
+}
+
 export const personalizeCommands = new Command('personalize')
   .description(chalk.dim('Expose agent-ready personalization guidance'));
+
+personalizeCommands
+  .command('bootstrap')
+  .description(chalk.dim('Bootstrap an external agent into the right Monte surface for a task'))
+  .argument('<task...>', 'Describe the task the agent is about to do')
+  .option('--mode <mode>', 'personalization mode: general, decision, writing, planning, or learning')
+  .option('--agent-name <name>', 'label for the consuming agent')
+  .option('--context <text>', 'extra task context used for classification and routing')
+  .option('--json', 'output machine-readable JSON', false)
+  .action(async (
+    taskParts: string[],
+    options: {
+      mode?: string;
+      agentName?: string;
+      context?: string;
+      json?: boolean;
+    },
+  ) => {
+    try {
+      const task = taskParts.join(' ').trim();
+      const payload = await api.getPersonalizationBootstrap({
+        task,
+        mode: options.mode,
+        agentName: options.agentName,
+        additionalContext: options.context,
+      }) as PersonalizationBootstrapPayload;
+
+      if (options.json) {
+        printJson(payload);
+        return;
+      }
+
+      console.log(renderPersonalizationBootstrap(payload));
+    } catch (err) {
+      if (options.json) {
+        printJsonErrorAndExit(err);
+      }
+      console.error(`${icons.error} ${(err as Error).message}`);
+      process.exit(1);
+    }
+  });
 
 personalizeCommands
   .command('profile')

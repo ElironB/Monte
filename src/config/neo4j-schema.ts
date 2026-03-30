@@ -10,6 +10,7 @@ const CONSTRAINTS = [
   'CREATE CONSTRAINT clone_id IF NOT EXISTS FOR (c:Clone) REQUIRE c.id IS UNIQUE',
   'CREATE CONSTRAINT simulation_id IF NOT EXISTS FOR (s:Simulation) REQUIRE s.id IS UNIQUE',
   'CREATE CONSTRAINT signal_id IF NOT EXISTS FOR (s:Signal) REQUIRE s.id IS UNIQUE',
+  'CREATE CONSTRAINT sourcefile_id IF NOT EXISTS FOR (f:SourceFile) REQUIRE f.id IS UNIQUE',
   'CREATE CONSTRAINT contradiction_id IF NOT EXISTS FOR (c:Contradiction) REQUIRE c.id IS UNIQUE',
   'CREATE CONSTRAINT apikey_id IF NOT EXISTS FOR (k:ApiKey) REQUIRE k.id IS UNIQUE',
   'CREATE CONSTRAINT apikey_prefix IF NOT EXISTS FOR (k:ApiKey) REQUIRE k.keyPrefix IS UNIQUE',
@@ -20,6 +21,7 @@ const INDEXES = [
   'CREATE INDEX simulation_created IF NOT EXISTS FOR (s:Simulation) ON (s.createdAt)',
   'CREATE INDEX clone_category IF NOT EXISTS FOR (c:Clone) ON (c.category)',
   'CREATE INDEX datasource_status IF NOT EXISTS FOR (d:DataSource) ON (d.status)',
+  'CREATE INDEX sourcefile_status IF NOT EXISTS FOR (f:SourceFile) ON (f.status)',
   'CREATE INDEX trait_name IF NOT EXISTS FOR (t:Trait) ON (t.name)',
 ];
 

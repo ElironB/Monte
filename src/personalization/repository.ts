@@ -151,9 +151,9 @@ export async function getLatestPersonalizationSeed(userId: string): Promise<Late
     ),
     runQuerySingle<CoverageRow>(
       `MATCH (p:Persona {id: $personaId})-[:DERIVED_FROM]->(s:Signal)
-       OPTIONAL MATCH (s)<-[:HAS_SIGNAL]-(d:DataSource)
+       OPTIONAL MATCH (s)<-[:HAS_SIGNAL]-(f:SourceFile)<-[:HAS_FILE]-(d:DataSource)
        RETURN count(DISTINCT d) as sourceCount,
-              collect(DISTINCT d.sourceType) as sourceTypes,
+              collect(DISTINCT coalesce(s.sourceType, f.detectedSourceType, d.sourceType)) as sourceTypes,
               count(DISTINCT s) as derivedSignalCount`,
       { personaId: latestPersona.id },
     ),

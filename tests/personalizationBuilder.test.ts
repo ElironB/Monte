@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
+  buildPersonalizationBootstrapPayload,
   buildPersonalizationContextPayload,
   buildPersonalizationProfilePayload,
   classifyTaskMode,
+  classifyRecommendedSurface,
   type PersonalizationSeed,
 } from '../src/personalization/builder.js';
 
@@ -125,5 +127,41 @@ describe('personalization builder', () => {
     expect(classifyTaskMode('Plan the rollout for this feature')).toBe('planning');
     expect(classifyTaskMode('Explain how attachment theory works')).toBe('learning');
     expect(classifyTaskMode('Refactor this function and fix the tests')).toBe('general');
+  });
+
+  test('prefers personalization unless the task explicitly asks for simulation-style judgment', () => {
+    expect(classifyRecommendedSurface('Should I accept this offer?')).toBe('personalize_context');
+    expect(classifyRecommendedSurface('Plan the rollout for this feature')).toBe('personalize_context');
+    expect(classifyRecommendedSurface('Run a simulation with clone outcomes for this decision')).toBe('monte_decide');
+  });
+
+  test('builds bootstrap payloads for ready and not-ready states', () => {
+    const ready = buildPersonalizationBootstrapPayload({
+      status: 'ready',
+      task: 'Help me plan next week',
+      nextAction: {
+        command: 'monte personalize context "Help me plan next week" --json',
+        description: 'Use task-aware personalization.',
+      },
+      seed: makeSeed(),
+    });
+
+    expect(ready.status).toBe('ready');
+    expect(ready.recommendedSurface).toBe('personalize_context');
+    expect(ready.profile?.summary).toContain('Deliberate');
+
+    const blocked = buildPersonalizationBootstrapPayload({
+      status: 'needs_ingestion',
+      task: 'Help me plan next week',
+      nextAction: {
+        command: 'monte ingest <path>',
+        description: 'Ingest personal data first.',
+      },
+      reasonIfNotReady: 'No ingested sources were found yet.',
+    });
+
+    expect(blocked.status).toBe('needs_ingestion');
+    expect(blocked.profile).toBeUndefined();
+    expect(blocked.instructionBlock).toContain('Default to `monte personalize context`');
   });
 });

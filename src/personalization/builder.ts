@@ -13,6 +13,8 @@ export type PersonalizationChallengeStyle = 'gentle' | 'balanced' | 'direct';
 export type PersonalizationOptionCount = 'few' | 'moderate' | 'many';
 export type PersonalizationPace = 'fast' | 'balanced' | 'deliberate';
 export type PersonalizationRiskFrame = 'upside-first' | 'balanced' | 'downside-first';
+export type PersonalizationBootstrapStatus = 'needs_ingestion' | 'needs_persona' | 'building' | 'ready' | 'failed';
+export type PersonalizationRecommendedSurface = 'personalize_context' | 'monte_decide';
 
 export interface PersonalizationSignal {
   value: string;
@@ -108,6 +110,23 @@ export interface PersonalizationContextPayload {
   instructionBlock: string;
 }
 
+export interface PersonalizationBootstrapPayload {
+  ok: true;
+  schemaVersion: typeof PERSONALIZATION_SCHEMA_VERSION;
+  status: PersonalizationBootstrapStatus;
+  task: string;
+  mode: PersonalizationMode;
+  recommendedSurface: PersonalizationRecommendedSurface;
+  nextAction: {
+    command: string;
+    description: string;
+  };
+  reasonIfNotReady?: string;
+  profile?: PersonalizationProfile;
+  taskAdaptation?: PersonalizationTaskAdaptation;
+  instructionBlock: string;
+}
+
 const LOW_CONFIDENCE_THRESHOLD = 0.45;
 const HIGH_THRESHOLD = 0.68;
 const LOW_THRESHOLD = 0.42;
@@ -117,6 +136,12 @@ const MODE_PATTERNS: Array<{ mode: PersonalizationMode; pattern: RegExp }> = [
   { mode: 'planning', pattern: /\b(plan|roadmap|milestone|sequence|timeline|next steps|prioriti[sz]e|organize)\b/i },
   { mode: 'writing', pattern: /\b(write|rewrite|draft|edit|email|message|post|copy|caption|tweet|essay|article)\b/i },
   { mode: 'learning', pattern: /\b(explain|teach|learn|understand|walk me through|break down|why does|how does)\b/i },
+];
+
+const EXPLICIT_SIMULATION_PATTERNS = [
+  /\b(simulate|simulation|scenario graph|clone(?:s)?|outcome distribution)\b/i,
+  /\b(monte decide|run monte decide|use monte decide|decision engine)\b/i,
+  /\b(evidence loop|rerun this decision|apply evidence)\b/i,
 ];
 
 function clamp(value: number, min: number = 0, max: number = 1): number {
@@ -420,7 +445,47 @@ function buildProfileInstructionBlock(
   return lines.join('\n');
 }
 
-function buildTaskAdaptation(mode: PersonalizationMode): PersonalizationTaskAdaptation {
+function buildBootstrapInstructionBlock(options: {
+  status: PersonalizationBootstrapStatus;
+  recommendedSurface: PersonalizationRecommendedSurface;
+  nextAction: { command: string; description: string };
+  reasonIfNotReady?: string;
+  profile?: PersonalizationProfile;
+  taskAdaptation?: PersonalizationTaskAdaptation;
+  agentName?: string;
+}): string {
+  const lines = [
+    `You are ${options.agentName ?? 'the agent'}.`,
+    '',
+    '## Monte Bootstrap',
+    `- Status: ${options.status}`,
+    `- Preferred surface for this task: ${options.recommendedSurface}`,
+    '- Default to `monte personalize context` for task adaptation.',
+    '- Use `monte decide` only for explicit simulation-style judgment calls.',
+    `- Next action: ${options.nextAction.command} (${options.nextAction.description})`,
+  ];
+
+  if (options.reasonIfNotReady) {
+    lines.push(`- Blocker: ${options.reasonIfNotReady}`);
+  }
+
+  if (options.profile && options.taskAdaptation) {
+    lines.push(
+      '',
+      '## Task Guidance',
+      `- Mode: ${options.taskAdaptation.modeSummary}`,
+      `- Response shape: ${options.taskAdaptation.responseShape}`,
+      ...options.taskAdaptation.emphasis.map((item) => `- Emphasize: ${item}`),
+      ...options.taskAdaptation.guardrails.map((item) => `- Guardrail: ${item}`),
+      '',
+      buildProfileInstructionBlock(options.profile, options.agentName ?? 'the agent', options.taskAdaptation),
+    );
+  }
+
+  return lines.join('\n');
+}
+
+export function buildTaskAdaptation(mode: PersonalizationMode): PersonalizationTaskAdaptation {
   switch (mode) {
     case 'decision':
       return {
@@ -545,6 +610,13 @@ export function classifyTaskMode(task: string, additionalContext?: string): Pers
   return 'general';
 }
 
+export function classifyRecommendedSurface(task: string, additionalContext?: string): PersonalizationRecommendedSurface {
+  const combined = `${task} ${additionalContext ?? ''}`.trim();
+  return EXPLICIT_SIMULATION_PATTERNS.some((pattern) => pattern.test(combined))
+    ? 'monte_decide'
+    : 'personalize_context';
+}
+
 export function buildPersonalizationProfile(seed: PersonalizationSeed): PersonalizationProfile {
   const lowConfidenceDimensions = getLowConfidenceDimensions(seed);
   const guidance = buildGuidance(seed, lowConfidenceDimensions);
@@ -603,5 +675,67 @@ export function buildPersonalizationContextPayload(
     profile,
     taskAdaptation,
     instructionBlock: buildProfileInstructionBlock(profile, options.agentName ?? 'the agent', taskAdaptation),
+  };
+}
+
+export function buildPersonalizationBootstrapPayload(options: {
+  status: PersonalizationBootstrapStatus;
+  task: string;
+  nextAction: {
+    command: string;
+    description: string;
+  };
+  reasonIfNotReady?: string;
+  seed?: PersonalizationSeed;
+  mode?: PersonalizationMode;
+  agentName?: string;
+  additionalContext?: string;
+}): PersonalizationBootstrapPayload {
+  const mode = options.mode ?? classifyTaskMode(options.task, options.additionalContext);
+  const recommendedSurface = classifyRecommendedSurface(options.task, options.additionalContext);
+
+  if (!options.seed) {
+    return {
+      ok: true,
+      schemaVersion: PERSONALIZATION_SCHEMA_VERSION,
+      status: options.status,
+      task: options.task,
+      mode,
+      recommendedSurface,
+      nextAction: options.nextAction,
+      reasonIfNotReady: options.reasonIfNotReady,
+      instructionBlock: buildBootstrapInstructionBlock({
+        status: options.status,
+        recommendedSurface,
+        nextAction: options.nextAction,
+        reasonIfNotReady: options.reasonIfNotReady,
+        agentName: options.agentName,
+      }),
+    };
+  }
+
+  const profile = buildPersonalizationProfile(options.seed);
+  const taskAdaptation = buildTaskAdaptation(mode);
+
+  return {
+    ok: true,
+    schemaVersion: PERSONALIZATION_SCHEMA_VERSION,
+    status: options.status,
+    task: options.task,
+    mode,
+    recommendedSurface,
+    nextAction: options.nextAction,
+    reasonIfNotReady: options.reasonIfNotReady,
+    profile,
+    taskAdaptation,
+    instructionBlock: buildBootstrapInstructionBlock({
+      status: options.status,
+      recommendedSurface,
+      nextAction: options.nextAction,
+      reasonIfNotReady: options.reasonIfNotReady,
+      profile,
+      taskAdaptation,
+      agentName: options.agentName,
+    }),
   };
 }

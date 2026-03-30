@@ -14,7 +14,7 @@ Monte is a self-hosted TypeScript decision engine. It ingests exported personal 
 - Bundled examples: `examples/personas/starter` ships in the npm package and is surfaced by `monte example`
 - Storage: Neo4j for graph data, Redis for cache, queues, and live progress, MinIO for uploaded source blobs
 - Dashboard surface: bundled and repo-local UI now include a dedicated Graph tab for clickable scenario DAGs, live clone occupancy, edge flow, and sampled trace overlays
-- Personalization surface: the API now exposes `/personalization/profile` and `/personalization/context`, and the CLI now exposes `monte personalize profile` plus `monte personalize context`
+- Personalization surface: the API now exposes `/personalization/bootstrap`, `/personalization/profile`, and `/personalization/context`, and the CLI now exposes `monte personalize bootstrap`, `monte personalize profile`, and `monte personalize context`
 - Background execution: BullMQ queues and workers for ingestion, persona builds, and simulation batches
 - Auth model: self-hosted OSS mode injects `local-user`; there is no hosted auth flow in the current repo
 - API docs: `/docs`
@@ -24,7 +24,9 @@ Monte is a self-hosted TypeScript decision engine. It ingests exported personal 
 
 ### 1. Ingestion
 
-Raw files are uploaded and typed as sources such as `search_history`, `watch_history`, `social_media`, `financial`, `notes`, `files`, `ai_chat`, or `composio`.
+Raw files are discovered with a docs-first filter, uploaded one file at a time into logical source sessions, and typed as sources such as `search_history`, `watch_history`, `social_media`, `financial`, `notes`, `files`, `ai_chat`, or `composio`.
+
+Each logical source now tracks per-file records with detected source type, status, signal count, skip reason, error, and timing so aggregate source state is derived from file outcomes instead of being overwritten by the last processed file.
 
 Extraction is rule-based. The ingestion layer produces:
 
@@ -71,6 +73,8 @@ Current surfaces:
 
 - `GET /personalization/profile`
 - `POST /personalization/context`
+- `POST /personalization/bootstrap`
+- `monte personalize bootstrap "<task>"`
 - `monte personalize profile`
 - `monte personalize context "<task>"`
 
@@ -167,6 +171,7 @@ Primary user-facing commands:
 - `monte doctor`
 - `monte doctor --json`
 - `monte start`
+- `monte ingest <path> [--dry-run] [--include-media]`
 - `monte config set-provider <provider>`
 - `monte config set-api-key <key>`
 - `monte config set-embedding-key <key>`
@@ -175,6 +180,7 @@ Primary user-facing commands:
 - `monte example ingest starter`
 - `monte persona build`
 - `monte personalize profile --json`
+- `monte personalize bootstrap "<task>" --json`
 - `monte personalize context "<task>" --json`
 - `monte simulate`
 - `monte simulate progress <id> --json`
@@ -202,6 +208,7 @@ Relevant runtime tuning env vars:
 - `SIMULATION_ACTIVE_FRONTIER`
 - `SIMULATION_CONCURRENCY` (legacy alias for decision concurrency)
 - `SIMULATION_WORKER_CONCURRENCY`
+- `INGESTION_WORKER_CONCURRENCY`
 - `SIMULATION_DECISION_BATCH_SIZE`
 - `SIMULATION_DECISION_BATCH_FLUSH_MS`
 - `LLM_RPM_LIMIT`
@@ -255,13 +262,14 @@ npm run test:benchmarks
 npm run benchmark:pretty
 npm pack
 monte doctor
-monte decide "should I do this?" --mode standard --wait --json
+monte personalize bootstrap "Help me with this task" --json
+monte decide "simulate whether I should do this?" --mode standard --wait --json
 npm run cli:dev -- doctor
 ```
 
 ## Notes for future changes
 
-- The external-agent path is CLI-first. `monte decide` is the current agent entrypoint; there is no separate agent-only HTTP API in this repo.
+- The external-agent path is CLI-first. `monte personalize bootstrap` is the default agent entrypoint, and `monte decide` is reserved for explicit simulation-style judgment calls.
 - `connect` / Composio exists but remains experimental.
 - Some reporting surfaces still contain legacy hardcoded dimension subsets; treat `src/persona/dimensionMapper.ts` as authoritative if you touch dimension-facing output.
 - The benchmark harness is part of the simulation contract, not optional documentation.

@@ -42,10 +42,10 @@ npm install -g monte-engine
 monte ingest /temp
 monte persona build
 monte persona status
-monte personalize profile --json
+monte personalize bootstrap "Help me with this task" --json
 ```
 
-If the user also gave you a live task, continue with:
+If you need the task-adapted guidance itself, continue with:
 
 ```bash
 monte personalize context "Help me with this task" --json
@@ -54,8 +54,11 @@ monte personalize context "Help me with this task" --json
 Interpret the product like this:
 
 - `monte ingest <path>` scans the user's files and uploads supported inputs.
+- `monte ingest <path> --dry-run` previews what Monte will keep or skip before upload.
+- `monte ingest <path> --include-media` opts into uploading media files that Monte otherwise skips by default.
 - `monte persona build` creates the derived persona from those inputs.
 - `monte persona status` tells you when the persona is actually ready.
+- `monte personalize bootstrap ...` is the default agent bootstrap surface for readiness plus next-step routing.
 - `monte personalize ...` is the default agent-facing surface for adapting to the user.
 - `monte decide ...` is only for simulation-style judgment calls, not ordinary personalization.
 
@@ -107,7 +110,7 @@ If local commands fail because the API stack is missing, read the setup flow in 
   - `informationSeeking`
   - `stressResponse`
 - Monte currently ships 8 scenario types including `custom`.
-- Monte now also exposes `/personalization/profile`, `/personalization/context`, and `monte personalize ...` as additive agent-facing surfaces.
+- Monte now also exposes `/personalization/bootstrap`, `/personalization/profile`, `/personalization/context`, and `monte personalize ...` as additive agent-facing surfaces.
 - Signal extraction is rule-based.
 - The benchmark harness is part of the product contract, not an optional extra.
 - The npm package is `monte-engine`; the installed executable is `monte`.
@@ -200,7 +203,7 @@ monte config set-provider openrouter
 monte config set-api-key <key>
 monte doctor --json
 monte example ingest starter
-monte personalize profile --json
+monte personalize bootstrap "Help me plan this" --json
 monte personalize context "Help me plan this" --json
 monte decide "should I do this?" --mode standard --wait --json
 monte simulate progress <simulation-id> --json

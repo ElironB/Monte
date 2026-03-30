@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import { resolveIngestionRuntimeConfig } from './ingestionRuntime.js';
 import { resolveSimulationRuntimeConfig } from './simulationRuntime.js';
 
 dotenv.config();
@@ -99,6 +100,9 @@ const configSchema = z.object({
     decisionBatchFlushMs: z.number().int().min(1).default(40),
     llmRpmLimit: z.number().int().positive().optional(),
   }),
+  ingestion: z.object({
+    workerConcurrency: z.number().int().min(1).default(3),
+  }),
   llm: z.object({
     apiKey: z.string().optional(),
     baseUrl: z.string().url().default('https://api.groq.com/openai/v1'),
@@ -144,6 +148,7 @@ export const config = configSchema.parse({
     logLevel: process.env.LOG_LEVEL,
   },
   simulation: resolveSimulationRuntimeConfig(),
+  ingestion: resolveIngestionRuntimeConfig(),
   llm: resolveLLMConfig(),
   embedding: resolveEmbeddingConfig(),
   composio: {

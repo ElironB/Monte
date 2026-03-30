@@ -7,6 +7,7 @@ import { config } from '../../../config/index.js';
 import { runQuerySingle, runWriteSingle, runQuery } from '../../../config/neo4j.js';
 import { getFile } from '../../../config/minio.js';
 import { getRedisClient } from '../../../config/redis.js';
+import { normalizeUploadedFileText } from '../../fileText.js';
 import { SearchHistoryExtractor } from '../../extractors/searchHistory.js';
 import { SocialBehaviorExtractor } from '../../extractors/socialBehavior.js';
 import { FinancialBehaviorExtractor } from '../../extractors/financialBehavior.js';
@@ -64,6 +65,14 @@ import {
   broadcastSimulationGraphSnapshot,
   broadcastSimulationProgress,
 } from '../../../api/routes/stream.js';
+import {
+  getSourceFileJobRecord,
+  markSourceFileCompleted,
+  markSourceFileFailed,
+  markSourceFileProcessing,
+  markSourceFileSkipped,
+  refreshDataSourceAggregate,
+} from '../../sourceRecords.js';
 
 const extractors = [
   new SearchHistoryExtractor(),
@@ -299,47 +308,195 @@ async function loadSimulationExecutionState(
   });
 }
 
-async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
-  logger.info({ jobId: job.id }, 'Processing ingestion');
-  
-  const { userId, sourceId, sourceType, filePath, metadata } = job.data;
-  
-  await runWriteSingle(
-    `MATCH (d:DataSource {id: $sourceId})
-     SET d.status = 'processing', d.processedAt = datetime()
-     RETURN d.id as id`,
-    { sourceId }
-  );
-  
-  try {
-    let rawContent = '';
-    if (filePath) {
-      const buffer = await getFile(filePath);
-      rawContent = buffer.toString('utf-8');
-    } else if (metadata?.content) {
-      rawContent = metadata.content as string;
+function buildSignalText(signal: BehavioralSignal): string {
+  const parsedTimestamp = parseTimestamp(signal.timestamp);
+  let temporalPrefix = '';
+
+  if (parsedTimestamp) {
+    const hour = parsedTimestamp.getUTCHours();
+    let timeOfDay = 'late_night';
+    if (hour >= 5 && hour < 12) {
+      timeOfDay = 'morning';
+    } else if (hour >= 12 && hour < 17) {
+      timeOfDay = 'afternoon';
+    } else if (hour >= 17 && hour < 22) {
+      timeOfDay = 'evening';
     }
-    
+
+    const day = parsedTimestamp.getUTCDay();
+    const dayOfWeek = (day === 0 || day === 6) ? 'weekend' : 'weekday';
+    temporalPrefix = `[${timeOfDay}, ${dayOfWeek}] `;
+  }
+
+  return `${temporalPrefix}${signal.type}: ${signal.value} — ${signal.evidence}`;
+}
+
+async function persistSignalsForSourceFile(fileId: string, signals: BehavioralSignal[]): Promise<void> {
+  if (signals.length === 0) {
+    return;
+  }
+
+  await runWriteSingle(
+    `UNWIND $signals as signal
+     MATCH (f:SourceFile {id: $fileId})
+     CREATE (s:Signal {
+       id: signal.id,
+       type: signal.type,
+       value: signal.value,
+       confidence: signal.confidence,
+       evidence: signal.evidence,
+       sourceType: signal.sourceType,
+       timestamp: datetime(signal.timestamp),
+       dimensions: signal.dimensions
+     })
+     CREATE (f)-[:HAS_SIGNAL]->(s)
+     RETURN count(s) as count`,
+    {
+      fileId,
+      signals: signals.map((signal) => ({
+        id: signal.id,
+        type: signal.type,
+        value: signal.value,
+        confidence: signal.confidence,
+        evidence: signal.evidence,
+        sourceType: signal.sourceType ?? null,
+        timestamp: signal.timestamp,
+        dimensions: JSON.stringify(signal.dimensions),
+      })),
+    },
+  );
+}
+
+async function persistSignalEmbeddings(entries: Array<{ signalId: string; embedding: number[] }>): Promise<void> {
+  if (entries.length === 0) {
+    return;
+  }
+
+  await runWriteSingle(
+    `UNWIND $embeddings as embedding
+     MATCH (s:Signal {id: embedding.signalId})
+     SET s.embedding = embedding.embedding
+     RETURN count(s) as count`,
+    { embeddings: entries },
+  );
+}
+
+async function persistContradictions(contradictions: SignalContradiction[]): Promise<void> {
+  if (contradictions.length === 0) {
+    return;
+  }
+
+  await runWriteSingle(
+    `UNWIND $contradictions as contradiction
+     MERGE (c:Contradiction {id: contradiction.id})
+     ON CREATE SET c.createdAt = datetime()
+     SET c.type = contradiction.type,
+         c.description = contradiction.description,
+         c.severity = contradiction.severity,
+         c.magnitude = contradiction.magnitude,
+         c.affectedDimensions = contradiction.affectedDimensions,
+         c.statedSignalId = contradiction.statedSignalId,
+         c.revealedSignalId = contradiction.revealedSignalId,
+         c.convergenceRate = contradiction.convergenceRate,
+         c.isPermanentTrait = contradiction.isPermanentTrait,
+         c.firstSeen = CASE WHEN contradiction.firstSeen IS NULL THEN null ELSE datetime(contradiction.firstSeen) END,
+         c.lastSeen = CASE WHEN contradiction.lastSeen IS NULL THEN null ELSE datetime(contradiction.lastSeen) END,
+         c.updatedAt = datetime()
+     WITH c, contradiction
+     MATCH (s1:Signal {id: contradiction.signalAId}), (s2:Signal {id: contradiction.signalBId})
+     MERGE (s1)-[:CONTRADICTS]->(c)<-[:CONTRADICTS]-(s2)
+     RETURN count(c) as count`,
+    {
+      contradictions: contradictions.map((contradiction) => {
+        const { statedSignalId, revealedSignalId } = getContradictionRoleAssignment(contradiction);
+        return {
+          id: contradiction.id,
+          type: contradiction.type,
+          description: contradiction.description,
+          severity: contradiction.severity,
+          magnitude: contradiction.magnitude,
+          affectedDimensions: JSON.stringify(contradiction.affectedDimensions),
+          statedSignalId,
+          revealedSignalId,
+          signalAId: contradiction.signalAId,
+          signalBId: contradiction.signalBId,
+          convergenceRate: contradiction.convergenceRate ?? 0,
+          isPermanentTrait: contradiction.isPermanentTrait ?? false,
+          firstSeen: contradiction.firstSeen ?? null,
+          lastSeen: contradiction.lastSeen ?? null,
+        };
+      }),
+    },
+  );
+}
+
+async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
+  logger.info({ jobId: job.id, data: job.data }, 'Processing ingestion');
+
+  const { userId, sourceId, fileId } = job.data;
+  const startedAtMs = Date.now();
+
+  try {
+    const sourceFile = await getSourceFileJobRecord(userId, sourceId, fileId);
+    await markSourceFileProcessing(fileId);
+    await refreshDataSourceAggregate(sourceId);
+
+    if (!sourceFile.objectName) {
+      throw new Error(`Source file ${fileId} is missing a stored object name.`);
+    }
+
+    const buffer = await getFile(sourceFile.objectName);
+    const normalized = await normalizeUploadedFileText({
+      filename: sourceFile.filename,
+      mimetype: sourceFile.mimetype,
+      buffer,
+    });
+
+    if (normalized.status === 'skipped') {
+      await markSourceFileSkipped(fileId, normalized.reason ?? 'Skipped by ingestion policy.', Date.now() - startedAtMs);
+      await refreshDataSourceAggregate(sourceId);
+      logger.info({ jobId: job.id, fileId, reason: normalized.reason }, 'Skipped ingestion file');
+      return;
+    }
+
+    if (normalized.status === 'failed') {
+      await markSourceFileFailed(fileId, normalized.reason ?? 'Text normalization failed.', Date.now() - startedAtMs);
+      await refreshDataSourceAggregate(sourceId);
+      logger.warn({ jobId: job.id, fileId, reason: normalized.reason }, 'Failed to normalize ingestion file');
+      return;
+    }
+
+    const sourceType = sourceFile.detectedSourceType;
     const rawData = {
       sourceId,
       userId,
       sourceType: sourceType as any,
-      rawContent,
-      metadata: metadata || {},
+      rawContent: normalized.text,
+      metadata: {
+        fileName: sourceFile.filename,
+        originalPath: sourceFile.originalPath ?? undefined,
+        fileType: sourceFile.mimetype,
+      },
     };
-    
+
     const allSignals: BehavioralSignal[] = [];
     for (const extractor of extractors) {
-      if (extractor.sourceTypes.includes(sourceType) || 
+      if (extractor.sourceTypes.includes(sourceType) ||
           extractor.sourceTypes.some((st: string) => sourceType.includes(st))) {
-        const signals = await extractor.extract(rawData);
+        const signals = (await extractor.extract(rawData)).map((signal) => ({
+          ...signal,
+          sourceType,
+        }));
         allSignals.push(...signals);
       }
     }
 
     if (semanticExtractor.sourceTypes.includes(sourceType)) {
       try {
-        const semanticSignals = await semanticExtractor.extract(rawData);
+        const semanticSignals = (await semanticExtractor.extract(rawData)).map((signal) => ({
+          ...signal,
+          sourceType,
+        }));
         const existingValues = new Set(allSignals.map(signal => signal.value.toLowerCase()));
         const newSemanticSignals = semanticSignals.filter(signal => !existingValues.has(signal.value.toLowerCase()));
         allSignals.push(...newSemanticSignals);
@@ -351,65 +508,24 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
         logger.warn({ err, sourceId: rawData.sourceId }, 'Semantic extraction failed');
       }
     }
-    
-    for (const signal of allSignals) {
-      await runWriteSingle(
-        `MATCH (d:DataSource {id: $sourceId})
-         CREATE (s:Signal {
-           id: $signalId,
-           type: $type,
-           value: $value,
-           confidence: $confidence,
-           evidence: $evidence,
-           timestamp: datetime($signalTimestamp),
-           dimensions: $dimensions
-         })
-         CREATE (d)-[:HAS_SIGNAL]->(s)
-         RETURN s.id as id`,
-        {
-          sourceId,
-          signalId: signal.id,
-          type: signal.type,
-          value: signal.value,
-          confidence: signal.confidence,
-          evidence: signal.evidence,
-          signalTimestamp: signal.timestamp,
-          dimensions: JSON.stringify(signal.dimensions),
-        }
-      );
-    }
+
+    await persistSignalsForSourceFile(fileId, allSignals);
 
     let signalEmbeddings = new Map<string, number[]>();
     if (allSignals.length > 0 && EmbeddingService.isAvailable()) {
       try {
         const service = EmbeddingService.getInstance();
-        const signalTexts = allSignals.map(signal => {
-          const d = parseTimestamp(signal.timestamp);
-          let temporalPrefix = '';
-          if (d) {
-            const h = d.getUTCHours();
-            let timeOfDay = 'late_night';
-            if (h >= 5 && h < 12) timeOfDay = 'morning';
-            else if (h >= 12 && h < 17) timeOfDay = 'afternoon';
-            else if (h >= 17 && h < 22) timeOfDay = 'evening';
-            const day = d.getUTCDay();
-            const dayOfWeek = (day === 0 || day === 6) ? 'weekend' : 'weekday';
-            temporalPrefix = `[${timeOfDay}, ${dayOfWeek}] `;
-          }
-          return `${temporalPrefix}${signal.type}: ${signal.value} — ${signal.evidence}`;
-        });
+        const signalTexts = allSignals.map(buildSignalText);
         const embeddings = await service.embedBatch(signalTexts);
+        const embeddingPayloads: Array<{ signalId: string; embedding: number[] }> = [];
 
         for (let i = 0; i < allSignals.length; i++) {
           const embedding = embeddings[i];
           signalEmbeddings.set(allSignals[i].id, embedding);
-          await runWriteSingle(
-            `MATCH (s:Signal {id: $signalId})
-             SET s.embedding = $embedding
-             RETURN s.id as id`,
-            { signalId: allSignals[i].id, embedding }
-          );
+          embeddingPayloads.push({ signalId: allSignals[i].id, embedding });
         }
+
+        await persistSignalEmbeddings(embeddingPayloads);
 
         const sequences = detectSequences(allSignals, signalEmbeddings);
         const compositeSignals: BehavioralSignal[] = [];
@@ -427,69 +543,31 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
             confidence: Math.min(1, avgBaseConfidence * progressionMultiplier),
             evidence: `Composite sequence of ${capped.length} temporally clustered signals forming a tracked pattern.`,
             sourceDataId: sourceId,
+            sourceType,
             timestamp: capped[capped.length - 1].timestamp,
             dimensions: {
               temporalCluster: 'sequence',
               recurrence: capped.length,
-            }
+            },
           };
           compositeSignals.push(compositeSignal);
         }
 
         if (compositeSignals.length > 0) {
-          const compositeTexts = compositeSignals.map(signal => {
-            const d = parseTimestamp(signal.timestamp);
-            let temporalPrefix = '';
-            if (d) {
-              const h = d.getUTCHours();
-              let timeOfDay = 'late_night';
-              if (h >= 5 && h < 12) timeOfDay = 'morning';
-              else if (h >= 12 && h < 17) timeOfDay = 'afternoon';
-              else if (h >= 17 && h < 22) timeOfDay = 'evening';
-              const day = d.getUTCDay();
-              const dayOfWeek = (day === 0 || day === 6) ? 'weekend' : 'weekday';
-              temporalPrefix = `[${timeOfDay}, ${dayOfWeek}] `;
-            }
-            return `${temporalPrefix}${signal.type}: ${signal.value} — ${signal.evidence}`;
-          });
-
+          const compositeTexts = compositeSignals.map(buildSignalText);
           const compositeEmbs = await service.embedBatch(compositeTexts);
+          await persistSignalsForSourceFile(fileId, compositeSignals);
+          const compositeEmbeddingPayloads: Array<{ signalId: string; embedding: number[] }> = [];
 
           for (let i = 0; i < compositeSignals.length; i++) {
             const sig = compositeSignals[i];
             const emb = compositeEmbs[i];
-
-            await runWriteSingle(
-              `CREATE (s:Signal {
-                 id: $signalId,
-                 type: $type,
-                 value: $value,
-                 confidence: $confidence,
-                 evidence: $evidence,
-                 timestamp: datetime($signalTimestamp),
-                 dimensions: $dimensions
-               })
-               WITH s
-               MATCH (d:DataSource {id: $sourceId})
-               CREATE (d)-[:HAS_SIGNAL]->(s)
-               SET s.embedding = $embedding
-               RETURN s.id as id`,
-              {
-                sourceId,
-                signalId: sig.id,
-                type: sig.type,
-                value: sig.value,
-                confidence: sig.confidence,
-                evidence: sig.evidence,
-                signalTimestamp: sig.timestamp,
-                dimensions: JSON.stringify(sig.dimensions),
-                embedding: emb
-              }
-            );
-
+            compositeEmbeddingPayloads.push({ signalId: sig.id, embedding: emb });
             allSignals.push(sig);
             signalEmbeddings.set(sig.id, emb);
           }
+
+          await persistSignalEmbeddings(compositeEmbeddingPayloads);
         }
 
         logger.info({ sourceId, embeddedCount: allSignals.length, sequencesFound: compositeSignals.length }, 'Signal embeddings stored');
@@ -516,68 +594,16 @@ async function processIngestion(job: Job<IngestionJobData>): Promise<void> {
 
       const detector = new ContradictionDetector(allSignals, signalEmbeddings, dimensionConceptEmbs, existingContradictions);
       const contradictions = await detector.detect();
-      
-      for (const contradiction of contradictions) {
-        const { statedSignalId, revealedSignalId } = getContradictionRoleAssignment(contradiction);
-
-        await runWriteSingle(
-          `MERGE (c:Contradiction {id: $id})
-           ON CREATE SET c.createdAt = datetime()
-           SET c.type = $type,
-               c.description = $description,
-               c.severity = $severity,
-               c.magnitude = $magnitude,
-               c.affectedDimensions = $affectedDimensions,
-               c.statedSignalId = $statedSignalId,
-               c.revealedSignalId = $revealedSignalId,
-               c.convergenceRate = $convergenceRate,
-               c.isPermanentTrait = $isPermanentTrait,
-               c.firstSeen = datetime($firstSeen),
-               c.lastSeen = datetime($lastSeen),
-               c.updatedAt = datetime()
-          WITH c
-          MATCH (s1:Signal {id: $signalAId}), (s2:Signal {id: $signalBId})
-          MERGE (s1)-[:CONTRADICTS]->(c)<-[:CONTRADICTS]-(s2)
-          RETURN c.id as id`,
-          {
-            id: contradiction.id,
-            type: contradiction.type,
-            description: contradiction.description,
-            severity: contradiction.severity,
-            magnitude: contradiction.magnitude,
-            affectedDimensions: JSON.stringify(contradiction.affectedDimensions),
-            statedSignalId,
-            revealedSignalId,
-            signalAId: contradiction.signalAId,
-            signalBId: contradiction.signalBId,
-            convergenceRate: contradiction.convergenceRate ?? 0,
-            isPermanentTrait: contradiction.isPermanentTrait ?? false,
-            firstSeen: contradiction.firstSeen,
-            lastSeen: contradiction.lastSeen,
-          }
-        );
-      }
+      await persistContradictions(contradictions);
     }
-    
-    await runWriteSingle(
-      `MATCH (d:DataSource {id: $sourceId})
-       SET d.status = 'completed', d.completedAt = datetime(), d.signalCount = $signalCount
-       RETURN d.id as id`,
-      { sourceId, signalCount: allSignals.length }
-    );
-    
-    logger.info({ jobId: job.id, signalCount: allSignals.length }, 'Ingestion complete');
-    
+
+    await markSourceFileCompleted(fileId, allSignals.length, Date.now() - startedAtMs);
+    await refreshDataSourceAggregate(sourceId);
+    logger.info({ jobId: job.id, fileId, signalCount: allSignals.length }, 'Ingestion complete');
   } catch (err) {
-    logger.error({ err, jobId: job.id }, 'Ingestion failed');
-    
-    await runWriteSingle(
-      `MATCH (d:DataSource {id: $sourceId})
-       SET d.status = 'failed', d.error = $error, d.failedAt = datetime()
-       RETURN d.id as id`,
-      { sourceId, error: (err as Error).message }
-    );
-    
+    logger.error({ err, jobId: job.id, fileId }, 'Ingestion failed');
+    await markSourceFileFailed(fileId, (err as Error).message, Date.now() - startedAtMs);
+    await refreshDataSourceAggregate(sourceId);
     throw err;
   }
 }
@@ -732,16 +758,16 @@ async function processIncrementalUpdate(
 }
 
 async function fetchSignals(userId: string, onlyNewSignals: boolean = false): Promise<BehavioralSignal[]> {
-  const filters = ["d.status = 'completed'"];
+  const filters = ["f.status = 'completed'"];
   if (onlyNewSignals) {
     filters.push('NOT EXISTS { MATCH (:Persona)-[:DERIVED_FROM]->(s) }');
   }
 
   const records = await runQuery<StoredSignalRecord>(
-    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)-[:HAS_SIGNAL]->(s:Signal)
+    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_FILE]->(f:SourceFile)-[:HAS_SIGNAL]->(s:Signal)
      WHERE ${filters.join(' AND ')}
      RETURN s.id as id,
-            coalesce(d.sourceType, d.type) as sourceType,
+            coalesce(s.sourceType, f.detectedSourceType, 'files') as sourceType,
             s.type as type,
             s.value as value,
             s.confidence as confidence,
@@ -803,7 +829,7 @@ async function fetchContradictions(userId: string): Promise<SignalContradiction[
     lastSeen: string | null;
     connectedSignalIds: string[] | null;
   }>(
-    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_SIGNAL]->(:Signal)-[:CONTRADICTS]->(c:Contradiction)
+    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_FILE]->(:SourceFile)-[:HAS_SIGNAL]->(:Signal)-[:CONTRADICTS]->(c:Contradiction)
      WITH DISTINCT c
      OPTIONAL MATCH (s:Signal)-[:CONTRADICTS]->(c)
      RETURN c.id as id,
