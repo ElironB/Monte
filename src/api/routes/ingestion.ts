@@ -1,4 +1,3 @@
-import type { MultipartFile } from '@fastify/multipart';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
@@ -74,19 +73,31 @@ function buildUploadObjectName(userId: string, filename: string): string {
   return `uploads/${userId}/${uuidv4()}-${filename}`;
 }
 
-async function extractMultipartUpload(request: FastifyRequest): Promise<{
-  file: MultipartFile;
+export interface ExtractedMultipartUpload {
+  file: {
+    filename: string;
+    mimetype: string;
+    buffer: Buffer;
+  };
   fields: Record<string, string>;
-}> {
+}
+
+export async function extractMultipartUpload(request: FastifyRequest): Promise<ExtractedMultipartUpload> {
   const fields: Record<string, string> = {};
-  let filePart: MultipartFile | null = null;
+  let filePart: ExtractedMultipartUpload['file'] | null = null;
 
   for await (const part of request.parts()) {
     if (part.type === 'file') {
       if (filePart) {
+        await part.toBuffer().catch(() => {});
         throw new ValidationError('Upload exactly one file per request.');
       }
-      filePart = part;
+
+      filePart = {
+        filename: part.filename,
+        mimetype: part.mimetype,
+        buffer: await part.toBuffer(),
+      };
       continue;
     }
 
@@ -214,19 +225,18 @@ async function ingestionRoutes(fastify: FastifyInstance) {
 
       const { file, fields } = await extractMultipartUpload(request);
       const detectedSourceType = asDetectedSourceType(fields.detectedSourceType, 'files');
-      const buffer = await file.toBuffer();
       const sourceFile = await createSourceFileRecord({
         sourceId: id,
         filename: file.filename,
         originalPath: fields.originalPath || null,
         mimetype: file.mimetype,
-        sizeBytes: buffer.byteLength,
+        sizeBytes: file.buffer.byteLength,
         detectedSourceType,
       });
 
       try {
         const objectName = buildUploadObjectName(request.user.userId, file.filename);
-        await uploadFile(objectName, buffer, file.mimetype);
+        await uploadFile(objectName, file.buffer, file.mimetype);
         await attachSourceFileObject(sourceFile.id, objectName);
         await scheduleIngestionJob({
           userId: request.user.userId,
@@ -489,7 +499,17 @@ async function ingestionRoutes(fastify: FastifyInstance) {
           confidence: number;
           evidence: string;
         }>(
-          `MATCH (:DataSource {id: $sourceId})-[:HAS_FILE]->(:SourceFile)-[:HAS_SIGNAL]->(s:Signal)
+          `MATCH (d:DataSource {id: $sourceId})
+           CALL {
+             WITH d
+             MATCH (d)-[:HAS_FILE]->(:SourceFile)-[:HAS_SIGNAL]->(s:Signal)
+             RETURN s
+             UNION
+             WITH d
+             MATCH (d)-[:HAS_SIGNAL]->(s:Signal)
+             RETURN s
+           }
+           WITH DISTINCT s
            RETURN s.id as id,
                   s.type as type,
                   s.value as value,
@@ -518,7 +538,13 @@ async function ingestionRoutes(fastify: FastifyInstance) {
         `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource {id: $sourceId})
          OPTIONAL MATCH (d)-[:HAS_FILE]->(f:SourceFile)
          OPTIONAL MATCH (f)-[:HAS_SIGNAL]->(s:Signal)
-         DETACH DELETE d, f, s`,
+         OPTIONAL MATCH (d)-[:HAS_SIGNAL]->(legacySignal:Signal)
+         WITH d,
+              collect(DISTINCT f) as files,
+              collect(DISTINCT s) + collect(DISTINCT legacySignal) as signals
+         FOREACH (signal IN signals | DETACH DELETE signal)
+         FOREACH (fileNode IN files | DETACH DELETE fileNode)
+         DETACH DELETE d`,
         { userId: request.user.userId, sourceId: id },
       );
       reply.status(204);

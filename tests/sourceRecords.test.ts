@@ -53,4 +53,30 @@ describe('source aggregate status derivation', () => {
       failedFileCount: 2,
     })).toBe('failed');
   });
+
+  test('marks fully skipped imports as completed instead of failed', () => {
+    expect(deriveAggregateStatus({
+      expectedFileCount: 2,
+      uploadComplete: true,
+      uploadedFileCount: 2,
+      pendingFileCount: 0,
+      processingFileCount: 0,
+      completedFileCount: 0,
+      skippedFileCount: 2,
+      failedFileCount: 0,
+    })).toBe('completed');
+  });
+
+  test('marks skipped plus failed imports as partial when not every file failed', () => {
+    expect(deriveAggregateStatus({
+      expectedFileCount: 2,
+      uploadComplete: true,
+      uploadedFileCount: 2,
+      pendingFileCount: 0,
+      processingFileCount: 0,
+      completedFileCount: 0,
+      skippedFileCount: 1,
+      failedFileCount: 1,
+    })).toBe('partial');
+  });
 });

@@ -114,8 +114,12 @@ export function deriveAggregateStatus(summary: SourceAggregateSummary): Ingestio
     return 'completed';
   }
 
-  if (summary.completedFileCount === 0) {
+  if (summary.failedFileCount === summary.uploadedFileCount) {
     return 'failed';
+  }
+
+  if (summary.completedFileCount + summary.skippedFileCount === summary.uploadedFileCount) {
+    return 'completed';
   }
 
   return 'partial';

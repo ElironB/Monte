@@ -758,23 +758,32 @@ async function processIncrementalUpdate(
 }
 
 async function fetchSignals(userId: string, onlyNewSignals: boolean = false): Promise<BehavioralSignal[]> {
-  const filters = ["f.status = 'completed'"];
-  if (onlyNewSignals) {
-    filters.push('NOT EXISTS { MATCH (:Persona)-[:DERIVED_FROM]->(s) }');
-  }
-
   const records = await runQuery<StoredSignalRecord>(
-    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_FILE]->(f:SourceFile)-[:HAS_SIGNAL]->(s:Signal)
-     WHERE ${filters.join(' AND ')}
-     RETURN s.id as id,
-            coalesce(s.sourceType, f.detectedSourceType, 'files') as sourceType,
-            s.type as type,
-            s.value as value,
-            s.confidence as confidence,
-            s.evidence as evidence,
-            toString(s.timestamp) as timestamp,
-            s.dimensions as dimensions`,
-    { userId }
+    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)
+     CALL {
+       WITH d, $onlyNewSignals as onlyNewSignals
+       MATCH (d)-[:HAS_FILE]->(f:SourceFile)-[:HAS_SIGNAL]->(s:Signal)
+       WHERE f.status = 'completed'
+         AND (NOT onlyNewSignals OR NOT EXISTS { MATCH (:Persona)-[:DERIVED_FROM]->(s) })
+       RETURN s as signal,
+              coalesce(s.sourceType, f.detectedSourceType, d.sourceType, 'files') as resolvedSourceType
+       UNION
+       WITH d, $onlyNewSignals as onlyNewSignals
+       MATCH (d)-[:HAS_SIGNAL]->(s:Signal)
+       WHERE NOT onlyNewSignals OR NOT EXISTS { MATCH (:Persona)-[:DERIVED_FROM]->(s) }
+       RETURN s as signal,
+              coalesce(s.sourceType, d.sourceType, 'files') as resolvedSourceType
+     }
+     WITH DISTINCT signal, resolvedSourceType
+     RETURN signal.id as id,
+            resolvedSourceType as sourceType,
+            signal.type as type,
+            signal.value as value,
+            signal.confidence as confidence,
+            signal.evidence as evidence,
+            toString(signal.timestamp) as timestamp,
+            signal.dimensions as dimensions`,
+    { userId, onlyNewSignals }
   );
 
   return records.map(record => ({
@@ -829,7 +838,16 @@ async function fetchContradictions(userId: string): Promise<SignalContradiction[
     lastSeen: string | null;
     connectedSignalIds: string[] | null;
   }>(
-    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(:DataSource)-[:HAS_FILE]->(:SourceFile)-[:HAS_SIGNAL]->(:Signal)-[:CONTRADICTS]->(c:Contradiction)
+    `MATCH (u:User {id: $userId})-[:HAS_DATA_SOURCE]->(d:DataSource)
+     CALL {
+       WITH d
+       MATCH (d)-[:HAS_FILE]->(:SourceFile)-[:HAS_SIGNAL]->(:Signal)-[:CONTRADICTS]->(c:Contradiction)
+       RETURN c
+       UNION
+       WITH d
+       MATCH (d)-[:HAS_SIGNAL]->(:Signal)-[:CONTRADICTS]->(c:Contradiction)
+       RETURN c
+     }
      WITH DISTINCT c
      OPTIONAL MATCH (s:Signal)-[:CONTRADICTS]->(c)
      RETURN c.id as id,
