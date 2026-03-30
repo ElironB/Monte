@@ -25,7 +25,7 @@ This repository is a self-hosted Monte backend. Treat the current product as a F
   - `stressResponse`
 - Monte currently ships 8 scenario types including `custom`.
 - The simulation stack includes a causal state model, belief state model, experiment recommendations, evidence capture, evidence-adjusted reruns, phase-aware live progress, and batched clone-result persistence.
-- Monte also exposes an additive personalization surface through `/personalization/profile`, `/personalization/context`, and `monte personalize ...`.
+- Monte also exposes an additive personalization surface through `/personalization/bootstrap`, `/personalization/profile`, `/personalization/context`, and `monte personalize ...`.
 - Monte now also uses a node-frontier scheduler, batches concurrent LLM decisions by decision node, and stores runtime telemetry on completed simulations.
 - The batched evaluator can now learn smaller preferred batch sizes after repeated provider-side batch failures; do not remove that adaptive recovery without replacing the performance guardrail.
 - The benchmark harness is a first-class regression surface and must stay deterministic.
@@ -117,6 +117,7 @@ For docs-only changes, at minimum review the working tree and make sure the majo
 Repo-local:
 
 ```bash
+npm run cli:dev -- ingest ./path/to/data --dry-run
 npm run cli:dev -- ingest ./path/to/data
 npm run cli:dev -- persona build
 npm run cli:dev -- persona status
@@ -127,6 +128,7 @@ Installed CLI:
 
 ```bash
 monte example ingest starter
+monte ingest ./path/to/data --dry-run
 monte ingest ./path/to/data
 monte persona build
 monte persona status
@@ -172,7 +174,8 @@ monte config set-provider openrouter
 monte config set-api-key <key>
 monte example ingest starter
 monte doctor --json
-monte decide "should I make this move?" --mode standard --wait --json
+monte personalize bootstrap "Help me think through this move" --json
+monte decide "simulate whether I should make this move?" --mode standard --wait --json
 ```
 
 ### Benchmark workflow
@@ -189,7 +192,7 @@ npm run test:benchmarks
 - Evidence-loop changes: audit `src/simulation/evidenceLoop.ts`, `src/api/routes/simulation.ts`, `src/cli/commands/simulation.ts`, `src/cli/commands/decide.ts`, and benchmark expectations.
 - Progress or wait-loop changes: audit `src/simulation/progress.ts`, `src/api/routes/stream.ts`, `src/ingestion/queue/workers/index.ts`, and `src/cli/commands/simulation.ts`.
 - Throughput changes: audit `src/simulation/forkEvaluator.ts`, `src/simulation/engine.ts`, `src/simulation/runtimeTelemetry.ts`, `src/ingestion/queue/workers/index.ts`, and the CLI results output together.
-- Throughput config changes: keep `SIMULATION_DECISION_CONCURRENCY`, `SIMULATION_ACTIVE_FRONTIER`, `SIMULATION_DECISION_BATCH_SIZE`, and the legacy `SIMULATION_CONCURRENCY` alias documented consistently.
+- Throughput config changes: keep `SIMULATION_DECISION_CONCURRENCY`, `SIMULATION_ACTIVE_FRONTIER`, `SIMULATION_DECISION_BATCH_SIZE`, `INGESTION_WORKER_CONCURRENCY`, and the legacy `SIMULATION_CONCURRENCY` alias documented consistently.
 - Dimension changes: audit `src/persona/dimensionMapper.ts`, persona graph and compression, CLI and report surfaces, and docs.
 - Benchmark changes: update both the harness and its tests.
 - Package and install changes: audit `package.json`, CLI entrypoints, and the major docs together.

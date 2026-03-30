@@ -425,6 +425,11 @@ export interface DataSourceListItem {
   name: string;
   status: string;
   signalCount: number;
+  fileCount: number;
+  uploadedFileCount: number;
+  completedFileCount: number;
+  skippedFileCount: number;
+  failedFileCount: number;
   createdAt: string;
 }
 
@@ -445,11 +450,35 @@ export interface DataSourceDetail {
   sourceType: string;
   name: string;
   status: string;
-  progress: number;
   signalCount: number;
+  fileCount: number;
+  uploadedFileCount: number;
+  pendingFileCount: number;
+  processingFileCount: number;
+  completedFileCount: number;
+  skippedFileCount: number;
+  failedFileCount: number;
+  expectedFileCount: number;
   metadata: Record<string, unknown>;
   createdAt: string;
   completedAt?: string;
+  files: Array<{
+    id: string;
+    filename: string;
+    originalPath?: string | null;
+    objectName?: string | null;
+    mimetype: string;
+    sizeBytes: number;
+    detectedSourceType: string;
+    status: string;
+    signalCount: number;
+    skipReason?: string | null;
+    error?: string | null;
+    processingDurationMs?: number | null;
+    createdAt: string;
+    startedAt?: string | null;
+    completedAt?: string | null;
+  }>;
   signals: Array<{
     id: string;
     type: string;

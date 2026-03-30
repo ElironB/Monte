@@ -39,10 +39,12 @@ The API mounts route groups for:
 
 `src/cli/index.ts` bootstraps the local and globally installable CLI. The CLI stores user config in `~/.monte/config.json`, including the target API URL plus optional provider credentials for global usage when no repo-local `.env` is present.
 
+The ingestion CLI defaults to a docs-first scan of `.json`, `.csv`, `.txt`, `.md`, `.pdf`, and `.docx`, supports `--dry-run` for previewing included vs skipped files, and only uploads media when the operator explicitly uses `--include-media`.
+
 The agent-facing entrypoint is:
 
-- `monte decide`
 - `monte personalize`
+- `monte decide`
 
 The installed server entrypoint is:
 
@@ -95,18 +97,19 @@ In open-source and self-hosted mode, auth is intentionally simplified. `src/api/
 ## End-to-end data flow
 
 1. A user uploads files or prepares connected sources.
-2. Ingestion normalizes raw input into `RawSourceData`.
-3. Rule-based extractors derive `BehavioralSignal` records.
-4. Contradiction detection identifies tension between signals.
-5. Persona build maps signals into dimensions, stores trait and memory nodes, and compresses them into a master persona.
-6. The personalization layer reuses the latest ready persona to build deterministic guidance for agent tone, pacing, structure, and task framing.
-7. Clone generation creates a stratified distribution around that persona.
-8. Scenario compilation builds a runnable decision graph.
-9. Simulation batches execute clones and batch-persist their results.
-10. Aggregation reduces the full result set into distributions, decision intelligence, and optional narrative output.
-11. Evidence can be recorded against a completed simulation.
-12. Evidence-adjusted reruns reuse the scenario with updated causal and belief state.
-13. The benchmark harness exercises a seeded corpus to catch regressions.
+2. Ingestion creates a logical source session, stores per-file status records, and uploads files one at a time.
+3. Ingestion normalizes extracted text-like input into `RawSourceData`.
+4. Rule-based extractors derive `BehavioralSignal` records.
+5. Contradiction detection identifies tension between signals.
+6. Persona build maps signals into dimensions, stores trait and memory nodes, and compresses them into a master persona.
+7. The personalization layer reuses the latest ready persona to build deterministic guidance for agent tone, pacing, structure, and task framing.
+8. Clone generation creates a stratified distribution around that persona.
+9. Scenario compilation builds a runnable decision graph.
+10. Simulation batches execute clones and batch-persist their results.
+11. Aggregation reduces the full result set into distributions, decision intelligence, and optional narrative output.
+12. Evidence can be recorded against a completed simulation.
+13. Evidence-adjusted reruns reuse the scenario with updated causal and belief state.
+14. The benchmark harness exercises a seeded corpus to catch regressions.
 
 ## Persona system
 
@@ -153,8 +156,10 @@ This layer is synchronous and deterministic relative to the dimension scores. It
 
 The personalization surface is additive and deterministic. It reads the latest ready persona plus trait confidence and exposes:
 
+- `/personalization/bootstrap` for agent bootstrap, readiness, and surface selection
 - `/personalization/profile` for a stable agent-facing profile
 - `/personalization/context` for task-aware guidance
+- `monte personalize bootstrap`
 - `monte personalize profile`
 - `monte personalize context`
 
@@ -405,6 +410,7 @@ Installed usage prefers:
 - `monte simulate`
 - `monte simulate progress <id> --json`
 - `monte simulate results <id> -f json`
+- `monte personalize bootstrap "<task>" --json`
 - `monte decide "<question>" --mode standard --wait --json`
 - `monte doctor --json`
 - `monte config set-api http://localhost:3000`

@@ -14,13 +14,16 @@ export class MonteAPIError extends Error {
 async function makeRequest(endpoint: string, options: RequestInit = {}): Promise<unknown> {
   const config = loadConfig();
   const url = `${config.apiUrl}${endpoint}`;
+  const headers = new Headers(options.headers);
+  const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
+
+  if (options.body !== undefined && !isFormDataBody && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   const response = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -43,6 +46,16 @@ export const api = {
   getPersonaHistory: () => makeRequest('/persona/history'),
   getPersonaTraits: () => makeRequest('/persona/traits'),
   getPersonaPsychology: () => makeRequest('/persona/psychology'),
+  getPersonalizationBootstrap: (payload: {
+    task: string;
+    mode?: string;
+    agentName?: string;
+    additionalContext?: string;
+  }) =>
+    makeRequest('/personalization/bootstrap', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getPersonalizationProfile: () => makeRequest('/personalization/profile'),
   getPersonalizationContext: (payload: {
     task: string;
@@ -109,10 +122,43 @@ export const api = {
 
   // Ingestion
   listDataSources: () => makeRequest('/ingestion/sources'),
-  createDataSource: (sourceType: string, name: string, metadata?: Record<string, unknown>) =>
+  createDataSource: (
+    sourceType: string,
+    name: string,
+    metadata?: Record<string, unknown>,
+    expectedFileCount?: number,
+  ) =>
     makeRequest('/ingestion/sources', {
       method: 'POST',
-      body: JSON.stringify({ sourceType, name, metadata }),
+      body: JSON.stringify({ sourceType, name, metadata, expectedFileCount }),
+    }),
+  uploadSourceFile: (
+    sourceId: string,
+    payload: {
+      filename: string;
+      mimetype: string;
+      buffer: Buffer;
+      originalPath?: string;
+      detectedSourceType?: string;
+    },
+  ) => {
+    const formData = new FormData();
+    formData.append('file', new Blob([new Uint8Array(payload.buffer)], { type: payload.mimetype }), payload.filename);
+    if (payload.originalPath) {
+      formData.append('originalPath', payload.originalPath);
+    }
+    if (payload.detectedSourceType) {
+      formData.append('detectedSourceType', payload.detectedSourceType);
+    }
+
+    return makeRequest(`/ingestion/sources/${sourceId}/files`, {
+      method: 'POST',
+      body: formData,
+    });
+  },
+  finalizeDataSourceUpload: (sourceId: string) =>
+    makeRequest(`/ingestion/sources/${sourceId}/finalize`, {
+      method: 'POST',
     }),
   uploadFiles: (files: Array<{ filename: string; content: string; mimetype: string }>, sourceType?: string) =>
     makeRequest('/ingestion/upload', {

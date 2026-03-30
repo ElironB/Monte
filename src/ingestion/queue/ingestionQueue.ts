@@ -9,9 +9,7 @@ export const SIMULATION_QUEUE = 'simulation';
 export interface IngestionJobData {
   userId: string;
   sourceId: string;
-  sourceType: string;
-  filePath?: string;
-  metadata?: Record<string, unknown>;
+  fileId: string;
 }
 
 export interface PersonaJobData {
@@ -59,9 +57,13 @@ export function getSimulationQueue(): Queue<SimulationJobData> {
 }
 
 export function createWorker<T>(queueName: string, processor: (job: Job<T>) => Promise<unknown>): Worker<T> {
+  const concurrency = queueName === INGESTION_QUEUE
+    ? config.ingestion.workerConcurrency
+    : config.simulation.workerConcurrency;
+
   const worker = new Worker<T>(queueName, processor, {
     connection: getConnection(),
-    concurrency: config.simulation.workerConcurrency,
+    concurrency,
   });
   worker.on('completed', (job) => logger.info({ jobId: job.id }, 'Job completed'));
   worker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, 'Job failed'));

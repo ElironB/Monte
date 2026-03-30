@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { assertBundledExamplePersonaExists, getBundledExamplePersona, listBundledExamplePersonas } from '../examples.js';
-import { groupDiscoveredFiles, resolveDiscoveredFiles, uploadDiscoveredFiles } from '../ingestUtils.js';
+import { resolveDiscoveredFiles, uploadDiscoveredFiles } from '../ingestUtils.js';
 import { dimText, icons, infoLabel, sectionHeader, statusColor, valueText } from '../styles.js';
 
 export const exampleCommands = new Command('example')
@@ -38,15 +38,14 @@ exampleCommands
     try {
       const example = getBundledExamplePersona(id);
       const examplePath = assertBundledExamplePersonaExists(id);
-      const { files } = resolveDiscoveredFiles(examplePath, {
+      const discovery = resolveDiscoveredFiles(examplePath, {
         excludeFilenames: ['README.md'],
       });
+      const { files } = discovery;
 
       if (files.length === 0) {
         throw new Error(`No files found in bundled example persona: ${examplePath}`);
       }
-
-      const groups = groupDiscoveredFiles(files);
 
       console.log(`\n${sectionHeader('Bundled Example Persona')}`);
       console.log(`  ${infoLabel('Example:')} ${valueText(example.name)}`);
@@ -54,20 +53,26 @@ exampleCommands
       console.log(`  ${infoLabel('Files:')} ${valueText(files.length)}`);
       console.log(`  ${infoLabel('Prompt:')} ${dimText(example.recommendedQuestion)}`);
 
-      await uploadDiscoveredFiles(groups, {
-        onGroupStart: (sourceType) => {
-          console.log(`\n${sectionHeader(`Uploading ${sourceType}`)}`);
-        },
-        onBatchStart: (_sourceType, batchIndex, totalBatches, batchSize) => {
-          process.stdout.write(`  ${infoLabel(`[${batchIndex}/${totalBatches}]`)} ${dimText(`Uploading ${batchSize} file(s)...`)}`);
-        },
-        onBatchComplete: (_sourceType, batchIndex, totalBatches, _batchSize, result) => {
-          process.stdout.write(`\r  ${icons.success} ${chalk.green.bold(`Batch ${batchIndex}/${totalBatches}`)} ${dimText('→')} ${chalk.cyan(result.sourceId)} ${statusColor(result.status)}\n`);
+      await uploadDiscoveredFiles(discovery, {
+        sourceName: `${example.name} example`,
+        hooks: {
+          onSourceCreated: (source) => {
+            console.log(`\n${sectionHeader(`Uploading ${source.sourceType}`)}`);
+          },
+          onFileStart: (_file, batchIndex, totalBatches) => {
+            process.stdout.write(`  ${infoLabel(`[${batchIndex}/${totalBatches}]`)} ${dimText('Uploading file...')}`);
+          },
+          onFileComplete: (_file, batchIndex, totalBatches, result) => {
+            process.stdout.write(`\r  ${icons.success} ${chalk.green.bold(`File ${batchIndex}/${totalBatches}`)} ${dimText('→')} ${chalk.cyan(result.fileId)} ${statusColor(result.status)}\n`);
+          },
+          onFinalize: (result) => {
+            console.log(`  ${infoLabel('Source:')} ${chalk.cyan(result.sourceId)} ${statusColor(result.status)}`);
+          },
         },
       });
 
       console.log(`\n${icons.success} ${chalk.green.bold('Bundled example ingested')}`);
-      console.log(`  ${dimText('Run `monte persona build` next, then ask Monte a hard question with `monte decide "... --wait"`.')}`);
+      console.log(`  ${dimText('Run `monte persona build` next, then start with `monte personalize bootstrap "Help me with this task" --json`.')}`);
     } catch (err) {
       console.error(`${icons.error} ${(err as Error).message}`);
       process.exit(1);

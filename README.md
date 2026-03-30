@@ -150,6 +150,7 @@ Optional runtime tuning:
 - `SIMULATION_ACTIVE_FRONTIER`
 - `SIMULATION_CONCURRENCY` (legacy alias for decision concurrency)
 - `SIMULATION_WORKER_CONCURRENCY`
+- `INGESTION_WORKER_CONCURRENCY`
 - `SIMULATION_DECISION_BATCH_SIZE`
 - `SIMULATION_DECISION_BATCH_FLUSH_MS`
 - `LLM_RPM_LIMIT`
@@ -203,17 +204,34 @@ npm run web:build
 monte personalize profile --json
 ```
 
+## Ingestion defaults
+
+Monte now scans with a docs-first default:
+
+- keep `.json`, `.csv`, `.txt`, `.md`, `.pdf`, and `.docx`
+- skip obvious media and generated binary assets unless you explicitly opt in
+- detect supported exports from file content, not just English filenames
+
+Useful operator shortcuts:
+
+```bash
+monte ingest /path/to/export --dry-run
+monte ingest /path/to/export --include-media
+```
+
 ## Agent personalization
 
 Once you have ingested data and built a persona, agents can use Monte without starting a simulation:
 
 ```bash
-monte personalize profile --json
+monte personalize bootstrap "Help me plan next week" --json
 monte personalize context "Help me plan next week" --json
+monte personalize profile --json
 ```
 
 The API exposes the same additive surface:
 
+- `POST /personalization/bootstrap`
 - `GET /personalization/profile`
 - `POST /personalization/context`
 
@@ -233,13 +251,14 @@ Default sequence:
 
 ```bash
 npm install -g monte-engine
+monte ingest /temp --dry-run
 monte ingest /temp
 monte persona build
 monte persona status
-monte personalize profile --json
+monte personalize bootstrap "Help me with this task" --json
 ```
 
-If the user gave you a concrete task, continue with:
+If you want the task-aware guidance directly, continue with:
 
 ```bash
 monte personalize context "Help me with this task" --json
@@ -248,6 +267,7 @@ monte personalize context "Help me with this task" --json
 Use these heuristics:
 
 - If the persona is not ready yet, keep checking `monte persona status` until it is.
+- Start with `monte personalize bootstrap ...` when you need one machine-readable answer about readiness, next step, and whether Monte should stay on personalization or escalate to simulation.
 - Use `monte personalize ...` for adapting tone, pacing, structure, planning, writing, learning, or decision guidance to the user.
 - Use `monte decide ...` only when the user explicitly wants a simulation-style judgment call.
 - If `monte` commands fail because the local API stack is not running yet, fall back to the setup sections in this README and bring the stack up before continuing.
@@ -312,7 +332,7 @@ Repo contributors should still use `npm run dev` plus `npm run web:dev` when the
 
 ## Agent Integration
 
-Monte is designed to be usable as a CLI step inside external agent systems like Claude Code, OpenClaw, or Hermes. The agent-facing entrypoint is `monte decide`.
+Monte is designed to be usable as a CLI step inside external agent systems like Claude Code, OpenClaw, or Hermes. The default agent-facing entrypoint is `monte personalize bootstrap`.
 
 Preflight:
 
@@ -326,18 +346,24 @@ monte doctor --json
 One-shot decision:
 
 ```bash
-monte decide "should I quit my job to start a company?" --mode standard --wait --json
+monte personalize bootstrap "Help me decide whether to quit my job to start a company" --json
 ```
 
-Async flow:
+Task-aware personalization:
 
 ```bash
-monte decide "should I move to Berlin for this job?" --mode fast --json
+monte personalize context "Help me move to Berlin for this job" --json
+```
+
+Explicit simulation flow:
+
+```bash
+monte decide "simulate whether I should move to Berlin for this job" --mode fast --json
 monte simulate progress <simulation-id> --json
 monte simulate results <simulation-id> -f json
 ```
 
-`monte decide --json` returns a single JSON object. Without `--wait`, it returns the queued simulation plus recommended polling commands. With `--wait`, it also returns a condensed decision bundle and the raw aggregated results payload.
+`monte personalize bootstrap --json` returns readiness, the preferred Monte surface for the task, the next command to run, and an instruction block agents can follow immediately. `monte decide --json` remains the explicit simulation entrypoint and returns the queued simulation plus polling commands, or a condensed decision bundle when combined with `--wait`.
 
 ## Bundled Example Persona
 
@@ -348,7 +374,7 @@ monte example list
 monte example ingest starter
 monte persona build
 monte persona psychology
-monte decide "should I leave my stable product job to join a startup and put $25k into the idea?" --mode fast --wait
+monte personalize bootstrap "Help me think through whether to leave my stable product job for a startup" --json
 ```
 
 If you want the raw filesystem path to the bundled dataset:

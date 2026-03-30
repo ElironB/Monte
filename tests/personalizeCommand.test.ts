@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { buildPersonalizationContextPayload, buildPersonalizationProfilePayload, type PersonalizationSeed } from '../src/personalization/builder.js';
-import { renderPersonalizationContext, renderPersonalizationProfile } from '../src/cli/commands/personalize.js';
+import { buildPersonalizationBootstrapPayload, buildPersonalizationContextPayload, buildPersonalizationProfilePayload, type PersonalizationSeed } from '../src/personalization/builder.js';
+import { renderPersonalizationBootstrap, renderPersonalizationContext, renderPersonalizationProfile } from '../src/cli/commands/personalize.js';
 
 function makeSeed(): PersonalizationSeed {
   return {
@@ -64,5 +64,22 @@ describe('personalize command renderers', () => {
     expect(rendered).toContain('Task Context');
     expect(rendered).toContain('Task Instruction Block');
     expect(rendered).toContain('planning');
+  });
+
+  test('renders agent bootstrap guidance', () => {
+    const payload = buildPersonalizationBootstrapPayload({
+      status: 'ready',
+      task: 'Help me plan the week',
+      nextAction: {
+        command: 'monte personalize context "Help me plan the week" --json',
+        description: 'Use task-aware personalization.',
+      },
+      seed: makeSeed(),
+    });
+    const rendered = renderPersonalizationBootstrap(payload);
+
+    expect(rendered).toContain('Agent Bootstrap');
+    expect(rendered).toContain('Preferred surface');
+    expect(rendered).toContain('Bootstrap Instruction Block');
   });
 });

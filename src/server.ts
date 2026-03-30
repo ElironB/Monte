@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 
 import { config } from './config/index.js';
@@ -108,6 +109,7 @@ export async function createMonteServer(options: CreateMonteServerOptions = {}):
 
   await app.register(helmet);
   await app.register(cors, { origin: config.server.nodeEnv === 'development', credentials: true });
+  await app.register(multipart);
 
   await app.register(authPlugin);
   await app.register(rateLimitPlugin);

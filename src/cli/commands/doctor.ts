@@ -8,6 +8,7 @@ import { loadConfig } from '../config.js';
 import { buildJsonErrorPayload, printJson, printJsonErrorAndExit } from '../output.js';
 import { resolveCliProviderConfig } from '../providerConfig.js';
 import { dimText, icons, infoLabel, sectionHeader } from '../styles.js';
+import { resolveIngestionRuntimeConfig } from '../../config/ingestionRuntime.js';
 import { resolveSimulationRuntimeConfig } from '../../config/simulationRuntime.js';
 
 interface HealthCheck {
@@ -36,6 +37,7 @@ interface DoctorRuntimeSettings {
   apiUrl: string;
   batchSize: number;
   workerConcurrency: number;
+  ingestionWorkerConcurrency: number;
   decisionConcurrency: number;
   cloneConcurrency: number;
   activeFrontier: number;
@@ -116,12 +118,14 @@ async function fetchReadyHealth(apiUrl: string): Promise<{ response?: ReadyHealt
 export function getDoctorRuntimeSettings(): DoctorRuntimeSettings {
   const { apiUrl } = loadConfig();
   const runtime = resolveSimulationRuntimeConfig();
+  const ingestionRuntime = resolveIngestionRuntimeConfig();
   const providers = resolveCliProviderConfig();
 
   return {
     apiUrl,
     batchSize: runtime.batchSize,
     workerConcurrency: runtime.workerConcurrency,
+    ingestionWorkerConcurrency: ingestionRuntime.workerConcurrency,
     decisionConcurrency: runtime.decisionConcurrency,
     cloneConcurrency: runtime.cloneConcurrency,
     activeFrontier: runtime.activeFrontier,
@@ -289,6 +293,7 @@ function renderRuntimeSettings(runtime: DoctorRuntimeSettings): void {
   console.log(`  ${infoLabel('API URL:')} ${runtime.apiUrl}`);
   console.log(`  ${infoLabel('Batch Size:')} ${runtime.batchSize}`);
   console.log(`  ${infoLabel('Worker Concurrency:')} ${runtime.workerConcurrency}`);
+  console.log(`  ${infoLabel('Ingestion Workers:')} ${runtime.ingestionWorkerConcurrency}`);
   console.log(`  ${infoLabel('Decision Concurrency:')} ${runtime.decisionConcurrency}`);
   console.log(`  ${infoLabel('Clone Concurrency:')} ${runtime.cloneConcurrency}`);
   console.log(`  ${infoLabel('Active Frontier:')} ${runtime.activeFrontier}`);

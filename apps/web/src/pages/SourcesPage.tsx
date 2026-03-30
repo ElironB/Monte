@@ -32,6 +32,7 @@ export function SourcesPage() {
   }
 
   const totalSignals = sourcesQuery.data.data.reduce((sum, source) => sum + source.signalCount, 0);
+  const totalFiles = sourcesQuery.data.data.reduce((sum, source) => sum + source.fileCount, 0);
   const completedSources = sourcesQuery.data.data.filter((source) => source.status === 'completed').length;
   const activeSource = sourceDetailQuery.data ?? null;
 
@@ -40,6 +41,7 @@ export function SourcesPage() {
       <div className="metrics-grid">
         <MetricCard label="Registered sources" value={integerFormatter.format(sourcesQuery.data.pagination.total)} tone="accent" />
         <MetricCard label="Completed sources" value={integerFormatter.format(completedSources)} tone="success" />
+        <MetricCard label="Queued files" value={integerFormatter.format(totalFiles)} tone="accent" />
         <MetricCard label="Observed signals" value={integerFormatter.format(totalSignals)} tone="warm" />
       </div>
 
@@ -59,6 +61,7 @@ export function SourcesPage() {
                 </div>
                 <div className="source-list__meta">
                   <StatusPill value={source.status} />
+                  <span>{integerFormatter.format(source.fileCount)} files</span>
                   <span>{integerFormatter.format(source.signalCount)} signals</span>
                 </div>
               </button>
@@ -72,8 +75,31 @@ export function SourcesPage() {
               <div className="pill-list source-preview__meta">
                 <span className="inline-pill">{titleCase(activeSource.sourceType)}</span>
                 <span className="inline-pill">{formatDate(activeSource.createdAt)}</span>
+                <span className="inline-pill">{integerFormatter.format(activeSource.fileCount)} files</span>
                 <span className="inline-pill">{integerFormatter.format(activeSource.signalCount)} signals</span>
               </div>
+              <div className="pill-list source-preview__meta">
+                <span className="inline-pill">done {integerFormatter.format(activeSource.completedFileCount)}</span>
+                <span className="inline-pill">processing {integerFormatter.format(activeSource.processingFileCount)}</span>
+                <span className="inline-pill">skipped {integerFormatter.format(activeSource.skippedFileCount)}</span>
+                <span className="inline-pill">failed {integerFormatter.format(activeSource.failedFileCount)}</span>
+              </div>
+              {activeSource.files.length ? (
+                <Panel title="Imported files" eyebrow="Per-file status">
+                  <div className="signal-list">
+                    {activeSource.files.map((file) => (
+                      <article key={file.id} className="signal-card">
+                        <div className="signal-card__header">
+                          <strong>{file.originalPath ?? file.filename}</strong>
+                          <span>{titleCase(file.status)}</span>
+                        </div>
+                        <p>{titleCase(file.detectedSourceType)} · {integerFormatter.format(file.signalCount)} signals</p>
+                        <span>{file.skipReason ?? file.error ?? file.mimetype}</span>
+                      </article>
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
               {activeSource.signals.length ? (
                 <div className="signal-list">
                   {activeSource.signals.map((signal) => (
